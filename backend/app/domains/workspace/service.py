@@ -74,19 +74,23 @@ async def workspace_onboarding(
             "  (SELECT onboarded_at FROM workspaces WHERE id=$1) AS onboarded_at, "
             "  EXISTS(SELECT 1 FROM workspace_invites WHERE workspace_id=$1) AS invited, "
             "  EXISTS(SELECT 1 FROM source_connections WHERE workspace_id=$1) AS connected, "
+            "  EXISTS(SELECT 1 FROM documents WHERE workspace_id=$1) AS has_docs, "
             "  EXISTS(SELECT 1 FROM chat_messages m JOIN chat_sessions s ON s.id=m.session_id "
             "         WHERE s.workspace_id=$1 AND m.role='assistant') AS asked",
             current.workspace_id,
         )
+    # "context" is satisfied by a connected source OR any ingested document
+    # (so loading sample data / uploading also counts).
+    steps = {
+        "invited": row["invited"],
+        "context": row["connected"] or row["has_docs"],
+        "asked": row["asked"],
+    }
     return {
         "onboarded_at": row["onboarded_at"].isoformat() if row["onboarded_at"] else None,
         "role": current.role,
-        "steps": {
-            "workspace": True,
-            "invited": row["invited"],
-            "connected": row["connected"],
-            "asked": row["asked"],
-        },
+        "steps": steps,
+        "complete": all(steps.values()),
     }
 
 

@@ -704,9 +704,10 @@ async def test_onboarding_status_reports_steps(pool, workspace_id):
         resp = await client.get("/api/workspace/onboarding")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["steps"]["workspace"] is True
         assert body["steps"]["invited"] is False
-        assert body["steps"]["connected"] is False
+        assert body["steps"]["context"] is False
+        assert body["steps"]["asked"] is False
+        assert body["complete"] is False
         assert body["onboarded_at"] is None
         done = await client.post("/api/workspace/onboarding/complete")
         assert done.status_code == 200

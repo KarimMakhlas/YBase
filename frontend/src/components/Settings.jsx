@@ -1,19 +1,26 @@
 import React, { useEffect, useState } from 'react'
-import { Mail, Link2, UserPlus } from 'lucide-react'
+import { Mail, Link2, UserPlus, Crown } from 'lucide-react'
 import {
   createWorkspaceInvite, createWorkspaceUser, listWorkspaceInvites,
-  listWorkspaceUsers, patchWorkspaceUser, revokeWorkspaceInvite,
+  listWorkspaceUsers, patchWorkspaceUser, revokeWorkspaceInvite, transferOwnership,
 } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Avatar, Badge } from '../whybase/ui.jsx'
 
 const EMPTY = { email: '', display_name: '', password: '', role: 'member' }
 
+// Plain-English description of what each workspace role can do.
+const ROLE_BLURB = {
+  owner: 'Full control — manage members, billing, and the only one who can transfer ownership.',
+  admin: 'Manage members, invites, sources, and curate memory.',
+  member: 'Read and search memory, ask questions, and give feedback.',
+}
+
 function inviteUrl(path) {
   return `${window.location.origin}${path}`
 }
 
-export default function Settings({ auth }) {
+export default function Settings({ auth, onAuthChanged }) {
   const [users, setUsers] = useState(null)
   const [form, setForm] = useState(EMPTY)
   const [busy, setBusy] = useState(false)
@@ -23,6 +30,7 @@ export default function Settings({ auth }) {
   const [inviting, setInviting] = useState(false)
   const toast = useToast()
   const canPatch = auth?.workspace?.role === 'owner'
+  const myRole = auth?.workspace?.role || 'member'
   const wsName = auth?.workspace?.name || 'this workspace'
 
   const load = () => listWorkspaceUsers().then(setUsers).catch((e) => toast(`Failed to load users: ${e.message}`))
@@ -93,6 +101,21 @@ export default function Settings({ auth }) {
     }
   }
 
+  const transfer = async (userId, name) => {
+    if (!window.confirm(
+      `Make ${name} the owner of ${wsName}? You’ll become an admin and can no longer ` +
+      `manage billing or transfer ownership.`
+    )) return
+    try {
+      await transferOwnership(userId)
+      toast(`${name} is now the owner`, 'success')
+      await load()
+      onAuthChanged?.() // our own role just changed to admin — refresh the shell
+    } catch (err) {
+      toast(`Transfer failed: ${err.message}`)
+    }
+  }
+
   const activeInvites = (invites || []).filter((i) => i.state === 'active')
 
   return (
@@ -100,6 +123,11 @@ export default function Settings({ auth }) {
       <div className="eyebrow">Workspace</div>
       <h1 className="page-h1">Settings</h1>
       <p className="page-lede">Manage who can read and curate {wsName}’s memory.</p>
+
+      <div className="role-clarity">
+        <Badge tone="accent" variant="soft" mono>your role · {myRole}</Badge>
+        <span>{ROLE_BLURB[myRole]}</span>
+      </div>
 
       <section className="settings-section wb-reveal" style={{ '--i': 1 }}>
         <h3>Invite teammates</h3>
@@ -143,7 +171,6 @@ export default function Settings({ auth }) {
           <select className="wb-select" style={{ width: 120, flex: 'none' }} value={form.role} onChange={set('role')}>
             <option value="member">member</option>
             <option value="admin">admin</option>
-            <option value="owner">owner</option>
           </select>
           <button className="wb-btn wb-btn--secondary" type="submit" disabled={busy}>
             <UserPlus size={15} strokeWidth={1.8} /> {busy ? 'Creating…' : 'Create'}
@@ -163,17 +190,21 @@ export default function Settings({ auth }) {
                 <small>{u.email}</small>
               </span>
               <Badge tone={u.disabled ? 'neutral' : 'success'} variant="soft" mono dot>{u.disabled ? 'disabled' : 'active'}</Badge>
-              {canPatch ? (
+              {u.role === 'owner' ? (
+                <Badge tone="accent" variant="soft" mono>owner</Badge>
+              ) : canPatch ? (
                 <>
                   <span className="user-role-select">
-                    <select className="wb-select" value={u.role} onChange={(e) => patch(u.id, { role: e.target.value })} disabled={u.role === 'owner'} aria-label={`Role for ${u.email}`}>
+                    <select className="wb-select" value={u.role} onChange={(e) => patch(u.id, { role: e.target.value })} aria-label={`Role for ${u.email}`}>
                       <option value="member">member</option>
                       <option value="admin">admin</option>
-                      <option value="owner">owner</option>
                     </select>
                   </span>
-                  <button className="wb-btn wb-btn--sm wb-btn--ghost" onClick={() => patch(u.id, { disabled: !u.disabled })} disabled={u.role === 'owner'}>
+                  <button className="wb-btn wb-btn--sm wb-btn--ghost" onClick={() => patch(u.id, { disabled: !u.disabled })}>
                     {u.disabled ? 'Enable' : 'Disable'}
+                  </button>
+                  <button className="wb-btn wb-btn--sm wb-btn--ghost" onClick={() => transfer(u.id, u.display_name)} title="Make this member the owner" disabled={u.disabled}>
+                    <Crown size={13} strokeWidth={1.9} /> Make owner
                   </button>
                 </>
               ) : (

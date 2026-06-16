@@ -5,20 +5,17 @@ import {
 import { getStats } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Badge, StatusBadge, SrcBadge } from '../whybase/ui.jsx'
+import SetupChecklist from './SetupChecklist.jsx'
 import whybaseMark from '../assets/whybase-mark.svg'
 
 const LAST_VISIT_KEY = 'sb:lastVisit'
-const ONBOARD_DISMISS_KEY = 'sb:onboardingDismissed'
 
 const SOURCE_LABEL = { slack: 'Slack', notion: 'Notion', github: 'GitHub', jira: 'Jira', meeting: 'Meeting' }
 const fmtDate = (d) => (d ? d : '')
 
-export default function Home({ onAsk, onNavigate, canAdmin = false, workspace, user }) {
+export default function Home({ onAsk, onNavigate, canAdmin = false, workspace, user, setup, onInvite }) {
   const [stats, setStats] = useState(null)
   const [question, setQuestion] = useState('')
-  const [onboardDismissed, setOnboardDismissed] = useState(
-    () => localStorage.getItem(ONBOARD_DISMISS_KEY) === '1',
-  )
   const toast = useToast()
 
   const load = () => {
@@ -32,13 +29,6 @@ export default function Home({ onAsk, onNavigate, canAdmin = false, workspace, u
   }
 
   useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const docCount = stats?.counts?.documents ?? 0
-  const showOnboarding = stats && !onboardDismissed && docCount <= 5
-  const dismissOnboarding = () => {
-    localStorage.setItem(ONBOARD_DISMISS_KEY, '1')
-    setOnboardDismissed(true)
-  }
 
   const submit = (e) => {
     e.preventDefault()
@@ -185,28 +175,14 @@ export default function Home({ onAsk, onNavigate, canAdmin = false, workspace, u
         </div>
       )}
 
-      {/* ---- Onboarding (fresh workspace) ---- */}
-      {showOnboarding && (
-        <div className="relit wb-reveal" style={{ '--i': 3, alignItems: 'flex-start' }} role="status">
-          <Sparkles size={17} strokeWidth={1.8} />
-          <div style={{ flex: 1 }}>
-            <b>Getting started.</b>{' '}
-            {docCount > 0 ? 'Demo memory is loaded — try a question above, or ' : 'Loading demo memory — '}
-            <a onClick={() => onAsk('Why did we choose Postgres over MongoDB?')} style={{ cursor: 'pointer' }}>
-              ask your first question
-            </a>
-            {canAdmin && (
-              <>
-                {', '}
-                <a onClick={() => onNavigate('sources')} style={{ cursor: 'pointer' }}>connect Slack</a>
-                {' or '}
-                <a onClick={() => onNavigate('add')} style={{ cursor: 'pointer' }}>add your own documents</a>
-              </>
-            )}.
-            <button className="ws-more" style={{ marginLeft: 10 }} onClick={dismissOnboarding}>Dismiss</button>
-          </div>
-        </div>
-      )}
+      {/* ---- Persistent setup checklist (admins, until complete) ---- */}
+      <SetupChecklist
+        setup={setup}
+        canAdmin={canAdmin}
+        onNavigate={onNavigate}
+        onInvite={onInvite}
+        onAsk={onAsk}
+      />
 
       {/* ---- Stats ---- */}
       <div className="section-label">At a glance</div>

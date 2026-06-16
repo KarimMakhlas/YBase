@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom'
 import {
   House, Sparkles, Clock, GitCommitHorizontal, Users, Share2, FilePlus2,
   ListChecks, Flag, Plug, BarChart3, Gauge, Settings as SettingsIcon,
-  Search, LogOut, Sun, Moon, PanelLeftClose, PanelLeftOpen, ChevronsUpDown,
+  Search, LogOut, Sun, Moon, PanelLeftClose, PanelLeftOpen, ChevronsUpDown, UserPlus,
 } from 'lucide-react'
 import Home from './components/Home.jsx'
 import Chat from './components/Chat.jsx'
@@ -14,6 +14,7 @@ import People from './components/People.jsx'
 import AddMemory from './components/AddMemory.jsx'
 import Auth from './components/Auth.jsx'
 import Onboarding from './components/Onboarding.jsx'
+import InviteModal from './components/InviteModal.jsx'
 import Join from './components/Join.jsx'
 import SharedDecision from './components/SharedDecision.jsx'
 import Notifications from './components/Notifications.jsx'
@@ -28,7 +29,7 @@ import CmdK from './components/CmdK.jsx'
 import DocModal from './components/DocModal.jsx'
 import StatusFooter from './components/StatusFooter.jsx'
 import { ToastProvider } from './components/Toast.jsx'
-import { getBootstrapStatus, getMe, logout } from './api.js'
+import { getBootstrapStatus, getMe, getOnboarding, logout } from './api.js'
 import whybaseMark from './assets/whybase-mark.svg'
 
 // The product surface, as a grouped left-sidebar nav (Linear-style). `section`
@@ -226,7 +227,13 @@ export default function App() {
   // onboarding, their workspace becomes non-null mid-flow — this flag prevents an
   // early jump into the main app until they finish or skip).
   const [onboarding, setOnboarding] = useState(false)
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [setup, setSetup] = useState(null) // GET /api/workspace/onboarding: checklist state
   const lastNonDocHash = React.useRef('#/home')
+
+  const loadSetup = React.useCallback(() => {
+    getOnboarding().then(setSetup).catch(() => setSetup(null))
+  }, [])
   const currentTabRef = React.useRef('home')
 
   const loadAuth = async () => {
@@ -292,6 +299,13 @@ export default function App() {
   useEffect(() => {
     document.title = LABELS[tab] ? `WhyBase — ${LABELS[tab]}` : 'WhyBase'
   }, [tab])
+
+  // Setup-checklist state, refetched whenever the active workspace changes.
+  const workspaceId = authState.user?.workspace?.id
+  useEffect(() => {
+    if (workspaceId) loadSetup()
+    else setSetup(null)
+  }, [workspaceId, loadSetup])
 
   useEffect(() => {
     const onKey = (e) => {
@@ -523,6 +537,15 @@ export default function App() {
           </nav>
 
           <div className="sidebar-foot">
+            {isAdmin && setup && !setup.complete && (
+              <button className="setup-nudge" onClick={() => navigate('home')} title="Finish workspace setup">
+                <ListChecks size={15} strokeWidth={1.8} />
+                <span>Finish setup</span>
+                <span className="setup-nudge-count tnum">
+                  {Object.values(setup.steps).filter(Boolean).length}/{Object.keys(setup.steps).length}
+                </span>
+              </button>
+            )}
             <button className="ws-switch" title={workspace.name}>
               <WorkspaceAvatar name={workspace.name} />
               <span className="ws-meta">
@@ -547,6 +570,11 @@ export default function App() {
             <div className="app-top-right">
               <ThemeToggle />
               <Notifications isAdmin={isAdmin} />
+              {isAdmin && (
+                <button className="wb-btn wb-btn--secondary" onClick={() => setInviteOpen(true)}>
+                  <UserPlus size={15} strokeWidth={1.8} /> Invite
+                </button>
+              )}
               <button className="wb-btn wb-btn--primary" onClick={() => navigate('chat')}>
                 <Sparkles size={15} strokeWidth={1.8} /> Ask memory
               </button>
@@ -555,7 +583,15 @@ export default function App() {
 
           <main className="app-content content">
             {activeTab === 'home' && (
-              <Home onAsk={askFromHome} onNavigate={navigate} canAdmin={isAdmin} workspace={workspace} user={authState.user} />
+              <Home
+                onAsk={askFromHome}
+                onNavigate={navigate}
+                canAdmin={isAdmin}
+                workspace={workspace}
+                user={authState.user}
+                setup={setup}
+                onInvite={() => setInviteOpen(true)}
+              />
             )}
             <div style={{ display: activeTab === 'chat' ? 'block' : 'none', height: '100%' }}>
               <Chat pendingAsk={ask} canAdd={isAdmin} onAddDoc={() => navigate('add')} onOpenDoc={openDoc} />
@@ -582,11 +618,21 @@ export default function App() {
             {activeTab === 'feedback' && <Feedback onOpenDoc={openDoc} onNavigate={navigate} />}
             {activeTab === 'sources' && <Sources />}
             {activeTab === 'add' && <AddMemory />}
-            {activeTab === 'settings' && <Settings auth={authState.user} />}
+            {activeTab === 'settings' && (
+              <Settings auth={authState.user} onAuthChanged={() => { loadAuth(); loadSetup() }} />
+            )}
           </main>
 
           {isAdmin && <StatusFooter />}
         </div>
+
+        {inviteOpen && (
+          <InviteModal
+            workspaceName={workspace.name}
+            onClose={() => { setInviteOpen(false); loadSetup() }}
+            onNavigateSettings={() => navigate('settings')}
+          />
+        )}
 
         <CmdK open={cmdkOpen} onClose={() => setCmdkOpen(false)} onPick={onPick} />
         {docModal && (

@@ -1411,3 +1411,70 @@ html { scroll-behavior: smooth; }
   border-radius: 999px; padding: 2px 7px;
 }
 .onb-sample { align-self: flex-start; gap: 7px; }
+
+/* --- Chunk 2: setup checklist, sidebar nudge, invite modal, role clarity --- */
+.setup-card {
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--panel); margin-top: var(--sp-2); overflow: hidden;
+}
+.setup-head {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 13px 16px; background: none; border: none; cursor: pointer;
+  color: var(--text); font-size: var(--fs-sm); text-align: left;
+}
+.setup-head b { font-weight: 650; }
+.setup-progress {
+  margin-left: auto; font-size: 12px; font-weight: 600; color: var(--muted);
+  background: var(--surface-2, var(--bg)); border: 1px solid var(--border);
+  border-radius: 999px; padding: 2px 9px;
+}
+.setup-steps { padding: 2px 12px 12px; display: flex; flex-direction: column; gap: 4px; }
+.setup-step { display: flex; align-items: center; gap: 11px; padding: 8px 8px; border-radius: var(--radius-sm); }
+.setup-step:hover { background: var(--surface-2, var(--bg)); }
+.setup-check {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  border: 1px solid var(--border); color: var(--muted); background: var(--bg);
+}
+.setup-step.is-done .setup-check { background: var(--accent); color: var(--accent-contrast); border-color: transparent; }
+.setup-label { font-size: var(--fs-sm); color: var(--text); }
+.setup-step.is-done .setup-label { color: var(--muted); text-decoration: line-through; }
+.setup-step .wb-btn { margin-left: auto; }
+
+.setup-nudge {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 10px; margin-bottom: 8px; cursor: pointer;
+  background: var(--accent-soft, var(--surface-2, var(--bg)));
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: var(--fs-xs); font-weight: 600;
+}
+.setup-nudge:hover { border-color: var(--accent); }
+.setup-nudge-count { margin-left: auto; color: var(--muted); }
+
+.role-clarity {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 11px 13px; margin: -2px 0 var(--sp-2);
+  background: var(--surface-2, var(--bg)); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: var(--fs-sm); color: var(--muted);
+}
+
+.modal-overlay {
+  position: fixed; inset: 0; background: var(--backdrop); z-index: 60;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.invite-modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg); width: min(520px, 100%); padding: var(--sp-6);
+  display: flex; flex-direction: column; gap: var(--sp-3);
+}
+.invite-modal-head { display: flex; align-items: center; justify-content: space-between; }
+.invite-modal-head h3 { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
+.invite-modal-form { display: flex; gap: var(--sp-2); flex-wrap: wrap; align-items: center; }
+.invite-modal-form .wb-input { flex: 1; min-width: 180px; }
+.invite-modal-link { display: flex; align-items: center; gap: var(--sp-2); }
+.invite-modal-link code {
+  flex: 1; font-size: 12px; color: var(--muted); background: var(--surface-2, var(--bg));
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 9px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.invite-modal-more { align-self: flex-start; }
