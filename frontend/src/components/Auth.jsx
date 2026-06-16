@@ -21,7 +21,10 @@ export default function Auth({ mode, onAuthed, initialView, onBack, resetToken }
   const isRegister = view === 'register'
   const isForgot = view === 'forgot'
   const isReset = view === 'reset'
-  const needsWorkspace = isBootstrap || isRegister
+  // Public signup is identity-only — the workspace is named later in the setup
+  // wizard. Only first-run bootstrap (self-hosted) names a workspace here.
+  const showWorkspaceField = isBootstrap
+  const showNameField = isBootstrap || isRegister
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
   const goView = (v) => { setView(v); setError(''); setDone('') }
@@ -51,7 +54,6 @@ export default function Auth({ mode, onAuthed, initialView, onBack, resetToken }
         })
       } else if (isRegister) {
         user = await register({
-          workspace_name: form.workspace_name,
           display_name: form.display_name,
           email: form.email,
           password: form.password,
@@ -96,17 +98,19 @@ export default function Auth({ mode, onAuthed, initialView, onBack, resetToken }
     )
   }
 
-  const heading = isBootstrap || isRegister
+  const heading = isBootstrap
     ? 'Create your workspace'
-    : isForgot
-      ? 'Reset your password'
-      : isReset
-        ? 'Choose a new password'
-        : 'Sign in'
+    : isRegister
+      ? 'Create your account'
+      : isForgot
+        ? 'Reset your password'
+        : isReset
+          ? 'Choose a new password'
+          : 'Sign in'
   const blurb = isBootstrap
     ? 'Set up the first owner account. Existing local memory will be assigned to this workspace.'
     : isRegister
-      ? 'Start a fresh workspace for your team’s decisions and memory.'
+      ? 'Start with your account — you’ll name your workspace and invite your team next.'
       : isForgot
         ? 'Enter your account email and we’ll send a link to reset your password.'
         : isReset
@@ -126,22 +130,22 @@ export default function Auth({ mode, onAuthed, initialView, onBack, resetToken }
         <div className="auth-mark">WhyBase</div>
         <h1>{heading}</h1>
         <p>{blurb}</p>
-        {needsWorkspace && (
-          <>
-            <label className="field">
-              <span>Workspace</span>
-              <input
-                value={form.workspace_name}
-                onChange={set('workspace_name')}
-                placeholder={isRegister ? 'Acme Engineering' : 'Default Workspace'}
-                required={isBootstrap}
-              />
-            </label>
-            <label className="field">
-              <span>Your name</span>
-              <input value={form.display_name} onChange={set('display_name')} required />
-            </label>
-          </>
+        {showWorkspaceField && (
+          <label className="field">
+            <span>Workspace</span>
+            <input
+              value={form.workspace_name}
+              onChange={set('workspace_name')}
+              placeholder="Default Workspace"
+              required={isBootstrap}
+            />
+          </label>
+        )}
+        {showNameField && (
+          <label className="field">
+            <span>Your name</span>
+            <input value={form.display_name} onChange={set('display_name')} required />
+          </label>
         )}
         {!isReset && (
           <label className="field">
@@ -165,8 +169,10 @@ export default function Auth({ mode, onAuthed, initialView, onBack, resetToken }
         <button type="submit" disabled={busy}>
           {busy
             ? 'Working…'
-            : isBootstrap || isRegister
+            : isBootstrap
               ? 'Create workspace'
+              : isRegister
+                ? 'Create account'
               : isForgot
                 ? 'Send reset link'
                 : isReset

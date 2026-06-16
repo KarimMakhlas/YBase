@@ -13,6 +13,7 @@ import Graph from './components/Graph.jsx'
 import People from './components/People.jsx'
 import AddMemory from './components/AddMemory.jsx'
 import Auth from './components/Auth.jsx'
+import Onboarding from './components/Onboarding.jsx'
 import Join from './components/Join.jsx'
 import SharedDecision from './components/SharedDecision.jsx'
 import Notifications from './components/Notifications.jsx'
@@ -221,6 +222,10 @@ export default function App() {
   const [joinToken, setJoinToken] = useState(null) // invite link: #/join/<token>
   const [shareToken, setShareToken] = useState(null) // public decision: #/shared/<token>
   const [resetToken, setResetToken] = useState(null) // password reset: #/reset/<token>
+  // Keeps the setup wizard mounted across workspace creation (once a user enters
+  // onboarding, their workspace becomes non-null mid-flow — this flag prevents an
+  // early jump into the main app until they finish or skip).
+  const [onboarding, setOnboarding] = useState(false)
   const lastNonDocHash = React.useRef('#/home')
   const currentTabRef = React.useRef('home')
 
@@ -427,6 +432,28 @@ export default function App() {
           initialView={hash.startsWith('#/signup') ? 'register' : 'login'}
           onBack={() => { window.location.hash = '#/welcome' }}
           onAuthed={onAuthed}
+        />
+      </ToastProvider>
+    )
+  }
+
+  // Onboarding: an authenticated user with no workspace yet (fresh signup) must
+  // run the setup wizard before reaching the app. `onboarding` keeps them there
+  // through workspace creation until they finish or skip.
+  if (!authState.user.workspace || onboarding) {
+    return (
+      <ToastProvider>
+        <Onboarding
+          user={authState.user}
+          onWorkspaceCreated={(payload) => {
+            setOnboarding(true)
+            setAuthState({ loading: false, needsBootstrap: false, user: payload })
+          }}
+          onFinish={() => {
+            setOnboarding(false)
+            navigate('home')
+          }}
+          onLogout={onLogout}
         />
       </ToastProvider>
     )

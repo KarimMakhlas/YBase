@@ -84,6 +84,11 @@ export const switchWorkspace = (workspaceId) =>
   postJSON('/api/auth/switch-workspace', { workspace_id: workspaceId })
 export const getInvite = (token) => getJSON(`/api/auth/invite/${encodeURIComponent(token)}`)
 export const joinWorkspace = (body) => postJSON('/api/auth/join', body)
+export const createWorkspace = (name) => postJSON('/api/workspace/create', { name })
+export const getOnboarding = () => getJSON('/api/workspace/onboarding')
+export const completeOnboarding = () => postJSON('/api/workspace/onboarding/complete', {})
+export const transferOwnership = (userId) =>
+  postJSON('/api/workspace/transfer-ownership', { new_owner_user_id: userId })
 export const listWorkspaceUsers = () => getJSON('/api/workspace/users')
 export const createWorkspaceUser = (body) => postJSON('/api/workspace/users', body)
 export const patchWorkspaceUser = (id, body) => patchJSON(`/api/workspace/users/${id}`, body)
