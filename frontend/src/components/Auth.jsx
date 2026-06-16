@@ -1,10 +1,12 @@
 import React, { useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
-import { bootstrap, login, register } from '../api.js'
+import { bootstrap, login, register, forgotPassword, resetPassword } from '../api.js'
 
-// view: 'bootstrap' (first run, locked) | 'login' | 'register'
-export default function Auth({ mode, onAuthed, initialView, onBack }) {
-  const [view, setView] = useState(mode === 'bootstrap' ? 'bootstrap' : initialView || 'login')
+// view: 'bootstrap' (first run, locked) | 'login' | 'register' | 'forgot' | 'reset'
+export default function Auth({ mode, onAuthed, initialView, onBack, resetToken }) {
+  const [view, setView] = useState(
+    mode === 'bootstrap' ? 'bootstrap' : resetToken ? 'reset' : initialView || 'login'
+  )
   const [form, setForm] = useState({
     workspace_name: '',
     display_name: '',
@@ -13,18 +15,32 @@ export default function Auth({ mode, onAuthed, initialView, onBack }) {
   })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [done, setDone] = useState('') // '' | 'forgot' | 'reset'
 
   const isBootstrap = view === 'bootstrap'
   const isRegister = view === 'register'
+  const isForgot = view === 'forgot'
+  const isReset = view === 'reset'
   const needsWorkspace = isBootstrap || isRegister
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
+  const goView = (v) => { setView(v); setError(''); setDone('') }
 
   const submit = async (e) => {
     e.preventDefault()
     setBusy(true)
     setError('')
     try {
+      if (isForgot) {
+        await forgotPassword(form.email)
+        setDone('forgot')
+        return
+      }
+      if (isReset) {
+        await resetPassword(resetToken, form.password)
+        setDone('reset')
+        return
+      }
       let user
       if (isBootstrap) {
         user = await bootstrap({
@@ -51,21 +67,58 @@ export default function Auth({ mode, onAuthed, initialView, onBack }) {
     }
   }
 
-  const heading = isBootstrap
+  // Success panels (forgot link sent / password updated).
+  if (done === 'forgot') {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <div className="auth-mark">WhyBase</div>
+          <h1>Check your email</h1>
+          <p>
+            If an account exists for {form.email || 'that address'}, we’ve sent a
+            link to reset your password. It expires shortly.
+          </p>
+          <button type="button" onClick={() => goView('login')}>Back to sign in</button>
+        </div>
+      </div>
+    )
+  }
+  if (done === 'reset') {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <div className="auth-mark">WhyBase</div>
+          <h1>Password updated</h1>
+          <p>Your password has changed and other sessions were signed out. Sign in with your new password.</p>
+          <button type="button" onClick={() => (onBack ? onBack() : goView('login'))}>Sign in</button>
+        </div>
+      </div>
+    )
+  }
+
+  const heading = isBootstrap || isRegister
     ? 'Create your workspace'
-    : isRegister
-      ? 'Create your workspace'
-      : 'Sign in'
+    : isForgot
+      ? 'Reset your password'
+      : isReset
+        ? 'Choose a new password'
+        : 'Sign in'
   const blurb = isBootstrap
     ? 'Set up the first owner account. Existing local memory will be assigned to this workspace.'
     : isRegister
-      ? 'Start a new team memory. We’ll preload it with a short demo so you can ask a question right away.'
-      : 'Use your team account to access workspace memory.'
+      ? 'Start a fresh workspace for your team’s decisions and memory.'
+      : isForgot
+        ? 'Enter your account email and we’ll send a link to reset your password.'
+        : isReset
+          ? 'Pick a new password (at least 12 characters). This signs out your other sessions.'
+          : 'Use your team account to access workspace memory.'
+
+  const showTopBack = !isBootstrap && !isForgot && !isReset && onBack
 
   return (
     <div className="auth-page">
       <form className="auth-card" onSubmit={submit}>
-        {!isBootstrap && onBack && (
+        {showTopBack && (
           <button type="button" className="linkbtn" style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--text-secondary)' }} onClick={onBack}>
             <ArrowLeft size={14} strokeWidth={1.8} /> Back to home
           </button>
@@ -90,41 +143,73 @@ export default function Auth({ mode, onAuthed, initialView, onBack }) {
             </label>
           </>
         )}
-        <label className="field">
-          <span>Email</span>
-          <input type="email" value={form.email} onChange={set('email')} required />
-        </label>
-        <label className="field">
-          <span>Password</span>
-          <input
-            type="password"
-            value={form.password}
-            onChange={set('password')}
-            minLength={12}
-            required
-          />
-        </label>
+        {!isReset && (
+          <label className="field">
+            <span>Email</span>
+            <input type="email" value={form.email} onChange={set('email')} required />
+          </label>
+        )}
+        {!isForgot && (
+          <label className="field">
+            <span>{isReset ? 'New password' : 'Password'}</span>
+            <input
+              type="password"
+              value={form.password}
+              onChange={set('password')}
+              minLength={12}
+              required
+            />
+          </label>
+        )}
         {error && <div className="auth-error">{error}</div>}
         <button type="submit" disabled={busy}>
-          {busy ? 'Working…' : isBootstrap ? 'Create workspace' : isRegister ? 'Create workspace' : 'Sign in'}
+          {busy
+            ? 'Working…'
+            : isBootstrap || isRegister
+              ? 'Create workspace'
+              : isForgot
+                ? 'Send reset link'
+                : isReset
+                  ? 'Update password'
+                  : 'Sign in'}
         </button>
-        {!isBootstrap && (
+        {view === 'login' && (
           <div className="auth-switch">
-            {isRegister ? (
-              <span>
-                Already have an account?{' '}
-                <button type="button" className="linkbtn" onClick={() => { setView('login'); setError('') }}>
-                  Sign in
-                </button>
-              </span>
-            ) : (
-              <span>
-                New here?{' '}
-                <button type="button" className="linkbtn" onClick={() => { setView('register'); setError('') }}>
-                  Create a workspace
-                </button>
-              </span>
-            )}
+            <span>
+              New here?{' '}
+              <button type="button" className="linkbtn" onClick={() => goView('register')}>
+                Create a workspace
+              </button>
+            </span>
+            <div style={{ marginTop: 6 }}>
+              <button type="button" className="linkbtn" onClick={() => goView('forgot')}>
+                Forgot password?
+              </button>
+            </div>
+          </div>
+        )}
+        {isRegister && (
+          <div className="auth-switch">
+            <span>
+              Already have an account?{' '}
+              <button type="button" className="linkbtn" onClick={() => goView('login')}>
+                Sign in
+              </button>
+            </span>
+          </div>
+        )}
+        {isForgot && (
+          <div className="auth-switch">
+            <button type="button" className="linkbtn" onClick={() => goView('login')}>
+              Back to sign in
+            </button>
+          </div>
+        )}
+        {isReset && (
+          <div className="auth-switch">
+            <button type="button" className="linkbtn" onClick={() => (onBack ? onBack() : goView('login'))}>
+              Back to sign in
+            </button>
           </div>
         )}
       </form>
@@ -136,5 +221,7 @@ function friendly(message) {
   if (/409/.test(message)) return 'An account with this email already exists — sign in instead.'
   if (/403/.test(message)) return 'Public signup is disabled on this instance.'
   if (/401/.test(message)) return 'Invalid email or password.'
+  if (/429/.test(message)) return 'Too many attempts — please wait a minute and try again.'
+  if (/400/.test(message)) return 'This reset link is invalid or has expired.'
   return message
 }

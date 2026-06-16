@@ -13,7 +13,8 @@ from argon2.exceptions import VerifyMismatchError
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from app.core import config, db
+from app.core import config, db, mailer
+from app.core.ratelimit import auth_limiter
 from app.domains.ops import demo_data as demo
 
 logger = logging.getLogger(__name__)
@@ -80,11 +81,31 @@ class UserPatchRequest(BaseModel):
     disabled: Optional[bool] = None
 
 
+class MePatchRequest(BaseModel):
+    """Self-service profile edit. Changing the password requires the current one."""
+    display_name: Optional[str] = None
+    current_password: Optional[str] = None
+    new_password: Optional[str] = None
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _reset_path(token: str) -> str:
+    return f"/#/reset/{token}"
 
 
 def _client_ip(request: Request) -> str:
@@ -426,6 +447,7 @@ async def register(
     Unlike bootstrap, this is multi-tenant and does not claim orphan data."""
     if not config.ALLOW_PUBLIC_SIGNUP:
         raise HTTPException(403, "public signup is disabled on this instance")
+    auth_limiter.enforce(_client_ip(request), "signup")
     email = clean_email(req.email)
     display_name = req.display_name.strip() or email
     ws_name = req.workspace_name.strip() or f"{display_name}'s Workspace"
@@ -573,6 +595,7 @@ async def login(
     pool = await db.get_pool()
     email = clean_email(req.email)
     ip = _client_ip(request)
+    auth_limiter.enforce(ip, "login")
     async with pool.acquire() as conn:
         if await _login_throttled(conn, email, ip):
             raise HTTPException(429, "too many failed login attempts")
@@ -616,6 +639,132 @@ async def logout(
 @router.get("/me")
 async def me(user: AuthContext = Depends(get_current_user)) -> Dict[str, Any]:
     return user_payload(user)
+
+
+@router.patch("/me")
+async def patch_me(
+    req: MePatchRequest,
+    user: AuthContext = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Self-service: edit your own display name and/or password. A password
+    change requires the current password and signs out your other sessions."""
+    changed: List[str] = []
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            if req.new_password is not None:
+                row = await conn.fetchrow(
+                    "SELECT password_hash FROM users WHERE id=$1", user.user_id
+                )
+                if row is None or not verify_password(
+                    req.current_password or "", row["password_hash"]
+                ):
+                    raise HTTPException(403, "current password is incorrect")
+                new_hash = hash_password(req.new_password)  # validates length
+                await conn.execute(
+                    "UPDATE users SET password_hash=$2, updated_at=now() WHERE id=$1",
+                    user.user_id, new_hash,
+                )
+                # A password change signs out other devices; keep this session.
+                await conn.execute(
+                    "UPDATE auth_sessions SET revoked_at=now() "
+                    "WHERE user_id=$1 AND id<>$2 AND revoked_at IS NULL",
+                    user.user_id, user.session_id,
+                )
+                await audit(conn, "password_change", user.workspace_id,
+                            user.user_id, "user", user.user_id)
+                changed.append("password")
+            if req.display_name is not None:
+                name = req.display_name.strip()
+                if not name:
+                    raise HTTPException(400, "display name cannot be empty")
+                await conn.execute(
+                    "UPDATE users SET display_name=$2, updated_at=now() WHERE id=$1",
+                    user.user_id, name,
+                )
+                await audit(conn, "profile_update", user.workspace_id,
+                            user.user_id, "user", user.user_id)
+                changed.append("display_name")
+            current = await _context_for(
+                conn, user.user_id, user.workspace_id, user.session_id
+            )
+    payload = user_payload(current)
+    payload["changed"] = changed
+    return payload
+
+
+@router.post("/forgot")
+async def forgot_password(
+    req: ForgotPasswordRequest, request: Request
+) -> Dict[str, Any]:
+    """Start a password reset. Always returns ok (no account enumeration); when
+    the email maps to an active account, emails a time-limited reset link."""
+    auth_limiter.enforce(_client_ip(request), "password reset")
+    email = clean_email(req.email)
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        user = await conn.fetchrow(
+            "SELECT id, display_name, disabled FROM users WHERE lower(email)=lower($1)",
+            email,
+        )
+        if user and not user["disabled"]:
+            token = secrets.token_urlsafe(32)
+            expires = datetime.now(timezone.utc) + timedelta(
+                minutes=config.PASSWORD_RESET_TTL_MINUTES
+            )
+            await conn.execute(
+                "INSERT INTO password_reset_tokens(user_id, token_hash, expires_at) "
+                "VALUES($1, $2, $3)",
+                user["id"], _hash_token(token), expires,
+            )
+            link = f"{config.APP_BASE_URL.rstrip('/')}{_reset_path(token)}"
+            await mailer.send(
+                [email],
+                "Reset your Whybase password",
+                f"Hi {user['display_name']},\n\n"
+                f"Use this link to reset your Whybase password (valid for "
+                f"{config.PASSWORD_RESET_TTL_MINUTES} minutes):\n\n{link}\n\n"
+                "If you didn't request this, you can safely ignore this email.",
+            )
+            await audit(conn, "password_reset_request", None, user["id"],
+                        "user", user["id"])
+    return {"ok": True}
+
+
+@router.post("/reset")
+async def reset_password(
+    req: ResetPasswordRequest, request: Request
+) -> Dict[str, Any]:
+    """Complete a password reset: consume a valid token atomically, set the new
+    password, and revoke every session for that user."""
+    auth_limiter.enforce(_client_ip(request), "password reset")
+    if len(req.new_password) < config.PASSWORD_MIN_LENGTH:
+        raise HTTPException(
+            400, f"password must be at least {config.PASSWORD_MIN_LENGTH} characters"
+        )
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "UPDATE password_reset_tokens SET consumed_at=now() "
+                "WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at > now() "
+                "RETURNING user_id",
+                _hash_token(req.token),
+            )
+            if row is None:
+                raise HTTPException(400, "this reset link is invalid or has expired")
+            await conn.execute(
+                "UPDATE users SET password_hash=$2, updated_at=now() WHERE id=$1",
+                row["user_id"], hash_password(req.new_password),
+            )
+            await conn.execute(
+                "UPDATE auth_sessions SET revoked_at=now() "
+                "WHERE user_id=$1 AND revoked_at IS NULL",
+                row["user_id"],
+            )
+            await audit(conn, "password_reset", None, row["user_id"],
+                        "user", row["user_id"])
+    return {"ok": True}
 
 
 @router.post("/switch-workspace")

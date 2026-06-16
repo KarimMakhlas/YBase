@@ -76,6 +76,10 @@ export const register = (body) => postJSON('/api/auth/register', body)
 export const login = (body) => postJSON('/api/auth/login', body)
 export const logout = () => postJSON('/api/auth/logout', {})
 export const getMe = () => getJSON('/api/auth/me')
+export const updateMe = (body) => patchJSON('/api/auth/me', body)
+export const forgotPassword = (email) => postJSON('/api/auth/forgot', { email })
+export const resetPassword = (token, new_password) =>
+  postJSON('/api/auth/reset', { token, new_password })
 export const switchWorkspace = (workspaceId) =>
   postJSON('/api/auth/switch-workspace', { workspace_id: workspaceId })
 export const getInvite = (token) => getJSON(`/api/auth/invite/${encodeURIComponent(token)}`)

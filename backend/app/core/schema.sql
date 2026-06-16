@@ -94,6 +94,19 @@ CREATE TABLE IF NOT EXISTS auth_login_attempts (
 CREATE INDEX IF NOT EXISTS auth_login_attempts_lookup_idx
     ON auth_login_attempts(lower(email), ip, attempted_at DESC);
 
+-- Password reset links. Only the token hash is stored; a row is single-use
+-- (consumed_at) and time-limited (expires_at). Mirrors workspace_invites.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          SERIAL PRIMARY KEY,
+    user_id     INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  TEXT NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS password_reset_tokens_user_idx
+    ON password_reset_tokens(user_id);
+
 -- External source connectors (Slack first, generic enough for later providers).
 CREATE TABLE IF NOT EXISTS source_connections (
     id                    SERIAL PRIMARY KEY,

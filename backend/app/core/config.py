@@ -35,11 +35,16 @@ SEED_DEMO_ON_SIGNUP = os.getenv("SEED_DEMO_ON_SIGNUP", "true").lower() in (
 INVITE_TTL_DAYS = int(os.getenv("INVITE_TTL_DAYS", "14"))
 LOGIN_MAX_FAILURES = int(os.getenv("LOGIN_MAX_FAILURES", "5"))
 LOGIN_WINDOW_MINUTES = int(os.getenv("LOGIN_WINDOW_MINUTES", "15"))
+# How long a password-reset link stays valid.
+PASSWORD_RESET_TTL_MINUTES = int(os.getenv("PASSWORD_RESET_TTL_MINUTES", "60"))
 
 # Per-user rate limits on the expensive endpoints (events per minute,
 # 0 disables). Login has its own throttle (auth_login_attempts).
 QUERY_RATE_PER_MINUTE = int(os.getenv("QUERY_RATE_PER_MINUTE", "20"))
 INGEST_RATE_PER_MINUTE = int(os.getenv("INGEST_RATE_PER_MINUTE", "120"))
+# Per-IP limit on the unauthenticated auth endpoints (register / login /
+# forgot / reset), events per minute. 0 disables.
+AUTH_RATE_PER_MINUTE = int(os.getenv("AUTH_RATE_PER_MINUTE", "10"))
 
 # Claude — memory formation, query reasoning, answer synthesis.
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-fable-5")

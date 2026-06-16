@@ -445,3 +445,162 @@ async def _make_workspace(pool, name: str) -> int:
             name,
             f"{name.lower().replace(' ', '-')}-{uuid4().hex[:8]}",
         )
+
+
+# --- Chunk 1: auth hardening -------------------------------------------------
+
+async def test_register_is_rate_limited(pool):
+    """A burst of signups from one client is throttled to a 429."""
+    auth.auth_limiter.max_events = 1
+    auth.auth_limiter._events.clear()
+    try:
+        async with await _client() as client:
+            body = lambda: {
+                "email": f"signup-{uuid4().hex}@example.test",
+                "display_name": "Sign Up",
+                "password": "correct horse battery staple",
+            }
+            first = await client.post("/api/auth/register", json=body())
+            second = await client.post("/api/auth/register", json=body())
+        assert first.status_code == 200
+        assert second.status_code == 429
+    finally:
+        auth.auth_limiter.max_events = 1000
+        auth.auth_limiter._events.clear()
+
+
+async def test_password_change_requires_correct_current(pool, workspace_id):
+    client, _ = await _auth_client(pool, workspace_id, role="member")
+    async with client:
+        wrong = await client.patch(
+            "/api/auth/me",
+            json={"current_password": "nope", "new_password": "a brand new password"},
+        )
+        assert wrong.status_code == 403
+        ok = await client.patch(
+            "/api/auth/me",
+            json={
+                "current_password": "correct horse battery staple",
+                "new_password": "a brand new password",
+            },
+        )
+        assert ok.status_code == 200
+        assert "password" in ok.json()["changed"]
+
+
+async def test_password_change_revokes_other_sessions(pool, workspace_id):
+    client, user_id = await _auth_client(pool, workspace_id, role="member")
+    other_token = f"other-{uuid4().hex}"
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO auth_sessions(user_id, workspace_id, token_hash, expires_at) "
+            "VALUES($1, $2, $3, $4)",
+            user_id, workspace_id, auth._hash_token(other_token),
+            datetime.now(timezone.utc) + timedelta(days=1),
+        )
+    other = await _client()
+    other.cookies.set(auth.COOKIE_NAME, other_token, path="/")
+    async with client, other:
+        assert (await other.get("/api/auth/me")).status_code == 200
+        changed = await client.patch(
+            "/api/auth/me",
+            json={
+                "current_password": "correct horse battery staple",
+                "new_password": "a brand new password",
+            },
+        )
+        assert changed.status_code == 200
+        # current session survives, the other one is revoked
+        assert (await client.get("/api/auth/me")).status_code == 200
+        assert (await other.get("/api/auth/me")).status_code == 401
+
+
+async def test_forgot_password_is_quiet_and_issues_token(pool, workspace_id):
+    email = f"forgot-{uuid4().hex}@example.test"
+    async with pool.acquire() as conn:
+        user_id = await conn.fetchval(
+            "INSERT INTO users(email, display_name, password_hash) VALUES($1, $2, $3) "
+            "RETURNING id",
+            email, "Forgot User", auth.hash_password("correct horse battery staple"),
+        )
+    async with await _client() as client:
+        known = await client.post("/api/auth/forgot", json={"email": email})
+        unknown = await client.post(
+            "/api/auth/forgot", json={"email": f"nobody-{uuid4().hex}@example.test"}
+        )
+    assert known.status_code == 200 and known.json() == {"ok": True}
+    assert unknown.status_code == 200 and unknown.json() == {"ok": True}
+    async with pool.acquire() as conn:
+        issued = await conn.fetchval(
+            "SELECT count(*) FROM password_reset_tokens WHERE user_id=$1", user_id
+        )
+    assert issued == 1  # only the real account got a token
+
+
+async def test_reset_password_consumes_token_and_revokes_sessions(pool, workspace_id):
+    email = f"reset-{uuid4().hex}@example.test"
+    raw = f"reset-{uuid4().hex}"
+    sess = f"sess-{uuid4().hex}"
+    async with pool.acquire() as conn:
+        user_id = await conn.fetchval(
+            "INSERT INTO users(email, display_name, password_hash) VALUES($1, $2, $3) "
+            "RETURNING id",
+            email, "Reset User", auth.hash_password("the old password here"),
+        )
+        await conn.execute(
+            "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
+            "VALUES($1, $2, 'member')",
+            workspace_id, user_id,
+        )
+        await conn.execute(
+            "INSERT INTO password_reset_tokens(user_id, token_hash, expires_at) "
+            "VALUES($1, $2, now() + interval '1 hour')",
+            user_id, auth._hash_token(raw),
+        )
+        await conn.execute(
+            "INSERT INTO auth_sessions(user_id, workspace_id, token_hash, expires_at) "
+            "VALUES($1, $2, $3, now() + interval '1 day')",
+            user_id, workspace_id, auth._hash_token(sess),
+        )
+    async with await _client() as client:
+        done = await client.post(
+            "/api/auth/reset", json={"token": raw, "new_password": "a fresh new password"}
+        )
+        assert done.status_code == 200
+        # token is single-use
+        replay = await client.post(
+            "/api/auth/reset", json={"token": raw, "new_password": "yet another password"}
+        )
+        assert replay.status_code == 400
+        # new password works, old one no longer does
+        good = await client.post(
+            "/api/auth/login", json={"email": email, "password": "a fresh new password"}
+        )
+        assert good.status_code == 200
+    async with pool.acquire() as conn:
+        revoked = await conn.fetchval(
+            "SELECT revoked_at FROM auth_sessions WHERE token_hash=$1",
+            auth._hash_token(sess),
+        )
+    assert revoked is not None  # the pre-existing session was killed by the reset
+
+
+async def test_reset_password_rejects_expired_token(pool, workspace_id):
+    email = f"expired-{uuid4().hex}@example.test"
+    raw = f"expired-{uuid4().hex}"
+    async with pool.acquire() as conn:
+        user_id = await conn.fetchval(
+            "INSERT INTO users(email, display_name, password_hash) VALUES($1, $2, $3) "
+            "RETURNING id",
+            email, "Expired User", auth.hash_password("correct horse battery staple"),
+        )
+        await conn.execute(
+            "INSERT INTO password_reset_tokens(user_id, token_hash, expires_at) "
+            "VALUES($1, $2, now() - interval '1 minute')",
+            user_id, auth._hash_token(raw),
+        )
+    async with await _client() as client:
+        resp = await client.post(
+            "/api/auth/reset", json={"token": raw, "new_password": "a fresh new password"}
+        )
+    assert resp.status_code == 400

@@ -8,6 +8,11 @@ os.environ["DATABASE_URL"] = (
     "postgresql://whybase:whybase@localhost:5433/whybase_test"
 )
 os.environ["EMBED_PROVIDER"] = "local"
+# Keep signup fast/deterministic — don't kick off background demo seeding.
+os.environ["SEED_DEMO_ON_SIGNUP"] = "false"
+# Don't let the auth rate limiter trip during the broad suite; the dedicated
+# rate-limit test sets a low ceiling on the limiter object itself.
+os.environ["AUTH_RATE_PER_MINUTE"] = "1000"
 
 import asyncio  # noqa: E402
 

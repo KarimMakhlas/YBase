@@ -41,3 +41,5 @@ class SlidingWindowLimiter:
 
 query_limiter = SlidingWindowLimiter(config.QUERY_RATE_PER_MINUTE)
 ingest_limiter = SlidingWindowLimiter(config.INGEST_RATE_PER_MINUTE)
+# Keyed by client IP (not user) — these guard the unauthenticated auth routes.
+auth_limiter = SlidingWindowLimiter(config.AUTH_RATE_PER_MINUTE)

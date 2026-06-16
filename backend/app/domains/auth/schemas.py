@@ -7,9 +7,12 @@ types from this module without pulling in the service logic.
 from .service import (  # noqa: F401
     AuthContext,
     BootstrapRequest,
+    ForgotPasswordRequest,
     JoinRequest,
     LoginRequest,
+    MePatchRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     SwitchWorkspaceRequest,
     UserCreateRequest,
     UserPatchRequest,

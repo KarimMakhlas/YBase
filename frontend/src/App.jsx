@@ -80,6 +80,10 @@ function parseHashRoute() {
     return { tab: null, payload: {}, shareToken: parts[1] }
   }
 
+  if (tab === 'reset' && parts[1]) {
+    return { tab: null, payload: {}, resetToken: parts[1] }
+  }
+
   if (tab === 'documents' && parts[1]) {
     return {
       tab: null,
@@ -216,6 +220,7 @@ export default function App() {
   const [docModal, setDocModal] = useState(null) // { docId, highlight }
   const [joinToken, setJoinToken] = useState(null) // invite link: #/join/<token>
   const [shareToken, setShareToken] = useState(null) // public decision: #/shared/<token>
+  const [resetToken, setResetToken] = useState(null) // password reset: #/reset/<token>
   const lastNonDocHash = React.useRef('#/home')
   const currentTabRef = React.useRef('home')
 
@@ -247,6 +252,11 @@ export default function App() {
         return
       }
       setShareToken(null)
+      if (route.resetToken) {
+        setResetToken(route.resetToken)
+        return
+      }
+      setResetToken(null)
       if (route.docModal?.docId) {
         setDocModal(route.docModal)
         return
@@ -346,6 +356,24 @@ export default function App() {
     )
   }
 
+  if (resetToken) {
+    return (
+      <ToastProvider>
+        <Auth
+          key="reset-auth"
+          mode="login"
+          resetToken={resetToken}
+          onAuthed={(user) => {
+            setAuthState({ loading: false, needsBootstrap: false, user })
+            setResetToken(null)
+            navigate('home')
+          }}
+          onBack={() => { setResetToken(null); window.location.hash = '#/login' }}
+        />
+      </ToastProvider>
+    )
+  }
+
   if (joinToken) {
     return (
       <ToastProvider>
@@ -394,6 +422,7 @@ export default function App() {
     return (
       <ToastProvider>
         <Auth
+          key="login-auth"
           mode={authState.needsBootstrap ? 'bootstrap' : 'login'}
           initialView={hash.startsWith('#/signup') ? 'register' : 'login'}
           onBack={() => { window.location.hash = '#/welcome' }}
