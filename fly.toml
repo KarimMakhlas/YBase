@@ -1,0 +1,41 @@
+# Fly.io deploy config. The Dockerfile builds the UI and serves it from the
+# FastAPI backend, so this is the whole app in one machine.
+#
+#   fly launch --no-deploy            # create the app (edit the name below first)
+#   fly secrets set DATABASE_URL=... ANTHROPIC_API_KEY=... CONNECTOR_SECRET_KEY=...
+#   fly deploy
+#
+# DATABASE_URL must point at a Postgres with the pgvector extension available
+# (recent Fly Postgres, Supabase, or Neon all qualify) — see DEPLOY.md.
+
+app = "whybase"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Non-secret config. Secrets (DATABASE_URL, ANTHROPIC_API_KEY, CONNECTOR_SECRET_KEY,
+# VOYAGE_API_KEY, SLACK_*, JIRA_*, GITHUB_*, RESEND_API_KEY) go in `fly secrets`.
+[env]
+  STATIC_DIR = "/srv/static"
+  SESSION_COOKIE_SECURE = "true"
+  LLM_PROVIDER = "anthropic"
+  EMBED_PROVIDER = "auto"
+  ALLOW_PUBLIC_SIGNUP = "true"
+  SEED_DEMO_ON_SIGNUP = "true"
+  # Set these to the deployed URL once you know it (used for OAuth callbacks,
+  # invite/digest links, and secure cookies):
+  #   APP_BASE_URL, SLACK_REDIRECT_BASE_URL, JIRA_REDIRECT_BASE_URL,
+  #   GITHUB_REDIRECT_BASE_URL, CORS_ORIGINS
+
+[http_service]
+  internal_port = 8100
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

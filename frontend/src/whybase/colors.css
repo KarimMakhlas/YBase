@@ -1,0 +1,183 @@
+/* ============================================================
+   WhyBase — Color
+   A calm, premium, neutral-forward palette with one confident
+   indigo accent (the colour of memory & reasoning). Cool grays
+   carry a faint blue cast, Linear-style. Light is the default;
+   the dark theme is a near-black blue, not a flat gray.
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- Neutral ramp (cool, faint blue cast) ---- */
+  --gray-0:   #ffffff;
+  --gray-25:  #fcfcfd;
+  --gray-50:  #f8f9fb;
+  --gray-100: #f1f2f5;
+  --gray-150: #e9ebef;
+  --gray-200: #e0e3e9;
+  --gray-300: #cdd1da;
+  --gray-400: #aab0bd;
+  --gray-500: #828a99;
+  --gray-600: #5f6776;
+  --gray-700: #434a57;
+  --gray-800: #2b313b;
+  --gray-900: #181c23;
+  --gray-950: #0c0e13;
+
+  /* ---- Indigo accent ramp (memory / reasoning) ---- */
+  --indigo-50:  #f2f3fd;
+  --indigo-100: #e7e8fb;
+  --indigo-200: #d2d4f7;
+  --indigo-300: #b4b6f0;
+  --indigo-400: #9193e6;
+  --indigo-500: #7174db;
+  --indigo-600: #5e6ad2;  /* PRIMARY */
+  --indigo-700: #4d54b4;
+  --indigo-800: #404691;
+  --indigo-900: #363b74;
+
+  /* ---- Semantic status hues ---- */
+  --emerald-500: #1a9d63;
+  --emerald-600: #15814f;
+  --amber-500:   #c0820a;
+  --amber-600:   #a06a05;
+  --rose-500:    #d24545;
+  --rose-600:    #b83333;
+  --sky-500:     #2b7fd4;
+
+  /* ---- Source brand hues (Slack / Notion / GitHub / Jira / Meeting) ---- */
+  --src-slack:   #8a6d1f;
+  --src-notion:  #4b5563;
+  --src-github:  #6d28d9;
+  --src-jira:    #1d4ed8;
+  --src-meeting: #0f766e;
+
+  /* ============================================================
+     Semantic aliases — light
+     ============================================================ */
+
+  /* Surfaces */
+  --bg:               var(--gray-50);
+  --surface:          var(--gray-0);
+  --surface-sunken:   var(--gray-100);
+  --surface-raised:   var(--gray-0);
+  --surface-inset:    var(--gray-50);
+  --surface-hover:    var(--gray-100);
+
+  /* Borders */
+  --border-subtle:    #edeef2;
+  --border:           #e2e4ea;
+  --border-strong:    #d2d6de;
+
+  /* Text */
+  --text:             #14161c;
+  --text-secondary:   #565d6b;
+  --text-tertiary:    #828a99;
+  --text-disabled:    #aab0bd;
+  --text-inverse:     #ffffff;
+
+  /* Accent (semantic) */
+  --accent:           var(--indigo-600);
+  --accent-hover:     var(--indigo-700);
+  --accent-active:    var(--indigo-800);
+  --accent-contrast:  #ffffff;
+  --accent-text:      var(--indigo-700);
+  --accent-soft:      rgba(94, 106, 210, 0.08);
+  --accent-soft-hover:rgba(94, 106, 210, 0.14);
+  --accent-border:    rgba(94, 106, 210, 0.28);
+  --accent-ring:      rgba(94, 106, 210, 0.32);
+
+  /* Status — text / soft fill / border */
+  --success:          var(--emerald-600);
+  --success-soft:     rgba(21, 129, 79, 0.08);
+  --success-border:   rgba(21, 129, 79, 0.26);
+  --warning:          var(--amber-600);
+  --warning-soft:     rgba(160, 106, 5, 0.09);
+  --warning-border:   rgba(160, 106, 5, 0.26);
+  --danger:           var(--rose-600);
+  --danger-soft:      rgba(184, 51, 51, 0.08);
+  --danger-border:    rgba(184, 51, 51, 0.26);
+  --info:             var(--sky-500);
+  --info-soft:        rgba(43, 127, 212, 0.08);
+  --info-border:      rgba(43, 127, 212, 0.26);
+
+  /* Utility */
+  --code-bg:          #0d1017;
+  --code-text:        #dfe4ee;
+  --highlight:        rgba(94, 106, 210, 0.18);
+  --skeleton-base:    var(--gray-100);
+  --skeleton-mid:     var(--gray-150);
+  --backdrop:         rgba(18, 22, 31, 0.42);
+  --selection:        rgba(94, 106, 210, 0.20);
+  --shadow-rgb:       18, 22, 31;
+}
+
+/* ============================================================
+   Dark theme — near-black blue, Linear-style
+   ============================================================ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:               #08090c;
+  --surface:          #0f1115;
+  --surface-sunken:   #0a0b0f;
+  --surface-raised:   #16181e;
+  --surface-inset:    #121419;
+  --surface-hover:    #181b21;
+
+  --border-subtle:    #181a20;
+  --border:           #23262e;
+  --border-strong:    #31353f;
+
+  --text:             #f6f7f9;
+  --text-secondary:   #a4abb8;
+  --text-tertiary:    #6f7785;
+  --text-disabled:    #4b5260;
+  --text-inverse:     #0c0e13;
+
+  --indigo-600:       #7c84e8;
+  --accent:           #7c84e8;
+  --accent-hover:     #8b92ec;
+  --accent-active:    #9a9ff0;
+  --accent-contrast:  #0a0b14;
+  --accent-text:      #a6abf2;
+  --accent-soft:      rgba(124, 132, 232, 0.13);
+  --accent-soft-hover:rgba(124, 132, 232, 0.20);
+  --accent-border:    rgba(124, 132, 232, 0.34);
+  --accent-ring:      rgba(124, 132, 232, 0.40);
+
+  --success:          #3ec98a;
+  --success-soft:     rgba(62, 201, 138, 0.13);
+  --success-border:   rgba(62, 201, 138, 0.32);
+  --warning:          #e0a849;
+  --warning-soft:     rgba(224, 168, 73, 0.14);
+  --warning-border:   rgba(224, 168, 73, 0.34);
+  --danger:           #f0726c;
+  --danger-soft:      rgba(240, 114, 108, 0.13);
+  --danger-border:    rgba(240, 114, 108, 0.34);
+  --info:             #5aa2ec;
+  --info-soft:        rgba(90, 162, 236, 0.13);
+  --info-border:      rgba(90, 162, 236, 0.32);
+
+  --src-slack:   #d6b256;
+  --src-notion:  #c7cdd6;
+  --src-github:  #b69bf0;
+  --src-jira:    #7aa0f5;
+  --src-meeting: #5cc7b8;
+
+  --code-bg:          #07080b;
+  --code-text:        #dbe2ee;
+  --highlight:        rgba(124, 132, 232, 0.26);
+  --skeleton-base:    #16181e;
+  --skeleton-mid:     #1d2027;
+  --backdrop:         rgba(0, 0, 0, 0.62);
+  --selection:        rgba(124, 132, 232, 0.30);
+  --shadow-rgb:       0, 0, 0;
+}
+
+/* OS-preference auto-dark is applied by setting data-theme on <html> via a
+   tiny init script (see index.html) rather than a CSS media query — this keeps
+   every theme token under a single registerable scope (:root and the dark
+   theme attribute) and still respects the OS while allowing an explicit
+   user override. */

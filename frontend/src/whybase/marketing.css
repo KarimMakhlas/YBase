@@ -1,0 +1,122 @@
+/* ============================================================
+   WhyBase — marketing landing page
+   Layout-led, editorial register. Every selector is scoped under
+   .wb-marketing so it can never collide with the product app's
+   global styles. Ported from ui_kits/marketing/index.html.
+   ============================================================ */
+.wb-marketing { background: var(--bg); color: var(--text); min-height: 100%; overflow-y: auto; height: 100%; }
+.wb-marketing a { text-decoration: none; color: inherit; }
+
+.wb-marketing .wrap { max-width: var(--container); margin: 0 auto; padding: 0 var(--sp-6); }
+.wb-marketing section { position: relative; }
+
+/* nav */
+.wb-marketing .nav { position: sticky; top: 0; z-index: 30; backdrop-filter: saturate(1.2) blur(10px); -webkit-backdrop-filter: saturate(1.2) blur(10px); background: color-mix(in srgb, var(--bg) 78%, transparent); border-bottom: 1px solid var(--border-subtle); }
+.wb-marketing .nav-inner { max-width: var(--container); margin: 0 auto; padding: 0 var(--sp-6); height: 60px; display: flex; align-items: center; gap: var(--sp-6); }
+.wb-marketing .m-brand { display: flex; align-items: center; gap: 10px; font-weight: var(--fw-semibold); font-size: 16px; letter-spacing: var(--ls-snug); cursor: pointer; }
+.wb-marketing .m-brand img { width: 27px; height: 27px; }
+.wb-marketing .nav-links { display: flex; gap: var(--sp-1); margin-left: var(--sp-4); }
+.wb-marketing .nav-links a { color: var(--text-secondary); font-size: var(--fs-sm); font-weight: var(--fw-medium); padding: 7px 11px; border-radius: var(--radius-sm); transition: var(--t-colors); }
+.wb-marketing .nav-links a:hover { color: var(--text); background: var(--surface-hover); }
+.wb-marketing .nav-cta { margin-left: auto; display: flex; align-items: center; gap: var(--sp-2); }
+
+/* hero */
+.wb-marketing .hero { padding: 90px 0 64px; text-align: center; overflow: hidden; }
+.wb-marketing .hero::before { content: ""; position: absolute; inset: -10% 0 auto 0; height: 420px; z-index: 0; background: radial-gradient(60% 80% at 50% 0%, var(--accent-soft) 0%, transparent 70%); pointer-events: none; }
+.wb-marketing .hero > * { position: relative; z-index: 1; }
+.wb-marketing .pill-link { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--text-secondary); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 5px 14px 5px 6px; box-shadow: var(--shadow-sm); margin-bottom: var(--sp-6); }
+.wb-marketing .pill-link b { color: var(--accent-text); }
+.wb-marketing .tagk { display: inline-flex; align-items: center; gap: 5px; background: var(--accent-soft); color: var(--accent-text); border-radius: var(--radius-pill); padding: 3px 9px; font-family: var(--font-mono); font-size: 11px; }
+.wb-marketing h1.title { font-size: var(--fs-display-2xl); font-weight: var(--fw-bold); letter-spacing: var(--ls-display); line-height: 1.02; margin: 0 auto var(--sp-5); max-width: 16ch; text-wrap: balance; }
+.wb-marketing h1.title em { font-style: normal; color: var(--accent-text); }
+.wb-marketing .sub { font-size: clamp(16px, 1.5vw, 19px); color: var(--text-secondary); max-width: 56ch; margin: 0 auto var(--sp-7); line-height: var(--lh-snug); text-wrap: pretty; }
+.wb-marketing .hero-cta { display: flex; gap: var(--sp-3); justify-content: center; align-items: center; flex-wrap: wrap; }
+.wb-marketing .trust { margin-top: var(--sp-8); display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.wb-marketing .trust span { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: var(--ls-label); color: var(--text-tertiary); }
+.wb-marketing .logos { display: flex; gap: var(--sp-8); align-items: center; flex-wrap: wrap; justify-content: center; color: var(--text-tertiary); font-weight: var(--fw-semibold); font-size: 16px; letter-spacing: -0.01em; opacity: 0.8; }
+
+/* product preview */
+.wb-marketing .preview { margin: var(--sp-10) auto 0; max-width: 880px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-xl); overflow: hidden; }
+.wb-marketing .preview-bar { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border-subtle); background: var(--surface-inset); }
+.wb-marketing .dot3 { width: 11px; height: 11px; border-radius: 50%; }
+.wb-marketing .preview-body { padding: 26px 30px 30px; text-align: left; }
+.wb-marketing .q-line { display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); }
+.wb-marketing .q-line svg { width: 15px; height: 15px; }
+.wb-marketing .q-text { font-size: var(--fs-lg); font-weight: var(--fw-semibold); letter-spacing: var(--ls-snug); margin: 8px 0 18px; }
+.wb-marketing .ans { font-size: var(--fs-md); line-height: var(--lh-relaxed); color: var(--text); }
+.wb-marketing .ans .cite { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); border-radius: 5px; padding: 1px 5px; margin: 0 1px; vertical-align: 1px; }
+.wb-marketing .ans-meta { display: flex; gap: 8px; margin-top: 18px; align-items: center; flex-wrap: wrap; }
+.wb-marketing .conf { font-size: 11px; font-weight: 600; color: var(--success); border: 1px solid var(--success-border); border-radius: var(--radius-pill); padding: 3px 11px; }
+.wb-marketing .src { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 3px 11px; }
+.wb-marketing .src i { width: 6px; height: 6px; border-radius: 50%; }
+
+/* sections */
+.wb-marketing .section-pad { padding: 88px 0; }
+.wb-marketing .m-eyebrow { font-family: var(--font-mono); font-size: 12px; font-weight: var(--fw-semibold); text-transform: uppercase; letter-spacing: var(--ls-label); color: var(--accent-text); }
+.wb-marketing .h2 { font-size: var(--fs-display-lg); font-weight: var(--fw-bold); letter-spacing: var(--ls-tight); line-height: 1.08; margin: 12px 0 16px; max-width: 18ch; text-wrap: balance; }
+.wb-marketing .lede { font-size: var(--fs-lg); color: var(--text-secondary); max-width: 56ch; line-height: var(--lh-snug); margin: 0; }
+
+/* steps */
+.wb-marketing .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-5); margin-top: var(--sp-10); }
+.wb-marketing .step { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--sp-6); box-shadow: var(--shadow-sm); }
+.wb-marketing .step-n { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--accent-text); }
+.wb-marketing .step-icon { width: 40px; height: 40px; border-radius: var(--radius); display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); margin: 14px 0; }
+.wb-marketing .step-icon svg { width: 20px; height: 20px; }
+.wb-marketing .step h3 { font-size: var(--fs-lg); font-weight: var(--fw-semibold); letter-spacing: var(--ls-snug); margin: 0 0 8px; }
+.wb-marketing .step p { color: var(--text-secondary); font-size: var(--fs-sm); line-height: var(--lh-base); margin: 0; }
+
+/* feature grid */
+.wb-marketing .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-4); margin-top: var(--sp-10); }
+.wb-marketing .feat { padding: var(--sp-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface); transition: var(--t-elevate); }
+.wb-marketing .feat:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); transform: translateY(-3px); }
+.wb-marketing .feat-icon { color: var(--accent-text); margin-bottom: 12px; display: inline-flex; }
+.wb-marketing .feat h3 { font-size: var(--fs-md); font-weight: var(--fw-semibold); margin: 0 0 6px; letter-spacing: var(--ls-snug); }
+.wb-marketing .feat p { color: var(--text-secondary); font-size: var(--fs-sm); line-height: var(--lh-base); margin: 0; }
+
+/* split */
+.wb-marketing .split { display: grid; grid-template-columns: 1.1fr 1fr; gap: var(--sp-12); align-items: center; }
+.wb-marketing .graph-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); padding: var(--sp-6); }
+.wb-marketing .gnode { display: flex; align-items: center; gap: 11px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 10px; background: var(--surface); font-size: var(--fs-sm); }
+.wb-marketing .gnode svg { width: 17px; height: 17px; flex-shrink: 0; }
+.wb-marketing .gnode.lead { border-color: var(--accent-border); background: var(--accent-soft); }
+.wb-marketing .gconn { margin-left: 26px; height: 16px; border-left: 2px dashed var(--border-strong); }
+.wb-marketing .gtag { font-family: var(--font-mono); font-size: 10.5px; padding: 2px 7px; border-radius: 5px; background: var(--surface-sunken); color: var(--text-tertiary); margin-left: auto; }
+.wb-marketing .split code { font-family: var(--font-mono); font-size: 0.9em; color: var(--accent-text); }
+
+/* cta */
+.wb-marketing .cta { text-align: center; background: linear-gradient(160deg, var(--indigo-600), var(--indigo-900)); color: #fff; border-radius: var(--radius-xl); padding: 72px 32px; box-shadow: var(--shadow-xl); position: relative; overflow: hidden; }
+.wb-marketing .cta::after { content: ""; position: absolute; inset: 0; background: radial-gradient(50% 60% at 50% 0%, rgba(255,255,255,0.18), transparent 70%); }
+.wb-marketing .cta > * { position: relative; }
+.wb-marketing .cta h2 { font-size: var(--fs-display-lg); font-weight: var(--fw-bold); letter-spacing: var(--ls-tight); margin: 0 0 14px; }
+.wb-marketing .cta p { color: rgba(255,255,255,0.82); font-size: var(--fs-lg); max-width: 48ch; margin: 0 auto 28px; }
+.wb-marketing .btn-white { background: #fff; color: var(--indigo-700); height: 46px; padding: 0 24px; border-radius: var(--radius); font-weight: 600; font-size: var(--fs-md); border: none; cursor: pointer; box-shadow: var(--shadow-md); }
+.wb-marketing .btn-ghost-w { background: rgba(255,255,255,0.1); color: #fff; height: 46px; padding: 0 22px; border-radius: var(--radius); font-weight: 600; font-size: var(--fs-md); border: 1px solid rgba(255,255,255,0.28); cursor: pointer; }
+
+/* footer */
+.wb-marketing footer { border-top: 1px solid var(--border); padding: var(--sp-10) 0 var(--sp-8); margin-top: var(--sp-16); }
+.wb-marketing .foot-inner { display: flex; justify-content: space-between; gap: var(--sp-8); flex-wrap: wrap; }
+.wb-marketing .foot-brand { max-width: 280px; }
+.wb-marketing .foot-brand p { color: var(--text-tertiary); font-size: var(--fs-sm); margin: 12px 0 0; line-height: var(--lh-base); }
+.wb-marketing .foot-cols { display: flex; gap: var(--sp-12); }
+.wb-marketing .foot-col h4 { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: var(--ls-label); color: var(--text-tertiary); margin: 0 0 12px; }
+.wb-marketing .foot-col a { display: block; color: var(--text-secondary); font-size: var(--fs-sm); padding: 5px 0; cursor: pointer; }
+
+/* buttons */
+.wb-marketing .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: var(--radius-sm); font-weight: var(--fw-medium); font-size: var(--fs-sm); cursor: pointer; border: 1px solid transparent; transition: var(--t-control); }
+.wb-marketing .btn svg { width: 16px; height: 16px; }
+.wb-marketing .btn-primary { background: var(--accent); color: var(--accent-contrast); box-shadow: var(--shadow-xs); }
+.wb-marketing .btn-primary:hover { background: var(--accent-hover); }
+.wb-marketing .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+.wb-marketing .btn-secondary:hover { background: var(--surface-hover); }
+.wb-marketing .btn-lg { height: 46px; padding: 0 22px; font-size: var(--fs-md); border-radius: var(--radius); }
+
+/* scroll reveal */
+.wb-marketing .reveal { opacity: 0; transform: translateY(20px); filter: blur(6px); transition: opacity 0.7s var(--ease-emphasis), transform 0.7s var(--ease-emphasis), filter 0.7s var(--ease-emphasis); transition-delay: var(--d, 0ms); }
+.wb-marketing .reveal.in { opacity: 1; transform: none; filter: none; }
+@media (prefers-reduced-motion: reduce) { .wb-marketing .reveal { opacity: 1; transform: none; filter: none; } }
+
+@media (max-width: 860px) {
+  .wb-marketing .steps, .wb-marketing .features { grid-template-columns: 1fr; }
+  .wb-marketing .split { grid-template-columns: 1fr; gap: var(--sp-8); }
+  .wb-marketing .nav-links { display: none; }
+}

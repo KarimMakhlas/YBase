@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="170" height="34" viewBox="0 0 170 34" fill="none" role="img" aria-label="WhyBase">
+  <defs>
+    <linearGradient id="wb-wm-g" x1="2" y1="2" x2="30" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7C84E8"></stop>
+      <stop offset="1" stop-color="#404691"></stop>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="32" height="32" rx="8.5" fill="url(#wb-wm-g)"></rect>
+  <path d="M12.4 11.8 L22 17 L13.6 22.6" stroke="#fff" stroke-opacity="0.55" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+  <circle cx="12.4" cy="11.8" r="3.5" fill="#fff"></circle>
+  <circle cx="22" cy="17" r="2.7" fill="#fff" fill-opacity="0.9"></circle>
+  <circle cx="13.6" cy="22.6" r="2.2" fill="#fff" fill-opacity="0.78"></circle>
+  <text x="46" y="23" font-family="Geist, -apple-system, BlinkMacSystemFont, &#39;Segoe UI&#39;, sans-serif" font-size="19.5" font-weight="600" letter-spacing="-0.02em" fill="currentColor">WhyBase</text>
+</svg>

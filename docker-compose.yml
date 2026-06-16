@@ -1,0 +1,45 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: whybase-db
+    environment:
+      POSTGRES_USER: whybase
+      POSTGRES_PASSWORD: whybase
+      POSTGRES_DB: whybase
+    ports:
+      - "5433:5432"
+    volumes:
+      - whybase_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U whybase -d whybase"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # Full stack (backend + built UI) in one container:
+  #   docker compose --profile app up -d --build       → http://localhost:8100
+  # Plain `docker compose up -d` still starts only the database for local dev.
+  app:
+    build: .
+    container_name: whybase-app
+    profiles: ["app"]
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8100:8100"
+    environment:
+      DATABASE_URL: postgresql://whybase:whybase@db:5432/whybase
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
+      SLACK_REDIRECT_BASE_URL: ${SLACK_REDIRECT_BASE_URL:-http://localhost:8100}
+      CONNECTOR_SECRET_KEY: ${CONNECTOR_SECRET_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  whybase_pgdata:

@@ -1,0 +1,637 @@
+"""Password auth, workspace membership, and role dependencies."""
+
+import hashlib
+import logging
+import secrets
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
+import asyncpg
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from pydantic import BaseModel
+
+from app.core import config, db
+from app.domains.ops import demo_data as demo
+
+logger = logging.getLogger(__name__)
+
+COOKIE_NAME = "sb_session"
+_ph = PasswordHasher()
+_ROLE_RANK = {"member": 1, "admin": 2, "owner": 3}
+
+
+@dataclass
+class AuthContext:
+    user_id: int
+    email: str
+    display_name: str
+    workspace_id: int
+    workspace_name: str
+    role: str
+    session_id: int
+    workspaces: List[Dict[str, Any]]
+
+
+class BootstrapRequest(BaseModel):
+    workspace_name: str = "Default Workspace"
+    email: str
+    display_name: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    workspace_name: str = ""
+    email: str
+    display_name: str
+    password: str
+
+
+class JoinRequest(BaseModel):
+    token: str
+    email: str
+    display_name: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    workspace_id: Optional[int] = None
+
+
+class SwitchWorkspaceRequest(BaseModel):
+    workspace_id: int
+
+
+class UserCreateRequest(BaseModel):
+    email: str
+    display_name: str
+    password: str
+    role: str = "member"
+
+
+class UserPatchRequest(BaseModel):
+    display_name: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    disabled: Optional[bool] = None
+
+
+router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
+def _slug(value: str) -> str:
+    chars = []
+    last_dash = False
+    for ch in value.lower():
+        if ch.isalnum():
+            chars.append(ch)
+            last_dash = False
+        elif not last_dash:
+            chars.append("-")
+            last_dash = True
+    slug = "".join(chars).strip("-")
+    return slug or "workspace"
+
+
+async def _unique_slug(conn: asyncpg.Connection, name: str) -> str:
+    """A slug not already taken — public signup allows duplicate workspace names."""
+    base = _slug(name)
+    slug = base
+    n = 2
+    while await conn.fetchval(
+        "SELECT 1 FROM workspaces WHERE lower(slug)=lower($1)", slug
+    ):
+        slug = f"{base}-{n}"
+        n += 1
+    return slug
+
+
+async def _seed_demo_bg(workspace_id: int, user_id: int) -> None:
+    """Background task: pre-load a fresh workspace with the demo corpus so the
+    first visit has something to query. Failures are logged, never surfaced."""
+    try:
+        result = await demo.seed_demo_data(workspace_id)
+        pool = await db.get_pool()
+        async with pool.acquire() as conn:
+            await audit(
+                conn, "demo_seed", workspace_id, user_id,
+                data={
+                    "created": result["created"],
+                    "duplicates": result["duplicates"],
+                    "document_ids": result["document_ids"],
+                    "source": "signup",
+                },
+            )
+    except Exception:  # background task — must not crash the worker loop
+        logger.exception("demo seed failed for workspace %s", workspace_id)
+
+
+def clean_email(email: str) -> str:
+    email = " ".join((email or "").split()).lower()
+    if "@" not in email or email.startswith("@") or email.endswith("@"):
+        raise HTTPException(400, "valid email is required")
+    return email
+
+
+def hash_password(password: str) -> str:
+    if len(password) < config.PASSWORD_MIN_LENGTH:
+        raise HTTPException(
+            400,
+            f"password must be at least {config.PASSWORD_MIN_LENGTH} characters",
+        )
+    return _ph.hash(password)
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    try:
+        return _ph.verify(password_hash, password)
+    except VerifyMismatchError:
+        return False
+    except Exception:
+        return False
+
+
+async def audit(
+    conn: asyncpg.Connection,
+    action: str,
+    workspace_id: Optional[int] = None,
+    actor_user_id: Optional[int] = None,
+    target_type: Optional[str] = None,
+    target_id: Optional[Any] = None,
+    data: Optional[Dict[str, Any]] = None,
+) -> None:
+    await conn.execute(
+        "INSERT INTO audit_events(workspace_id, actor_user_id, action, target_type, target_id, data) "
+        "VALUES($1, $2, $3, $4, $5, $6)",
+        workspace_id, actor_user_id, action, target_type,
+        str(target_id) if target_id is not None else None, data or {},
+    )
+
+
+async def bootstrap_needed() -> bool:
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        count = await conn.fetchval("SELECT count(*) FROM users")
+    return count == 0
+
+
+async def _memberships(conn: asyncpg.Connection, user_id: int) -> List[Dict[str, Any]]:
+    rows = await conn.fetch(
+        "SELECT w.id, w.name, m.role "
+        "FROM workspace_memberships m JOIN workspaces w ON w.id = m.workspace_id "
+        "WHERE m.user_id=$1 ORDER BY w.name",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def _context_for(
+    conn: asyncpg.Connection, user_id: int, workspace_id: int, session_id: int
+) -> AuthContext:
+    row = await conn.fetchrow(
+        "SELECT u.id AS user_id, u.email, u.display_name, w.name AS workspace_name, m.role "
+        "FROM users u "
+        "JOIN workspace_memberships m ON m.user_id = u.id "
+        "JOIN workspaces w ON w.id = m.workspace_id "
+        "WHERE u.id=$1 AND m.workspace_id=$2",
+        user_id, workspace_id,
+    )
+    if row is None:
+        raise HTTPException(403, "user has no workspace membership")
+    return AuthContext(
+        user_id=row["user_id"],
+        email=row["email"],
+        display_name=row["display_name"],
+        workspace_id=workspace_id,
+        workspace_name=row["workspace_name"],
+        role=row["role"],
+        session_id=session_id,
+        workspaces=await _memberships(conn, user_id),
+    )
+
+
+async def _record_activity(
+    conn: asyncpg.Connection, workspace_id: int, user_id: int
+) -> None:
+    """Mark the user active today (UTC). Idempotent per user/workspace/day."""
+    await conn.execute(
+        "INSERT INTO activity_days(workspace_id, user_id, day) "
+        "VALUES($1, $2, (now() AT TIME ZONE 'utc')::date) ON CONFLICT DO NOTHING",
+        workspace_id, user_id,
+    )
+
+
+async def create_session(
+    conn: asyncpg.Connection,
+    user_id: int,
+    workspace_id: int,
+    request: Request,
+    response: Response,
+) -> int:
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(days=config.SESSION_DAYS)
+    session_id = await conn.fetchval(
+        "INSERT INTO auth_sessions(user_id, workspace_id, token_hash, user_agent, ip, expires_at) "
+        "VALUES($1, $2, $3, $4, $5, $6) RETURNING id",
+        user_id, workspace_id, _hash_token(token),
+        request.headers.get("user-agent"), _client_ip(request), expires,
+    )
+    await _record_activity(conn, workspace_id, user_id)
+    response.set_cookie(
+        COOKIE_NAME,
+        token,
+        max_age=config.SESSION_DAYS * 24 * 60 * 60,
+        httponly=True,
+        samesite="lax",
+        secure=config.SESSION_COOKIE_SECURE,
+        path="/",
+    )
+    return session_id
+
+
+async def revoke_current_session(request: Request, response: Response) -> None:
+    token = request.cookies.get(COOKIE_NAME)
+    response.delete_cookie(COOKIE_NAME, path="/")
+    if not token:
+        return
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE auth_sessions SET revoked_at=now() "
+            "WHERE token_hash=$1 AND revoked_at IS NULL",
+            _hash_token(token),
+        )
+
+
+async def get_current_user(request: Request) -> AuthContext:
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(401, "not authenticated")
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT s.id AS session_id, s.workspace_id, s.last_seen_at, u.id AS user_id, "
+            "       u.email, u.display_name, u.disabled, w.name AS workspace_name, m.role "
+            "FROM auth_sessions s "
+            "JOIN users u ON u.id = s.user_id "
+            "JOIN workspaces w ON w.id = s.workspace_id "
+            "JOIN workspace_memberships m ON m.user_id = u.id AND m.workspace_id = s.workspace_id "
+            "WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at > now()",
+            _hash_token(token),
+        )
+        if row is None or row["disabled"]:
+            raise HTTPException(401, "not authenticated")
+        # Record a daily-active row only on the first request of a new UTC day
+        # (keeps analytics accurate without a write on every request).
+        prev_seen = row["last_seen_at"]
+        if prev_seen is None or prev_seen.astimezone(timezone.utc).date() < datetime.now(timezone.utc).date():
+            await _record_activity(conn, row["workspace_id"], row["user_id"])
+        await conn.execute(
+            "UPDATE auth_sessions SET last_seen_at=now() WHERE id=$1", row["session_id"]
+        )
+        workspaces = await _memberships(conn, row["user_id"])
+    return AuthContext(
+        user_id=row["user_id"],
+        email=row["email"],
+        display_name=row["display_name"],
+        workspace_id=row["workspace_id"],
+        workspace_name=row["workspace_name"],
+        role=row["role"],
+        session_id=row["session_id"],
+        workspaces=workspaces,
+    )
+
+
+def require_role(min_role: str):
+    async def dep(user: AuthContext = Depends(get_current_user)) -> AuthContext:
+        if _ROLE_RANK.get(user.role, 0) < _ROLE_RANK[min_role]:
+            raise HTTPException(403, "insufficient role")
+        return user
+    return dep
+
+
+async def _login_throttled(conn: asyncpg.Connection, email: str, ip: str) -> bool:
+    failures = await conn.fetchval(
+        "SELECT count(*) FROM auth_login_attempts "
+        "WHERE lower(email)=lower($1) AND COALESCE(ip, '')=COALESCE($2, '') "
+        "AND success=false "
+        "AND attempted_at > now() - ($3 || ' minutes')::interval",
+        email, ip, str(config.LOGIN_WINDOW_MINUTES),
+    )
+    return failures >= config.LOGIN_MAX_FAILURES
+
+
+async def _record_login_attempt(
+    conn: asyncpg.Connection, email: str, ip: str, success: bool
+) -> None:
+    await conn.execute(
+        "INSERT INTO auth_login_attempts(email, ip, success) VALUES($1, $2, $3)",
+        email, ip, success,
+    )
+
+
+def user_payload(user: AuthContext) -> Dict[str, Any]:
+    return {
+        "user": {
+            "id": user.user_id,
+            "email": user.email,
+            "display_name": user.display_name,
+        },
+        "workspace": {
+            "id": user.workspace_id,
+            "name": user.workspace_name,
+            "role": user.role,
+        },
+        "workspaces": user.workspaces,
+    }
+
+
+@router.get("/bootstrap-status")
+async def bootstrap_status() -> Dict[str, Any]:
+    return {"needs_bootstrap": await bootstrap_needed()}
+
+
+@router.post("/bootstrap")
+async def bootstrap(
+    req: BootstrapRequest, request: Request, response: Response
+) -> Dict[str, Any]:
+    pool = await db.get_pool()
+    email = clean_email(req.email)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            existing = await conn.fetchval("SELECT count(*) FROM users")
+            if existing:
+                raise HTTPException(409, "bootstrap already completed")
+            workspace = await conn.fetchrow(
+                "SELECT id FROM workspaces WHERE lower(slug)='default' LIMIT 1"
+            )
+            if workspace is None:
+                workspace_id = await conn.fetchval(
+                    "INSERT INTO workspaces(name, slug) VALUES($1, $2) RETURNING id",
+                    req.workspace_name.strip() or "Default Workspace",
+                    _slug(req.workspace_name),
+                )
+            else:
+                workspace_id = workspace["id"]
+                await conn.execute(
+                    "UPDATE workspaces SET name=$2, slug=$3 WHERE id=$1",
+                    workspace_id,
+                    req.workspace_name.strip() or "Default Workspace",
+                    _slug(req.workspace_name),
+                )
+            user_id = await conn.fetchval(
+                "INSERT INTO users(email, display_name, password_hash) VALUES($1, $2, $3) "
+                "RETURNING id",
+                email, req.display_name.strip() or email,
+                hash_password(req.password),
+            )
+            await conn.execute(
+                "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
+                "VALUES($1, $2, 'owner')",
+                workspace_id, user_id,
+            )
+            await conn.execute(
+                "UPDATE chat_sessions SET user_id=$2 WHERE workspace_id=$1 AND user_id IS NULL",
+                workspace_id, user_id,
+            )
+            session_id = await create_session(conn, user_id, workspace_id, request, response)
+            await audit(conn, "bootstrap", workspace_id, user_id, "workspace", workspace_id)
+            user = await _context_for(conn, user_id, workspace_id, session_id)
+            return user_payload(user)
+
+
+@router.post("/register")
+async def register(
+    req: RegisterRequest,
+    request: Request,
+    response: Response,
+    background: BackgroundTasks,
+) -> Dict[str, Any]:
+    """Public self-serve signup: create a brand-new workspace + owner account.
+    Unlike bootstrap, this is multi-tenant and does not claim orphan data."""
+    if not config.ALLOW_PUBLIC_SIGNUP:
+        raise HTTPException(403, "public signup is disabled on this instance")
+    email = clean_email(req.email)
+    display_name = req.display_name.strip() or email
+    ws_name = req.workspace_name.strip() or f"{display_name}'s Workspace"
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            existing = await conn.fetchval(
+                "SELECT id FROM users WHERE lower(email)=lower($1)", email
+            )
+            if existing:
+                raise HTTPException(
+                    409, "an account with this email already exists — sign in instead"
+                )
+            password_hash = hash_password(req.password)  # validates length
+            slug = await _unique_slug(conn, ws_name)
+            workspace_id = await conn.fetchval(
+                "INSERT INTO workspaces(name, slug) VALUES($1, $2) RETURNING id",
+                ws_name, slug,
+            )
+            user_id = await conn.fetchval(
+                "INSERT INTO users(email, display_name, password_hash) VALUES($1, $2, $3) "
+                "RETURNING id",
+                email, display_name, password_hash,
+            )
+            await conn.execute(
+                "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
+                "VALUES($1, $2, 'owner')",
+                workspace_id, user_id,
+            )
+            session_id = await create_session(conn, user_id, workspace_id, request, response)
+            await audit(conn, "register", workspace_id, user_id, "workspace", workspace_id)
+            user = await _context_for(conn, user_id, workspace_id, session_id)
+    seeding = config.SEED_DEMO_ON_SIGNUP
+    if seeding:
+        background.add_task(_seed_demo_bg, workspace_id, user_id)
+    payload = user_payload(user)
+    payload["demo_seeding"] = seeding
+    return payload
+
+
+@router.get("/invite/{token}")
+async def invite_preview(token: str) -> Dict[str, Any]:
+    """Public: show which workspace an invite link joins, before sign-up."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT i.role, i.email, i.expires_at, i.accepted_at, i.revoked_at, "
+            "       w.name AS workspace_name "
+            "FROM workspace_invites i JOIN workspaces w ON w.id = i.workspace_id "
+            "WHERE i.token_hash=$1",
+            _hash_token(token),
+        )
+    if row is None:
+        raise HTTPException(404, "invite not found")
+    if row["revoked_at"] is not None:
+        reason = "revoked"
+    elif row["accepted_at"] is not None:
+        reason = "used"
+    elif row["expires_at"] <= datetime.now(timezone.utc):
+        reason = "expired"
+    else:
+        reason = None
+    return {
+        "valid": reason is None,
+        "reason": reason,
+        "workspace_name": row["workspace_name"],
+        "role": row["role"],
+        "email": row["email"],
+    }
+
+
+@router.post("/join")
+async def join(
+    req: JoinRequest, request: Request, response: Response
+) -> Dict[str, Any]:
+    """Accept a workspace invite. Creates the account on first join, or attaches
+    an existing account (after verifying its password) to the new workspace."""
+    email = clean_email(req.email)
+    pool = await db.get_pool()
+    ip = _client_ip(request)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            invite = await conn.fetchrow(
+                "SELECT id, workspace_id, role, expires_at, accepted_at, revoked_at "
+                "FROM workspace_invites WHERE token_hash=$1 FOR UPDATE",
+                _hash_token(req.token),
+            )
+            if invite is None:
+                raise HTTPException(404, "invite not found")
+            if invite["revoked_at"] is not None:
+                raise HTTPException(410, "this invite has been revoked")
+            if invite["accepted_at"] is not None:
+                raise HTTPException(410, "this invite has already been used")
+            if invite["expires_at"] <= datetime.now(timezone.utc):
+                raise HTTPException(410, "this invite has expired")
+            workspace_id = invite["workspace_id"]
+            user = await conn.fetchrow(
+                "SELECT id, password_hash, disabled FROM users WHERE lower(email)=lower($1)",
+                email,
+            )
+            if user is None:
+                user_id = await conn.fetchval(
+                    "INSERT INTO users(email, display_name, password_hash) "
+                    "VALUES($1, $2, $3) RETURNING id",
+                    email, req.display_name.strip() or email, hash_password(req.password),
+                )
+            else:
+                # Existing account: require its password so an invite link can't
+                # be used to hijack someone else's email.
+                ok = not user["disabled"] and verify_password(
+                    req.password, user["password_hash"]
+                )
+                await _record_login_attempt(conn, email, ip, ok)
+                if not ok:
+                    raise HTTPException(
+                        401,
+                        "an account with this email exists — enter its password to join",
+                    )
+                user_id = user["id"]
+            already_member = await conn.fetchval(
+                "SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",
+                workspace_id, user_id,
+            )
+            if already_member is None:
+                await conn.execute(
+                    "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
+                    "VALUES($1, $2, $3)",
+                    workspace_id, user_id, invite["role"],
+                )
+            await conn.execute(
+                "UPDATE workspace_invites SET accepted_at=now(), accepted_by=$2 WHERE id=$1",
+                invite["id"], user_id,
+            )
+            session_id = await create_session(conn, user_id, workspace_id, request, response)
+            await audit(conn, "join_workspace", workspace_id, user_id, "workspace",
+                        workspace_id, {"role": invite["role"]})
+            current = await _context_for(conn, user_id, workspace_id, session_id)
+            return user_payload(current)
+
+
+@router.post("/login")
+async def login(
+    req: LoginRequest, request: Request, response: Response
+) -> Dict[str, Any]:
+    pool = await db.get_pool()
+    email = clean_email(req.email)
+    ip = _client_ip(request)
+    async with pool.acquire() as conn:
+        if await _login_throttled(conn, email, ip):
+            raise HTTPException(429, "too many failed login attempts")
+        user = await conn.fetchrow(
+            "SELECT id, email, display_name, password_hash, disabled "
+            "FROM users WHERE lower(email)=lower($1)",
+            email,
+        )
+        ok = bool(user) and not user["disabled"] and verify_password(
+            req.password, user["password_hash"]
+        )
+        await _record_login_attempt(conn, email, ip, ok)
+        if not ok:
+            raise HTTPException(401, "invalid email or password")
+        memberships = await _memberships(conn, user["id"])
+        if not memberships:
+            raise HTTPException(403, "user has no workspace membership")
+        workspace_id = req.workspace_id or memberships[0]["id"]
+        if workspace_id not in {m["id"] for m in memberships}:
+            raise HTTPException(403, "not a member of that workspace")
+        async with conn.transaction():
+            session_id = await create_session(conn, user["id"], workspace_id, request, response)
+            await audit(conn, "login", workspace_id, user["id"], "user", user["id"])
+            current = await _context_for(conn, user["id"], workspace_id, session_id)
+            return user_payload(current)
+
+
+@router.post("/logout")
+async def logout(
+    request: Request,
+    response: Response,
+    user: AuthContext = Depends(get_current_user),
+) -> Dict[str, Any]:
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        await audit(conn, "logout", user.workspace_id, user.user_id, "user", user.user_id)
+    await revoke_current_session(request, response)
+    return {"ok": True}
+
+
+@router.get("/me")
+async def me(user: AuthContext = Depends(get_current_user)) -> Dict[str, Any]:
+    return user_payload(user)
+
+
+@router.post("/switch-workspace")
+async def switch_workspace(
+    req: SwitchWorkspaceRequest,
+    user: AuthContext = Depends(get_current_user),
+) -> Dict[str, Any]:
+    if req.workspace_id not in {w["id"] for w in user.workspaces}:
+        raise HTTPException(403, "not a member of that workspace")
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE auth_sessions SET workspace_id=$2, last_seen_at=now() WHERE id=$1",
+            user.session_id, req.workspace_id,
+        )
+        await audit(conn, "switch_workspace", req.workspace_id, user.user_id,
+                    "workspace", req.workspace_id)
+        current = await _context_for(conn, user.user_id, req.workspace_id, user.session_id)
+    return user_payload(current)

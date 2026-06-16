@@ -1,0 +1,8 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+asyncpg>=0.29
+anthropic>=0.49
+httpx>=0.27
+pydantic>=2.6
+argon2-cffi>=23.1
+cryptography>=42

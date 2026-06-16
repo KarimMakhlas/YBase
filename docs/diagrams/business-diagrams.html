@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Whybase for Teams — Business Overview</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #f0f4f8;
+    --surface: #ffffff;
+    --card-bg: #f8fafc;
+    --border: #dde3ec;
+    --text: #1a202c;
+    --subtext: #4a5568;
+    --header-bg: #ffffff;
+    --header-shadow: 0 1px 4px rgba(0,0,0,0.10);
+    --nav-bg: #f7f9fc;
+    --badge-bg: #3b82f6;
+    --badge-text: #ffffff;
+    --btn-bg: #3b82f6;
+    --btn-text: #ffffff;
+    --btn-hover: #2563eb;
+    --title-color: #1e3a5f;
+    --card-shadow: 0 2px 8px rgba(0,0,0,0.07);
+  }
+  [data-theme="dark"] {
+    --bg: #0f1216;
+    --surface: #161b22;
+    --card-bg: #1c2330;
+    --border: #2d3748;
+    --text: #e2e8f0;
+    --subtext: #a0aec0;
+    --header-bg: #161b22;
+    --header-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    --nav-bg: #1a2030;
+    --badge-bg: #4ea1ff;
+    --badge-text: #0f1216;
+    --btn-bg: #4ea1ff;
+    --btn-text: #0f1216;
+    --btn-hover: #70b5ff;
+    --title-color: #93c5fd;
+    --card-shadow: 0 2px 12px rgba(0,0,0,0.4);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; transition: background 0.2s, color 0.2s; }
+
+  .site-header {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--header-bg); border-bottom: 1px solid var(--border);
+    box-shadow: var(--header-shadow);
+    display: flex; align-items: center; gap: 16px;
+    padding: 12px 24px; flex-wrap: wrap;
+  }
+  .site-title { font-size: 1.1rem; font-weight: 700; color: var(--title-color); flex: 1; }
+  .site-title span { font-weight: 400; font-size: 0.85rem; color: var(--subtext); margin-left: 8px; }
+  .hdr-btns { display: flex; gap: 8px; }
+  button { cursor: pointer; border: none; border-radius: 6px; padding: 6px 14px; font-size: 0.82rem; font-weight: 600; background: var(--btn-bg); color: var(--btn-text); transition: background 0.15s; }
+  button:hover { background: var(--btn-hover); }
+  .btn-outline { background: transparent; color: var(--btn-bg); border: 1.5px solid var(--btn-bg); }
+  .btn-outline:hover { background: var(--btn-bg); color: var(--btn-text); }
+
+  .nav-bar {
+    background: var(--nav-bg); border-bottom: 1px solid var(--border);
+    padding: 8px 24px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  }
+  .nav-bar a {
+    color: var(--subtext); text-decoration: none; font-size: 0.78rem; font-weight: 500;
+    padding: 4px 10px; border-radius: 20px; border: 1px solid transparent; transition: all 0.15s;
+  }
+  .nav-bar a:hover { color: var(--text); border-color: var(--border); background: var(--surface); }
+  .nav-label { font-size: 0.75rem; color: var(--subtext); margin-right: 4px; }
+
+  main { max-width: 1200px; margin: 0 auto; padding: 32px 24px 64px; display: flex; flex-direction: column; gap: 36px; }
+
+  .diagram-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: var(--card-shadow); overflow: hidden;
+  }
+  .card-header {
+    display: flex; align-items: center; gap: 12px; padding: 16px 20px;
+    border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .badge {
+    background: var(--badge-bg); color: var(--badge-text);
+    font-size: 0.75rem; font-weight: 700; width: 26px; height: 26px;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .card-title { font-size: 1rem; font-weight: 700; color: var(--text); flex: 1; }
+  .card-desc { font-size: 0.82rem; color: var(--subtext); }
+  .card-actions { display: flex; gap: 6px; }
+  .card-body {
+    background: var(--card-bg); padding: 24px 20px;
+    display: flex; justify-content: center; overflow-x: auto;
+  }
+  .card-body .mermaid { min-width: 0; max-width: 100%; }
+
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 10px 20px; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--subtext); }
+  .leg-item { display: flex; align-items: center; gap: 5px; }
+  .leg-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-title">Whybase for Teams <span>Business Overview</span></div>
+  <div class="hdr-btns">
+    <button class="btn-outline" onclick="downloadAllSVGs()">⬇ Download all SVGs</button>
+    <button onclick="toggleTheme()">🌓 Toggle theme</button>
+  </div>
+</header>
+
+<nav class="nav-bar">
+  <span class="nav-label">Jump to:</span>
+  <a href="#b1">1 Problem</a>
+  <a href="#b2">2 Value Proposition</a>
+  <a href="#b3">3 Who Buys It</a>
+  <a href="#b4">4 Customer Journey</a>
+  <a href="#b5">5 Business Model</a>
+  <a href="#b6">6 Pricing</a>
+  <a href="#b7">7 Competitive Landscape</a>
+  <a href="#b8">8 Go-to-Market</a>
+  <a href="#b9">9 Unit Economics</a>
+  <a href="#b10">10 Moat &amp; Risks</a>
+</nav>
+
+<main>
+
+<!-- ═══════ 1 PROBLEM ═══════ -->
+<div class="diagram-card" id="b1">
+  <div class="card-header">
+    <div class="badge">1</div>
+    <div>
+      <div class="card-title">The Problem — Organizational Amnesia</div>
+      <div class="card-desc">How companies lose the "why" behind their decisions, and what it costs them</div>
+    </div>
+    <div class="card-actions">
+      <button class="btn-outline" onclick="downloadSVG('b1','problem')">SVG</button>
+      <button onclick="downloadPNG('b1','problem')">PNG</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="mermaid" id="b1-mermaid">
+flowchart TD
+    K["Knowledge is created\nSlack debates · Notion docs\nPR reviews · Jira tickets · meetings"]:::blue
+
+    K --> S["It scatters across 5+ tools\nno single place holds\nthe decision AND its reasoning"]:::amber
+    S --> F["It fades\nsearch finds documents,\nnot answers — the WHY is\nburied in a 200-message thread"]:::amber
+    F --> L["It leaves\npeople churn — the context\nin their heads walks out\nthe door with them"]:::red
+
+    L --> C1["Re-litigated decisions\n'Why are we on Postgres again?'\nThe same debate every 6 months"]:::red
+    L --> C2["Repeated mistakes\nthe lesson from last year's\nincident was never findable"]:::red
+    L --> C3["Slow onboarding\nnew hires take months to absorb\ncontext veterans carry implicitly"]:::red
+    L --> C4["Senior-staff interrupt tax\n'Ask Maya, she was there'\n— Maya answers the same\nquestion 30 times a year"]:::red
+
+    C1 & C2 & C3 & C4 --> COST["Estimated cost: knowledge workers spend\n~20% of time searching for internal information\n(McKinsey) — for a 50-person eng org at $150k avg,\nthat is ~$1.5M/year of search-and-ask overhead"]:::red
+
+    classDef blue fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+    classDef amber fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    classDef red fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
+    </div>
+  </div>
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:#3b82f6"></div>Knowledge created</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#f59e0b"></div>Decay</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#ef4444"></div>Business cost</div>
+  </div>
+</div>
+
+<!-- ═══════ 2 VALUE PROP ═══════ -->
+<div class="diagram-card" id="b2">
+  <div class="card-header">
+    <div class="badge">2</div>
+    <div>
+      <div class="card-title">Value Proposition — Memory, Not Search</div>
+      <div class="card-desc">What changes for the customer: before vs. after, and why this is not "another enterprise search"</div>
+    </div>
+    <div class="card-actions">
+      <button class="btn-outline" onclick="downloadSVG('b2','value-proposition')">SVG</button>
+      <button onclick="downloadPNG('b2','value-proposition')">PNG</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="mermaid" id="b2-mermaid">
+flowchart LR
+    subgraph BEFORE["BEFORE — enterprise search"]
+        direction TB
+        Q1["'Why did we choose\nPostgres over MongoDB?'"]:::blue
+        R1["20 matching documents\nranked by keyword relevance"]:::red
+        E1["User reads threads for an hour,\npieces the story together,\nmisses the Jira near-reversal\nentirely"]:::red
+        Q1 --> R1 --> E1
+    end
+
+    subgraph AFTER["AFTER — Whybase"]
+        direction TB
+        Q2["'Why did we choose\nPostgres over MongoDB?'"]:::blue
+        R2["One synthesized, cited answer:\n• the original decision + reasoning\n• who advocated what\n• the Jan 2026 near-reversal\n  and the benchmark that settled it\n• status today: reaffirmed\n• open question: sharding"]:::green
+        E2["90 seconds to full context\nwith citations to verify\nevery claim"]:::green
+        Q2 --> R2 --> E2
+    end
+
+    BEFORE -.->|"the product's job:\ndecisions + reasoning + evolution,\nconnected across tools and time"| AFTER
+
+    subgraph PROMISES["The three buyer promises"]
+        direction TB
+        P1["Never re-litigate\na settled decision"]:::green
+        P2["Never lose context\nwhen people leave"]:::green
+        P3["Onboard new hires\nin days, not months"]:::green
+    end
+
+    AFTER --> PROMISES
+
+    classDef blue fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+    classDef green fill:#dcfce7,stroke:#22c55e,color:#14532d
+    classDef red fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 3 WHO BUYS ═══════ -->
+<div class="diagram-card" id="b3">
+  <div class="card-header">
+    <div class="badge">3</div>
+    <div>
+      <div class="card-title">Who Buys It — Personas &amp; Pain</div>
+      <div class="card-desc">The buyer, the champion, and the daily users — and what each one gets</div>
+    </div>
+    <div class="card-actions">
+      <button class="btn-outline" onclick="downloadSVG('b3','personas')">SVG</button>
+      <button onclick="downloadPNG('b3','personas')">PNG</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="mermaid" id="b3-mermaid">
+flowchart TB
+    subgraph BUYER["ECONOMIC BUYER"]
+        VP["VP Engineering / CTO\nPain: velocity drops as org grows;\ndecisions re-debated; bus factor\nPays for: fewer repeated mistakes,\nfaster onboarding, retained context"]:::purple
+    end
+
+    subgraph CHAMPION["CHAMPION"]
+        EM["Engineering Manager / Staff Eng\nPain: answers the same questions\nweekly; writes ADRs nobody reads\nGets: the 'ask Maya' tax removed;\ndecision log maintained automatically"]:::blue
+    end
+
+    subgraph USERS["DAILY USERS"]
+        NEW["New hire\nGets: self-serve context —\n'why is it built this way?'\nanswered with full history"]:::green
+        IC["Engineer / PM\nGets: instant decision recall\nbefore proposing changes\nthat were already rejected"]:::green
+        LEAD["Tech lead\nGets: timeline + decision log\nfor planning and postmortems"]:::green
+    end
+
+    subgraph ICP["IDEAL CUSTOMER PROFILE (initial wedge)"]
+        W["Software teams of 20–200\n• remote/hybrid (knowledge already digital)\n• using Slack + Notion/Confluence + GitHub + Jira\n• felt the pain: a recent departure,\n  failed audit of 'why', or re-built feature"]:::amber
+    end
+
+    VP -->|budget| EM
+    EM -->|drives adoption| USERS
+    USERS -->|usage proves value| VP
+    ICP -.->|first market| BUYER
+
+    classDef blue fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+    classDef green fill:#dcfce7,stroke:#22c55e,color:#14532d
+    classDef purple fill:#ede9fe,stroke:#8b5cf6,color:#3b0764
+    classDef amber fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 4 CUSTOMER JOURNEY ═══════ -->
+<div class="diagram-card" id="b4">
+  <div class="card-header">
+    <div class="badge">4</div>
+    <div>
+      <div class="card-title">Customer Journey</div>
+      <div class="card-desc">From first pain to renewal — where value is felt and where the deal can die</div>
+    </div>
+    <div class="card-actions">
+      <button class="btn-outline" onclick="downloadSVG('b4','customer-journey')">SVG</button>
+      <button onclick="downloadPNG('b4','customer-journey')">PNG</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="mermaid" id="b4-mermaid">
+journey
+    title From pain to renewal
+    section Discover
+      Senior engineer quits, context lost: 2: VP Eng
+      Team re-debates settled decision: 2: Eng Manager
+      Champion finds Whybase: 4: Eng Manager
+    section Trial (14 days)
+      Connect Slack + Notion + GitHub: 4: Eng Manager
+      Memory formation runs on 90-day history: 4: Eng Manager
+      First "why" answer lands with citations: 5: Eng Manager
+      Demo to team — decision log review: 5: VP Eng
+    section Adopt
+      Whole team asks instead of interrupting: 5: Engineers
+      New hire onboards via timeline: 5: New Hire
+      Decision log becomes ADR system of record: 5: Tech Lead
+    section Expand & Renew
+      Second team added: 4: VP Eng
+      Usage report shows interrupt tax falling: 5: VP Eng
+      Annual renewal + seat expansion: 5: VP Eng
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 5 BUSINESS MODEL ═══════ -->
+<div class="diagram-card" id="b5">
+  <div class="card-header">
+    <div class="badge">5</div>
+    <div>
+      <div class="card-title">Business Model Canvas</div>
+      <div class="card-desc">The nine boxes — how value is created, delivered, and captured</div>
+    </div>
+    <div class="card-actions">
+      <button class="btn-outline" onclick="downloadSVG('b5','business-model')">SVG</button>
+      <button onclick="downloadPNG('b5','business-model')">PNG</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="mermaid" id="b5-mermaid">
+flowchart TB
+    subgraph ROW1[" "]
+        direction LR
+        KP["KEY PARTNERS\n• Anthropic (Claude API)\n• Voyage AI (embeddings)\n• Slack / Notion / Atlassian /\n  GitHub app marketplaces\n• Cloud hosting (AWS/GCP)"]:::purple
+        KA["KEY ACTIVITIES\n• Memory formation quality\n  (the extraction is the product)\n• Connector reliability\n• Trust: citations, provenance,\n  permissions enforcement"]:::blue
+        VP2["VALUE PROPOSITION\nInstitutional memory as a service\n• answers WHY, not just WHAT\n• decisions tracked through\n  revisits and reversals\n• provenance on every claim"]:::green
+        CR["CUSTOMER RELATIONSHIPS\n• Product-led trial\n• CS-assisted onboarding 50+ seats\n• Champion enablement\n  (decision-log reviews)"]:::blue
+        CS2["CUSTOMER SEGMENTS\n• Wedge: software teams 20–200\n• Expand: product, ops, legal\n• Later: enterprise knowledge\n  management replacement"]:::amber
+    end
+
+    subgraph ROW2[" "]
+        direction LR
+        KR["KEY RESOURCES\n• The memory graph per tenant\n  (compounding data asset)\n• Formation prompt/schema IP\n• Connector integrations"]:::purple
+        CH["CHANNELS\n• Slack/Notion/Jira marketplaces\n• Dev-community content\n  ('decision archaeology' demos)\n• Word of mouth from new hires"]:::amber
+    end
+
+    subgraph ROW3[" "]
+        direction LR
+        COSTS["COST STRUCTURE\n• LLM inference (formation per doc + query) — largest COGS\n• Embeddings + vector storage\n• Engineering (connectors, quality)\n• Sales/CS for mid-market"]:::red
+        REV["REVENUE STREAMS\n• Per-seat SaaS subscription (primary)\n• Usage tier on ingestion volume above quota\n• Enterprise: SSO, self-hosting, audit, premium SLA"]:::green
+    end
+
+    ROW1 --> ROW2 --> ROW3
+
+    classDef blue fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+    classDef green fill:#dcfce7,stroke:#22c55e,color:#14532d
+    classDef purple fill:#ede9fe,stroke:#8b5cf6,color:#3b0764
+    classDef amber fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    classDef red fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 6 PRICING ═══════ -->
+<div class="diagram-card" id="b6">
+  <div class="card-header">
+    <div class="badge">6</div>
+    <div>
+      <div class="card-title">Pricing &amp; Packaging</div>
+      <div class="card-desc">Illustrative three-tier ladder — value metric is seats, with ingestion volume as the usage governor</div>
+    </div>
+    <div class="card-actions">
+      <button class="btn-outline" onclick="downloadSVG('b6','pricing')">SVG</button>
+      <button onclick="downloadPNG('b6','pricing')">PNG</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="mermaid" id="b6-mermaid">
+flowchart LR
+    TEAM["TEAM — $15/seat/mo\nself-serve, up to 50 seats\n• Slack + Notion + GitHub connectors\n• 90-day backfill\n• chat, timeline, decision log\n• 10k docs/mo ingestion quota"]:::blue
+
+    BIZ["BUSINESS — $29/seat/mo\nthe expected workhorse tier\n• everything in Team\n• Jira, Confluence, Drive connectors\n• full-history backfill\n• API access + exports\n• permissions-aware answers\n• 100k docs/mo quota"]:::green
+
+    ENT["ENTERPRISE — custom\nannual contract, 200+ seats\n• SSO/SCIM, audit logs\n• self-hosted / VPC deployment\n• custom connectors\n• decision-log compliance exports\n• premium SLA + dedicated CS"]:::purple
+
+    TEAM -->|"team grows past 50 seats\nor needs Jira/permissions"| BIZ
+    BIZ -->|"security review,\nprocurement, self-hosting"| ENT
+
+    FREE["FREE TRIAL — 14 days\nfull Business features\nthe backfill IS the demo:\nday-1 answers about\nyour own history"]:::amber
+    FREE --> TEAM
+    FREE --> BIZ
+
+    classDef blue fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+    classDef green fill:#dcfce7,stroke:#22c55e,color:#14532d
+    classDef purple fill:#ede9fe,stroke:#8b5cf6,color:#3b0764
+    classDef amber fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    </div>
+  </div>
+  <div class="legend">
+    <div class="leg-item">Why seats: value scales with people who stop interrupting each other. Why an ingestion quota: LLM formation cost scales with document volume — the quota keeps gross margin predictable.</div>
+  </div>
+</div>
+
+<!-- ═══════ 7 COMPETITIVE ═══════ -->
+<div class="diagram-card" id="b7">
+  <div class="card-header">
+    <div class="badge">7</div>
+    <div>
+      <div class="card-title">Competitive Landscape</div>
+      <div class="card-desc">Positioning: answer depth (documents → reasoned decisions) vs. memory structure (flat index → typed graph)</div>
+    </div>
+    <div class="card-actions">
+      <button class="btn-outline" onclick="downloadSVG('b7','competitive-landscape')">SVG</button>
+      <button onclick="downloadPNG('b7','competitive-landscape')">PNG</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="mermaid" id="b7-mermaid">
+quadrantChart
+    title Enterprise knowledge tools
+    x-axis Flat document index --> Structured decision memory
+    y-axis Returns documents --> Synthesizes reasoned answers
+    quadrant-1 Memory layer - our target
+    quadrant-2 AI answer bots
+    quadrant-3 Classic search
+    quadrant-4 Manual knowledge bases
+    "Glean": [0.38, 0.62]
+    "Notion AI / Confluence AI": [0.30, 0.55]
+    "Slack AI search": [0.22, 0.45]
+    "Elastic / internal search": [0.12, 0.15]
+    "ADR repos (manual)": [0.62, 0.20]
+    "Wikis (manual)": [0.55, 0.12]
+    "Dashworks / Qatalog": [0.35, 0.50]
+    "Whybase for Teams": [0.85, 0.85]
+    </div>
+  </div>
+  <div class="legend">
+    <div class="leg-item">Key differentiators vs. AI search (Glean et al.): a persistent typed decision graph (revisits/resolves edges), decision status tracking over time, and per-person position attribution — not per-query RAG over a flat index. Vs. manual ADRs/wikis: zero authoring burden — memory forms automatically from the tools people already use.</div>
+  </div>
+</div>
+
+<!-- ═══════ 8 GTM ═══════ -->
+<div class="diagram-card" id="b8">
+  <div class="card-header">
+    <div class="badge">8</div>
+    <div>
+      <div class="card-title">Go-to-Market Funnel</div>
+      <div class="card-desc">Product-led wedge with sales assist at the top — and the "backfill demo" as the conversion moment</div>
+    </div>
+    <div class="card-actions">
+      <button class="btn-outline" onclick="downloadSVG('b8','go-to-market')">SVG</button>
+      <button onclick="downloadPNG('b8','go-to-market')">PNG</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="mermaid" id="b8-mermaid">
+flowchart TD
+    A1["AWARENESS\n'decision archaeology' content:\nrun the demo on famous OSS repos —\n'why did Postgres choose MVCC?'\nSlack/Notion/Jira marketplace listings"]:::blue
+
+    A2["ACTIVATION — the magic moment\nconnect 3 tools → backfill 90 days →\nask one question about YOUR history\nTarget: first cited answer < 30 min\nfrom signup"]:::green
+
+    A3["ADOPTION\nchampion shares answers in Slack\n(every shared answer is an ad)\nweekly decision-log digest email\nnew-hire onboarding playbook"]:::green
+
+    A4["CONVERSION\ntrial-end report: questions answered,\ninterrupts avoided, decisions logged\nself-serve checkout ≤ 50 seats,\nsales-assist above"]:::amber
+
+    A5["EXPANSION\nsecond team → org-wide\nusage-based upsell on ingestion\nEnterprise: SSO, self-host, audit"]:::purple
+
+    A6["RETENTION MOAT\nthe graph compounds:\nevery month of memory makes\nswitching more painful —\nexporting docs ≠ exporting memory"]:::purple
+
+    A1 --> A2 --> A3 --> A4 --> A5 --> A6
+    A6 -.->|"referrals: engineers\nchange jobs and bring it"| A1
+
+    classDef blue fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+    classDef green fill:#dcfce7,stroke:#22c55e,color:#14532d
+    classDef amber fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    classDef purple fill:#ede9fe,stroke:#8b5cf6,color:#3b0764
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 9 UNIT ECONOMICS ═══════ -->
+<div class="diagram-card" id="b9">
+  <div class="card-header">
+    <div class="badge">9</div>
+    <div>
+      <div class="card-title">Unit Economics &amp; Customer ROI</div>
+      <div class="card-desc">Illustrative numbers for a 50-seat Business-tier customer — where the money flows and why the buyer says yes</div>
+    </div>
+    <div class="card-actions">
+      <button class="btn-outline" onclick="downloadSVG('b9','unit-economics')">SVG</button>
+      <button onclick="downloadPNG('b9','unit-economics')">PNG</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="mermaid" id="b9-mermaid">
+flowchart LR
+    subgraph REVENUE["Revenue (50-seat customer)"]
+        R["$29 × 50 seats\n= $1,450 MRR\n= $17.4k ARR"]:::green
+    end
+
+    subgraph COGS["COGS per customer / month (illustrative)"]
+        C1["Formation: ~5k new docs/mo\n× ~$0.02 LLM cost ≈ $100"]:::red
+        C2["Queries: ~1.5k/mo\n× ~$0.05 ≈ $75"]:::red
+        C3["Embeddings + Postgres\n+ hosting ≈ $50"]:::red
+        CT["≈ $225/mo COGS\n→ ~84% gross margin"]:::amber
+    end
+
+    subgraph BUYER_ROI["Customer ROI math"]
+        B1["50 engineers × ~2 hrs/wk\nsearching & interrupting\n≈ $39k/mo of friction"]:::blue
+        B2["Recover even 15%\n≈ $5.9k/mo value"]:::blue
+        B3["vs. $1.45k/mo cost\n→ ~4× ROI floor\n+ unpriced: retained context\nwhen people leave"]:::green
+    end
+
+    R --> CT
+    C1 & C2 & C3 --> CT
+    B1 --> B2 --> B3
+
+    LEVER["Margin levers:\n• cheaper model for routine formation,\n  premium model for query synthesis\n• batch formation off-peak\n• cache repeated questions\n• ingestion quotas per tier"]:::purple
+    CT --> LEVER
+
+    classDef green fill:#dcfce7,stroke:#22c55e,color:#14532d
+    classDef red fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
+    classDef amber fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    classDef blue fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+    classDef purple fill:#ede9fe,stroke:#8b5cf6,color:#3b0764
+    </div>
+  </div>
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:#22c55e"></div>Revenue / value</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#ef4444"></div>Cost</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#3b82f6"></div>Customer-side math</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#8b5cf6"></div>Margin levers</div>
+  </div>
+</div>
+
+<!-- ═══════ 10 MOAT & RISKS ═══════ -->
+<div class="diagram-card" id="b10">
+  <div class="card-header">
+    <div class="badge">10</div>
+    <div>
+      <div class="card-title">Moat &amp; Risk Map</div>
+      <div class="card-desc">What compounds in our favor, what could kill it, and the mitigation for each</div>
+    </div>
+    <div class="card-actions">
+      <button class="btn-outline" onclick="downloadSVG('b10','moat-risks')">SVG</button>
+      <button onclick="downloadPNG('b10','moat-risks')">PNG</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="mermaid" id="b10-mermaid">
+flowchart TB
+    subgraph MOAT["COMPOUNDING MOAT"]
+        direction TB
+        M1["Data gravity\nthe memory graph grows daily;\na competitor starts from zero\non a customer's history"]:::green
+        M2["Workflow lock-in\ndecision log becomes the\nsystem of record for ADRs"]:::green
+        M3["Quality flywheel\nmore corrections + usage →\nbetter formation prompts →\nbetter answers"]:::green
+    end
+
+    subgraph RISKS["RISKS → MITIGATIONS"]
+        direction TB
+        R1["Platform risk: Slack/Notion/Glean\nship 'decision memory' natively"]:::red
+        X1["Mitigation: cross-tool graph is the\ndefense — no single platform sees\nSlack + GitHub + Jira together"]:::amber
+        R2["Trust risk: one hallucinated\n'decision' destroys credibility"]:::red
+        X2["Mitigation: citation-required answers,\nconfidence labels, 'memory does not\ncontain this' as a first-class response"]:::amber
+        R3["Security risk: this product reads\neverything — breach is existential"]:::red
+        X3["Mitigation: permissions-aware retrieval,\nSOC 2 early, self-host tier,\nper-tenant isolation"]:::amber
+        R4["COGS risk: LLM spend balloons\nwith ingestion volume"]:::red
+        X4["Mitigation: tiered quotas, model routing\n(cheap formation / premium synthesis),\nincremental re-formation only"]:::amber
+        R1 --> X1
+        R2 --> X2
+        R3 --> X3
+        R4 --> X4
+    end
+
+    MOAT -.->|"moat only matters\nif risks are held off\nlong enough to compound"| RISKS
+
+    classDef green fill:#dcfce7,stroke:#22c55e,color:#14532d
+    classDef red fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
+    classDef amber fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    </div>
+  </div>
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:#22c55e"></div>Moat</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#ef4444"></div>Risk</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#f59e0b"></div>Mitigation</div>
+  </div>
+</div>
+
+</main>
+
+<script>
+function getMermaidTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default';
+}
+
+function initMermaid() {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: getMermaidTheme(),
+    themeVariables: {
+      primaryColor: '#dbeafe',
+      primaryTextColor: '#1e3a5f',
+      primaryBorderColor: '#3b82f6',
+      lineColor: '#64748b',
+      secondaryColor: '#dcfce7',
+      tertiaryColor: '#ede9fe',
+    },
+    flowchart: { htmlLabels: true, curve: 'basis' },
+    journey: { useMaxWidth: true },
+  });
+}
+
+async function renderAll() {
+  initMermaid();
+  const nodes = document.querySelectorAll('.mermaid[id]');
+  for (const node of nodes) {
+    const id = node.id;
+    if (!node.dataset.src) node.dataset.src = node.textContent;
+    const code = node.dataset.src.trim();
+    try {
+      const { svg } = await mermaid.render('svg-' + id, code);
+      node.innerHTML = svg;
+    } catch (e) {
+      node.innerHTML = `<pre style="color:red;font-size:0.75rem">Diagram error:\n${e}</pre>`;
+    }
+  }
+}
+
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  renderAll();
+}
+
+function getSVGElement(cardId) {
+  return document.querySelector(`#${cardId}-mermaid svg`);
+}
+
+function svgWithBg(svgEl) {
+  const clone = svgEl.cloneNode(true);
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('width', '100%');
+  rect.setAttribute('height', '100%');
+  rect.setAttribute('fill', '#ffffff');
+  clone.insertBefore(rect, clone.firstChild);
+  return clone;
+}
+
+function downloadSVG(cardId, filename) {
+  const svgEl = getSVGElement(cardId);
+  if (!svgEl) return alert('Diagram not rendered yet.');
+  const clone = svgWithBg(svgEl);
+  const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
+  triggerDownload(URL.createObjectURL(blob), filename + '.svg');
+}
+
+function downloadAllSVGs() {
+  document.querySelectorAll('.mermaid[id]').forEach(el => {
+    const cardId = el.id.replace('-mermaid', '');
+    const titleEl = document.querySelector(`#${cardId} .card-title`);
+    const name = (titleEl ? titleEl.textContent : cardId).replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'').toLowerCase();
+    downloadSVG(cardId, name);
+  });
+}
+
+function downloadPNG(cardId, filename) {
+  const svgEl = getSVGElement(cardId);
+  if (!svgEl) return alert('Diagram not rendered yet.');
+  const clone = svgWithBg(svgEl);
+  const svgStr = new XMLSerializer().serializeToString(clone);
+  const w = svgEl.viewBox.baseVal.width  || svgEl.getBoundingClientRect().width  || 800;
+  const h = svgEl.viewBox.baseVal.height || svgEl.getBoundingClientRect().height || 600;
+  const scale = 2;
+  const canvas = document.createElement('canvas');
+  canvas.width  = w * scale;
+  canvas.height = h * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const img = new Image();
+  const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  img.onload = () => {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    canvas.toBlob(b => triggerDownload(URL.createObjectURL(b), filename + '.png'), 'image/png');
+  };
+  img.src = url;
+}
+
+function triggerDownload(url, name) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+renderAll();
+</script>
+</body>
+</html>

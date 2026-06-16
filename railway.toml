@@ -1,0 +1,15 @@
+# Railway deploy config. Builds from the Dockerfile (UI + backend in one image).
+# Add a Postgres service with pgvector (Railway's "Postgres" supports the
+# extension) and reference it as DATABASE_URL. Railway injects $PORT.
+#
+# Set the rest of the variables (ANTHROPIC_API_KEY, CONNECTOR_SECRET_KEY, the
+# *_REDIRECT_BASE_URL / APP_BASE_URL pointing at your Railway domain, etc.) in
+# the service Variables tab — see .env.example and DEPLOY.md.
+
+[build]
+builder = "dockerfile"
+
+[deploy]
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

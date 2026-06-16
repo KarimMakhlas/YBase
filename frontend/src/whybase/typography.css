@@ -1,0 +1,55 @@
+/* ============================================================
+   WhyBase — Typography
+   One family, used expressively. Geist for everything UI &
+   display; Geist Mono for data, metadata, citations, eyebrow
+   labels — the "engineering" register that signals provenance.
+   ============================================================ */
+
+:root {
+  /* Families */
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; /* @kind font */
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace; /* @kind font */
+  --font-display: var(--font-sans); /* @kind font */
+
+  /* Fluid display sizes (Swiss-editorial scale, clamp for landing pages) */
+  --fs-display-2xl: clamp(44px, 6vw, 76px);   /* @kind font */
+  --fs-display-xl:  clamp(36px, 4.4vw, 56px); /* @kind font */
+  --fs-display-lg:  clamp(30px, 3.2vw, 42px); /* @kind font */
+
+  /* Static UI type scale */
+  --fs-3xl: 34px;   /* @kind font */
+  --fs-2xl: 27px;   /* @kind font */
+  --fs-xl:  21px;   /* @kind font */
+  --fs-lg:  17px;   /* @kind font */
+  --fs-md:  15px;   /* @kind font */
+  --fs-base:14px;   /* @kind font */
+  --fs-sm:  13px;   /* @kind font */
+  --fs-xs:  12px;   /* @kind font */
+  --fs-2xs: 11px;   /* @kind font */
+
+  /* Weights */
+  --fw-regular:  400; /* @kind font */
+  --fw-medium:   500; /* @kind font */
+  --fw-semibold: 600; /* @kind font */
+  --fw-bold:     680; /* @kind font */
+
+  /* Line heights */
+  --lh-none:  1;    /* @kind font */
+  --lh-tight: 1.16; /* @kind font */
+  --lh-snug:  1.32; /* @kind font */
+  --lh-base:  1.55; /* @kind font */
+  --lh-relaxed: 1.7;/* @kind font */
+
+  /* Letter-spacing — tighten as size grows (optical) */
+  --ls-display: -0.03em;  /* @kind font */
+  --ls-tight:   -0.02em;  /* @kind font */
+  --ls-snug:    -0.011em; /* @kind font */
+  --ls-normal:  0;        /* @kind font */
+  --ls-wide:    0.02em;   /* @kind font */
+  --ls-label:   0.06em;   /* @kind font */
+  --ls-caps:    0.09em;   /* @kind font */
+
+  /* OpenType — Geist's tabular + stylistic refinements */
+  --fontfeat-default: "cv01" 1, "ss03" 1;       /* @kind font */
+  --fontfeat-tnum: "tnum" 1, "cv01" 1;          /* @kind font */
+}

@@ -1,0 +1,1330 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Whybase - Code Workflow Diagrams</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body {
+      --bg: #eef3f8;
+      --page: #f8fafc;
+      --surface: #ffffff;
+      --surface-2: #f5f8fc;
+      --border: #d8e1eb;
+      --text: #172033;
+      --muted: #5d6b82;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+      --purple: #7c3aed;
+      --shadow: 0 12px 30px rgba(28, 43, 68, 0.09);
+      background: var(--page);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      line-height: 1.5;
+    }
+
+    body[data-theme="dark"] {
+      --bg: #111827;
+      --page: #080b12;
+      --surface: #121826;
+      --surface-2: #182033;
+      --border: #2b3548;
+      --text: #e5e7eb;
+      --muted: #a8b3c7;
+      --blue: #60a5fa;
+      --green: #4ade80;
+      --red: #f87171;
+      --amber: #fbbf24;
+      --purple: #c084fc;
+      --shadow: 0 18px 42px rgba(0, 0, 0, 0.38);
+    }
+
+    * { box-sizing: border-box; }
+    a { color: inherit; }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 2px 18px rgba(15, 23, 42, 0.08);
+    }
+
+    .header-row {
+      align-items: center;
+      display: flex;
+      gap: 18px;
+      justify-content: space-between;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 16px 22px 12px;
+    }
+
+    h1 {
+      font-size: clamp(1.1rem, 2vw, 1.5rem);
+      line-height: 1.15;
+      margin: 0;
+    }
+
+    .title-block p {
+      color: var(--muted);
+      font-size: 0.88rem;
+      margin: 4px 0 0;
+    }
+
+    .header-actions,
+    .card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    button {
+      appearance: none;
+      background: var(--blue);
+      border: 1px solid color-mix(in srgb, var(--blue) 82%, #000 18%);
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.84rem;
+      font-weight: 700;
+      padding: 8px 12px;
+      transition: transform 120ms ease, filter 120ms ease;
+      white-space: nowrap;
+    }
+
+    button:hover {
+      filter: brightness(1.04);
+      transform: translateY(-1px);
+    }
+
+    button.secondary {
+      background: transparent;
+      border-color: var(--border);
+      color: var(--text);
+    }
+
+    .nav-wrap {
+      border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 10px 22px 14px;
+    }
+
+    nav a {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 6px 10px;
+      text-decoration: none;
+    }
+
+    nav a:hover {
+      color: var(--text);
+      border-color: var(--blue);
+    }
+
+    main {
+      display: grid;
+      gap: 26px;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px 22px 70px;
+    }
+
+    .intro,
+    .diagram-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .intro {
+      padding: 18px 20px;
+    }
+
+    .intro h2 {
+      font-size: 1rem;
+      margin: 0 0 8px;
+    }
+
+    .intro p {
+      color: var(--muted);
+      margin: 0;
+      max-width: 92ch;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      margin-top: 14px;
+    }
+
+    .legend-item {
+      align-items: center;
+      color: var(--muted);
+      display: inline-flex;
+      font-size: 0.82rem;
+      font-weight: 700;
+      gap: 7px;
+    }
+
+    .dot {
+      border-radius: 4px;
+      display: inline-block;
+      height: 12px;
+      width: 12px;
+    }
+
+    .diagram-card {
+      scroll-margin-top: 146px;
+    }
+
+    .card-header {
+      align-items: start;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      gap: 14px;
+      grid-template-columns: auto 1fr auto;
+      padding: 17px 18px;
+    }
+
+    .badge {
+      align-items: center;
+      background: var(--blue);
+      border-radius: 999px;
+      color: white;
+      display: inline-flex;
+      font-size: 0.82rem;
+      font-weight: 800;
+      height: 30px;
+      justify-content: center;
+      width: 30px;
+    }
+
+    .card-title {
+      font-size: 1rem;
+      font-weight: 800;
+      margin: 0;
+    }
+
+    .card-desc {
+      color: var(--muted);
+      font-size: 0.86rem;
+      margin: 3px 0 0;
+    }
+
+    .card-body {
+      background: var(--bg);
+      overflow: auto;
+      padding: 22px;
+    }
+
+    .diagram-slot {
+      align-items: center;
+      display: flex;
+      justify-content: center;
+      min-height: 250px;
+      min-width: 800px;
+    }
+
+    .diagram-slot svg {
+      background: transparent;
+      height: auto;
+      max-width: 100%;
+    }
+
+    .render-error {
+      background: #fff1f2;
+      border: 1px solid #fecdd3;
+      border-radius: 8px;
+      color: #991b1b;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      padding: 14px;
+      white-space: pre-wrap;
+      width: 100%;
+    }
+
+    @media (max-width: 820px) {
+      .header-row,
+      .card-header {
+        grid-template-columns: 1fr;
+      }
+
+      .header-row {
+        align-items: stretch;
+        display: grid;
+      }
+
+      .header-actions,
+      .card-actions {
+        width: 100%;
+      }
+
+      button {
+        flex: 1;
+      }
+    }
+  </style>
+</head>
+<body data-theme="light">
+  <header class="site-header">
+    <div class="header-row">
+      <div class="title-block">
+        <h1>Whybase - Code Workflow Diagrams</h1>
+        <p>Generated from the current codebase. No business-model or future-pricing diagrams, only implemented code paths and explicit maintenance workflows.</p>
+      </div>
+      <div class="header-actions">
+        <button class="secondary" id="theme-toggle" type="button">Dark mode</button>
+        <button type="button" onclick="downloadAllSVGs()">Download all SVGs</button>
+      </div>
+    </div>
+    <div class="nav-wrap">
+      <nav id="diagram-nav" aria-label="Diagram navigation"></nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="intro">
+      <h2>Color key</h2>
+      <p>Blue = service, UI, route, or normal code flow. Green = success or accepted state. Red = error or denied path. Amber = warning, retry, branch, or degraded state. Purple = database, persistence, stored state, or test/CI artifact.</p>
+      <div class="legend" aria-label="Color legend">
+        <span class="legend-item"><span class="dot" style="background:#2563eb"></span>service/flow</span>
+        <span class="legend-item"><span class="dot" style="background:#16a34a"></span>success/valid</span>
+        <span class="legend-item"><span class="dot" style="background:#dc2626"></span>error/denied</span>
+        <span class="legend-item"><span class="dot" style="background:#d97706"></span>warning/branch/retry</span>
+        <span class="legend-item"><span class="dot" style="background:#7c3aed"></span>database/state/test</span>
+      </div>
+    </section>
+    <section id="cards"></section>
+  </main>
+
+  <script>
+    const diagrams = [
+      {
+        slug: "runtime-startup",
+        title: "Runtime Startup and Router Wiring",
+        description: "What app.main does at process startup and shutdown: schema init, stuck-job recovery, worker startup, middleware, routers, and optional static UI mount.",
+        code: `flowchart TB
+  Uvicorn["uvicorn app.main:app"] --> SetupLogs["setup_logging"]
+  SetupLogs --> App["FastAPI app<br/>Whybase for Teams"]
+  App --> Middleware["CORSMiddleware<br/>RequestContextMiddleware<br/>SecurityHeadersMiddleware"]
+  App --> Routers["include routers<br/>auth sources memory_review routes/*"]
+  App --> Lifespan["lifespan startup"]
+  Lifespan --> InitSchema["db.init_schema<br/>runs schema.sql"]
+  InitSchema --> Recover["worker.recover_stuck<br/>processing to pending"]
+  Recover --> WorkerStart["worker.start<br/>spawn formation loops"]
+  App --> Static{"STATIC_DIR exists?"}
+  Static -- "yes" --> Mount["mount built frontend"]
+  Static -- "no" --> ApiOnly["API only during dev"]
+  Shutdown["lifespan shutdown"] --> WorkerStop["worker.stop<br/>cancel loops"]
+  WorkerStop --> ClosePool["db.close_pool"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Uvicorn,SetupLogs,App,Middleware,Routers,Lifespan,Recover,WorkerStart,Mount,ApiOnly,Shutdown,WorkerStop service
+  class InitSchema,ClosePool data
+  class Static warn`
+      },
+      {
+        slug: "frontend-shell",
+        title: "Frontend Shell, Auth State, and Hash Routing",
+        description: "How App.jsx decides whether to show bootstrap, login, or the app shell, and how tabs/focus/doc modals are routed.",
+        code: `flowchart TB
+  Load["App mounts"] --> AuthStatus["GET /api/auth/bootstrap-status"]
+  AuthStatus --> Needs{"needs_bootstrap?"}
+  Needs -- "yes" --> BootstrapScreen["Auth mode bootstrap"]
+  Needs -- "no" --> Me["GET /api/auth/me"]
+  Me --> LoggedIn{"authenticated?"}
+  LoggedIn -- "no" --> LoginScreen["Auth mode login"]
+  LoggedIn -- "yes" --> Shell["App shell"]
+  Shell --> Role["workspace.role<br/>member admin owner"]
+  Role --> Tabs["filter TABS by minRole"]
+  Shell --> Hash["parseHashRoute<br/>#/decisions/42<br/>#/people/7<br/>#/documents/3"]
+  Hash --> Focus["focus payload<br/>decisionId personId nodeId focusKey"]
+  Hash --> DocModal["DocModal for /documents/:id"]
+  Shell --> CmdK["CmdK keyboard shortcut"]
+  CmdK --> Pick["onPick result"]
+  Pick --> Navigate["navigate updates location.hash"]
+  Navigate --> Hash
+  Api401["api.js sees 401"] --> AuthEvent["dispatch auth:required"]
+  AuthEvent --> LoginScreen
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Load,AuthStatus,Me,Shell,Role,Tabs,Hash,Focus,DocModal,CmdK,Pick,Navigate,AuthEvent service
+  class BootstrapScreen,LoginScreen warn
+  class LoggedIn,Needs warn
+  class Api401 error`
+      },
+      {
+        slug: "http-auth-lifecycle",
+        title: "HTTP Request Lifecycle, Session, Roles, and Headers",
+        description: "Every protected API request goes through middleware, cookie session lookup, workspace membership, and optional role checks.",
+        code: `flowchart LR
+  Browser["fetch credentials include"] --> RequestCtx["RequestContextMiddleware<br/>assign request id"]
+  RequestCtx --> Security["SecurityHeadersMiddleware<br/>nosniff frame deny referrer permissions"]
+  Security --> Route["FastAPI route"]
+  Route --> Public{"Public endpoint?"}
+  Public -- "yes" --> Handler["handler runs"]
+  Public -- "no" --> Current["auth.get_current_user"]
+  Current --> Cookie{"sb_session cookie?"}
+  Cookie -- "missing" --> E401["401 not authenticated"]
+  Cookie -- "present" --> Hash["sha256 token"]
+  Hash --> Lookup[("auth_sessions join users workspaces memberships")]
+  Lookup --> Valid{"not revoked<br/>not expired<br/>user not disabled?"}
+  Valid -- "no" --> E401
+  Valid -- "yes" --> AuthContext["AuthContext<br/>user_id workspace_id role"]
+  AuthContext --> Role{"require_role?"}
+  Role -- "too low" --> E403["403 insufficient role"]
+  Role -- "ok/no gate" --> Handler
+  Handler --> Response["JSON or SSE response"]
+  Response --> Headers["X-Request-ID + security headers"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Browser,RequestCtx,Security,Route,Current,Hash,AuthContext,Handler,Response,Headers service
+  class Lookup data
+  class Public,Cookie,Valid,Role warn
+  class E401,E403 error`
+      },
+      {
+        slug: "auth-workflows",
+        title: "Auth Workflows and Workspace User Management",
+        description: "Bootstrap, login, logout, switch-workspace, admin user creation, owner user patching, login throttling, and audit events.",
+        code: `flowchart TB
+  Status["GET /api/auth/bootstrap-status"] --> CountUsers[("count users")]
+  CountUsers --> NeedStatus["needs_bootstrap boolean"]
+
+  Bootstrap["POST /api/auth/bootstrap"] --> NoUsers{"users count is zero?"}
+  NoUsers -- "no" --> E409["409 bootstrap completed"]
+  NoUsers -- "yes" --> CreateWS["create/update Default Workspace"]
+  CreateWS --> Owner["insert owner user<br/>argon2 password"]
+  Owner --> Membership["workspace_memberships owner"]
+  Membership --> Session["create_session<br/>random token cookie<br/>hashed token stored"]
+  Session --> AuditBootstrap["audit bootstrap"]
+
+  Login["POST /api/auth/login"] --> Throttle{"too many failed attempts?"}
+  Throttle -- "yes" --> E429["429"]
+  Throttle -- "no" --> Verify["clean_email<br/>verify argon2 password<br/>record attempt"]
+  Verify --> LoginOK{"valid user and membership?"}
+  LoginOK -- "no" --> E401["401 invalid login"]
+  LoginOK -- "yes" --> Session
+
+  Logout["POST /api/auth/logout"] --> Revoke["set auth_sessions.revoked_at<br/>delete cookie"]
+  Revoke --> AuditLogout["audit logout"]
+
+  Switch["POST /api/auth/switch-workspace"] --> MemberOf{"membership exists?"}
+  MemberOf -- "no" --> E403["403"]
+  MemberOf -- "yes" --> UpdateSession["update auth_sessions.workspace_id"]
+
+  ListUsers["GET /api/workspace/users"] --> AdminGate["admin gate"]
+  CreateUser["POST /api/workspace/users"] --> AdminGate
+  PatchUser["PATCH /api/workspace/users/:id"] --> OwnerGate["owner gate<br/>protect last owner"]
+  AdminGate --> UserRows[("users + memberships")]
+  OwnerGate --> UserRows
+  UserRows --> AuditUser["audit create_user or patch_user"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Status,Bootstrap,CreateWS,Owner,Membership,Session,AuditBootstrap,Login,Verify,Logout,Revoke,AuditLogout,Switch,UpdateSession,ListUsers,CreateUser,PatchUser,AdminGate,OwnerGate,AuditUser service
+  class CountUsers,UserRows data
+  class NeedStatus success
+  class NoUsers,Throttle,LoginOK,MemberOf warn
+  class E409,E429,E401,E403 error`
+      },
+      {
+        slug: "document-routes",
+        title: "Document Routes: Ingest, List, Detail, Delete, Reform, Relink",
+        description: "The documents route module includes both user-facing library reads and admin operations that requeue or delete memory.",
+        code: `flowchart TB
+  AddUI["AddMemory.jsx"] --> Ingest["POST /api/ingest<br/>admin only"]
+  Ingest --> IngestLimit["ingest_limiter"]
+  IngestLimit --> IngestService["ingest_document"]
+  IngestService --> Dedup{"workspace duplicate<br/>content_hash or external_ref?"}
+  Dedup -- "yes" --> Dup["duplicate true<br/>formation skipped"]
+  Dedup -- "no" --> StoreDoc[("documents + chunks")]
+  StoreDoc --> Queue["schedule_formation"]
+
+  Library["Document library"] --> ListDocs["GET /api/documents"]
+  ListDocs --> DocRows[("workspace documents")]
+  Library --> Detail["GET /api/documents/:id<br/>full optional"]
+  Detail --> MemoryCounts[("memory_counts by kind<br/>active nodes only")]
+
+  Retry["Retry button"] --> Reform["POST /api/documents/:id/reform<br/>admin only"]
+  Reform --> ResetAttempts["formation_attempts=0"]
+  ResetAttempts --> Queue
+
+  Relink["POST /api/relink<br/>admin only"] --> AllDocs[("all workspace docs<br/>oldest first")]
+  AllDocs --> PendingAll["set all pending<br/>attempts=0"]
+  PendingAll --> Queue
+
+  Delete["DELETE /api/documents/:id<br/>admin only"] --> EvidenceCandidates[("nodes evidenced by doc")]
+  EvidenceCandidates --> DeleteDoc["delete document"]
+  DeleteDoc --> Orphans["delete nodes with no evidence"]
+  Orphans --> Dangling["delete topic/entity with no links"]
+  Dangling --> AuditDelete["audit delete_document"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class AddUI,Ingest,IngestLimit,IngestService,Queue,Library,ListDocs,Detail,Retry,Reform,ResetAttempts,Relink,PendingAll,Delete,DeleteDoc,Orphans,Dangling,AuditDelete service
+  class StoreDoc,DocRows,MemoryCounts,AllDocs,EvidenceCandidates data
+  class Dedup warn
+  class Dup success`
+      },
+      {
+        slug: "ingest-pipeline",
+        title: "Ingest Pipeline Internals",
+        description: "What ingest.py actually does after a route or connector gives it an IngestRequest.",
+        code: `flowchart TB
+  Req["IngestRequest<br/>source title text author created_at tags source refs"] --> Hash["content_hash<br/>sha256 source/title/text"]
+  Hash --> SourceRef{"external_ref and<br/>source_connection_id?"}
+  SourceRef -- "yes" --> RefLookup[("documents by workspace<br/>source_connection_id external_ref")]
+  RefLookup --> RefDup{"found?"}
+  RefDup -- "yes" --> ReturnDup["return existing id, duplicate"]
+  SourceRef -- "no" --> HashLookup[("documents by workspace<br/>content_hash")]
+  RefDup -- "no" --> HashLookup
+  HashLookup --> HashDup{"found?"}
+  HashDup -- "yes" --> ReturnDup
+  HashDup -- "no" --> Chunk["chunk_text<br/>paragraph pack + hard split"]
+  Chunk --> Embed["embed_texts<br/>document kind"]
+  Embed --> Tx["DB transaction"]
+  Tx --> InsertDoc[("insert documents")]
+  InsertDoc --> InsertChunks[("insert chunks<br/>embedding vector")]
+  InsertChunks --> Enqueue["worker.enqueue"]
+  Enqueue --> ReturnNew["return doc id, not duplicate"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Req,Hash,Chunk,Embed,Tx,Enqueue service
+  class RefLookup,HashLookup,InsertDoc,InsertChunks data
+  class SourceRef,RefDup,HashDup warn
+  class ReturnDup,ReturnNew success`
+      },
+      {
+        slug: "worker-formation",
+        title: "Formation Worker Loop, Retries, and Integration Ticks",
+        description: "The in-process background workers serialize per workspace, retry failed formations, recover stuck jobs, and run idle Slack maintenance.",
+        code: `flowchart TB
+  Start["worker.start"] --> Concurrency{"FORMATION_CONCURRENCY"}
+  Concurrency -- "explicit > 0" --> Spawn["spawn N worker loops"]
+  Concurrency -- "auto" --> Provider{"llm.active_provider"}
+  Provider -- "ollama" --> One["1 worker"]
+  Provider -- "anthropic" --> Three["3 workers"]
+  One --> Spawn
+  Three --> Spawn
+
+  Spawn --> Claim["_claim<br/>pending due docs"]
+  Claim --> WorkspaceLock["skip docs whose workspace<br/>already has processing doc"]
+  WorkspaceLock --> GotDoc{"doc claimed?"}
+  GotDoc -- "no" --> IdleTick["_tick_integrations<br/>slack rollup + reconcile"]
+  IdleTick --> Wait["wait 15s or wake event"]
+  Wait --> Claim
+  GotDoc -- "yes" --> RunOne["_run_one"]
+  RunOne --> Formation["run_formation"]
+  Formation --> Consolidate["merge_similar_decisions"]
+  Consolidate --> Complete["log timings<br/>set event"]
+  Complete --> Claim
+
+  RunOne --> Error{"exception?"}
+  Error -- "cancelled" --> Release["_release<br/>processing back to pending"]
+  Error -- "failure" --> Record["_record_failure<br/>attempts++"]
+  Record --> Attempts{"attempts >= max?"}
+  Attempts -- "no" --> Backoff["pending with next_retry_at"]
+  Attempts -- "yes" --> Failed["formation_status failed"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Start,Spawn,Claim,WorkspaceLock,IdleTick,Wait,RunOne,Formation,Consolidate,Record,Release service
+  class Complete success
+  class Failed error
+  class Concurrency,Provider,GotDoc,Error,Attempts,Backoff,One,Three warn`
+      },
+      {
+        slug: "memory-formation",
+        title: "Memory Formation Extraction and Persistence",
+        description: "formation.py loads one document, asks the LLM for structured memory, validates existing-node references, and persists nodes, edges, and evidence.",
+        code: `flowchart TB
+  DocID["document_id"] --> LoadDoc[("SELECT document")]
+  LoadDoc --> LoadChunks[("SELECT chunks ordered")]
+  LoadChunks --> Existing[("active memory_nodes<br/>decision question entity topic<br/>limit 150")]
+  Existing --> Prompt["build prompt<br/>new doc chunks + existing digest"]
+  Prompt --> Structured["llm.structured_call<br/>FORMATION_SCHEMA"]
+  Structured --> Persist["_persist transaction"]
+  Persist --> Entities["entities<br/>upsert_node kind entity<br/>link_chunk"]
+  Persist --> Decisions["decisions<br/>summary includes reasoning<br/>status + data"]
+  Decisions --> People["made_by creates entity<br/>edge involves"]
+  Decisions --> Topics["topics or fallback_topics<br/>edge about"]
+  Decisions --> Revisits["revisits_node_id<br/>edge revisits<br/>maybe set old status"]
+  Decisions --> Resolves["resolves_question_node_id<br/>edge resolves<br/>mark question resolved"]
+  Persist --> Questions["questions<br/>upsert or resolve existing"]
+  Questions --> RaisedBy["raised_by entity edges"]
+  Questions --> Related["relates_to_node_ids edges"]
+  Entities --> Done["update documents<br/>formation_status complete<br/>context_summary"]
+  Decisions --> Done
+  Questions --> Done
+
+  Structured --> Bad["bad JSON / LLM failure"]
+  Bad --> WorkerRetry["handled by worker retry"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class DocID,Prompt,Structured,Persist,Entities,Decisions,People,Topics,Revisits,Resolves,Questions,RaisedBy,Related,WorkerRetry service
+  class LoadDoc,LoadChunks,Existing data
+  class Done success
+  class Bad error`
+      },
+      {
+        slug: "graph-helpers",
+        title: "Memory Graph Helpers, Consolidation, and Scoring",
+        description: "graph.py, consolidate.py, and scoring.py keep memory deduped, linked, expandable, and ranked.",
+        code: `flowchart TB
+  Upsert["graph.upsert_node"] --> ActiveUnique[("unique workspace, kind, lower(label)<br/>where archived_at is null")]
+  ActiveUnique --> MergeFields["merge longer summary<br/>latest status<br/>JSON data union"]
+  AddEdge["graph.add_edge"] --> EdgeUnique[("unique src,dst,relation<br/>skip self edges")]
+  LinkChunk["graph.link_chunk"] --> ChunkLinks[("chunk_links evidence")]
+  Expand["graph.expand"] --> BFS["BFS over memory_edges<br/>hops + max_nodes"]
+  BFS --> ActiveOnly["joins require src/dst not archived"]
+
+  Consolidate["merge_similar_decisions"] --> DecisionRows[("active decision nodes")]
+  DecisionRows --> Signature["label + summary head"]
+  Signature --> Embed["embed_texts"]
+  Embed --> SimilarPairs["similar_pairs cosine >= threshold"]
+  SimilarPairs --> MergeNodes["graph.merge_nodes<br/>move evidence + edges<br/>delete duplicate"]
+
+  Score["node_score"] --> Weight["status weight"]
+  Score --> Recency["date or last_revisited<br/>half-life recency"]
+  Score --> Evidence["evidence_count boost"]
+  Weight --> Final["0..1 confidence"]
+  Recency --> Final
+  Evidence --> Final
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Upsert,MergeFields,AddEdge,LinkChunk,Expand,BFS,ActiveOnly,Consolidate,Signature,Embed,SimilarPairs,MergeNodes,Score,Weight,Recency,Evidence service
+  class ActiveUnique,EdgeUnique,ChunkLinks,DecisionRows data
+  class Final success`
+      },
+      {
+        slug: "query-sse",
+        title: "Query Route, Retrieval, Context, LLM Stream, and SSE",
+        description: "The Ask Memory path from Chat.jsx to /api/query and back through SSE frames.",
+        code: `flowchart TB
+  Chat["Chat.jsx ask"] --> SaveUser["POST /api/sessions/:id/messages<br/>role user"]
+  Chat --> Stream["api.streamQuery<br/>fetch POST /api/query"]
+  Stream --> QueryRoute["routes/query.py<br/>empty question check"]
+  QueryRoute --> Rate["query_limiter"]
+  Rate --> StreamQuery["query.stream_query"]
+  StreamQuery --> Followup{"history and short question?"}
+  Followup -- "yes" --> Rewrite["rewrite_followup<br/>LLM structured_call"]
+  Followup -- "no" --> Original["original question"]
+  Rewrite --> Retrieve
+  Original --> Retrieve["retrieval.retrieve"]
+  Retrieve --> Context["build_context<br/>memory graph + source chunks + history"]
+  Context --> LLM["llm.stream_text"]
+  LLM --> Delta["SSE delta frames"]
+  LLM --> Delim{"metadata delimiter found?"}
+  Delim -- "yes" --> ParseMeta["parse_loose_json<br/>extract citations"]
+  ParseMeta --> Meta["SSE metadata frame"]
+  Meta --> Done["SSE done"]
+  Delta --> UIUpdate["append assistant text"]
+  Meta --> UIExtras["confidence citations timeline trace"]
+  Done --> SaveAssistant["POST /api/sessions/:id/messages<br/>role assistant + meta"]
+  LLM --> LLMErr["SSE error frame"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Chat,SaveUser,Stream,QueryRoute,Rate,StreamQuery,Rewrite,Original,Retrieve,Context,LLM,Delta,ParseMeta,Meta,Done,UIUpdate,UIExtras,SaveAssistant service
+  class Followup,Delim warn
+  class LLMErr error`
+      },
+      {
+        slug: "retrieval-internals",
+        title: "Retrieval Internals",
+        description: "retrieval.py combines semantic vector search, Postgres full-text search, graph expansion, and confidence-ranked evidence.",
+        code: `flowchart TB
+  Question["question + optional embed_text"] --> QueryEmbedding["embed_texts kind=query"]
+  QueryEmbedding --> VectorSearch[("chunks embedding<br/>ORDER BY vector distance<br/>workspace scoped")]
+  Question --> FullText[("chunks text_tsv<br/>websearch_to_tsquery<br/>workspace scoped")]
+  VectorSearch --> RRF["rrf_fuse"]
+  FullText --> RRF
+  RRF --> SeedChunks["seed_chunk_ids"]
+  SeedChunks --> ChunkRows["chunk rows by id"]
+  SeedChunks --> SeedNodes[("chunk_links join memory_nodes<br/>archived_at is null")]
+  SeedNodes --> Expand["graph.expand<br/>GRAPH_HOPS + GRAPH_MAX_NODES"]
+  Expand --> NodeRows[("memory_nodes active only")]
+  NodeRows --> Scores["node_score for decision/question"]
+  Expand --> ExtraEvidence[("evidence chunks for graph nodes")]
+  Scores --> RankExtra["sort extra evidence by node score"]
+  RankExtra --> Cap["CONTEXT_CHUNK_CAP"]
+  ChunkRows --> Ordered["chronological ordered chunks"]
+  Cap --> Ordered
+  Ordered --> Trace["trace<br/>seed counts, graph chunks,<br/>nodes, entities, edges"]
+  Trace --> Return["return chunks nodes edges trace"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Question,QueryEmbedding,RRF,SeedChunks,ChunkRows,Expand,Scores,RankExtra,Cap,Ordered,Trace,Return service
+  class VectorSearch,FullText,SeedNodes,NodeRows,ExtraEvidence data
+  class Return success`
+      },
+      {
+        slug: "read-views",
+        title: "Read-Only Memory Views",
+        description: "memory_views.py powers Home, Decision Log, Timeline, Graph, People, Cmd-K search, node detail, and stats.",
+        code: `flowchart TB
+  Views["Frontend read views"] --> Decisions["GET /api/decisions"]
+  Views --> Timeline["GET /api/timeline"]
+  Views --> Graph["GET /api/graph"]
+  Views --> NodeDetail["GET /api/nodes/:id"]
+  Views --> Search["GET /api/search?q="]
+  Views --> People["GET /api/people"]
+  Views --> Person["GET /api/people/:id"]
+  Views --> Stats["GET /api/stats?since="]
+
+  Decisions --> DecisionRows[("active decision nodes")]
+  DecisionRows --> DecisionEdges[("edges to topics people related nodes")]
+  DecisionRows --> DecisionSources[("chunk_links to documents")]
+  DecisionSources --> Confidence["node_score"]
+
+  Timeline --> Docs[("documents")]
+  Timeline --> Events[("decision/question nodes<br/>with evidence")]
+  Events --> Revisited[("revisits edges")]
+
+  Graph --> ActiveGraph[("active nodes + edges")]
+  NodeDetail --> Evidence[("sources + direct neighbors")]
+  Search --> SearchRows[("node label/summary<br/>document title/author")]
+  People --> PersonNodes[("entity nodes where entity_kind person")]
+  Person --> Positions[("related decisions/questions<br/>positions filtered by name")]
+  Stats --> Counts[("counts recent open stale revisits sources digest")]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Views,Decisions,Timeline,Graph,NodeDetail,Search,People,Person,Stats,Confidence service
+  class DecisionRows,DecisionEdges,DecisionSources,Docs,Events,Revisited,ActiveGraph,Evidence,SearchRows,PersonNodes,Positions,Counts data`
+      },
+      {
+        slug: "memory-review",
+        title: "Memory Review and Archive Visibility",
+        description: "Admin review endpoints edit extracted memory; archived nodes are preserved but hidden from member-facing retrieval and views.",
+        code: `flowchart TB
+  ReviewUI["Review.jsx"] --> List["GET /api/memory-review<br/>filters state kind q"]
+  List --> ReviewRows[("memory_nodes + evidence_count + neighbor_count")]
+  ReviewUI --> Detail["GET /api/memory-review/:id"]
+  Detail --> Sources[("source chunks")]
+  Detail --> Neighbors[("graph neighbors")]
+
+  ReviewUI --> Save["PATCH /api/memory-review/:id"]
+  Save --> ValidateStatus{"status allowed<br/>by kind?"}
+  ValidateStatus -- "no" --> E400["400 invalid status"]
+  ValidateStatus -- "yes" --> ValidateJSON["frontend JSON object parse<br/>backend accepts data object"]
+  ValidateJSON --> Duplicate{"active label duplicate?"}
+  Duplicate -- "yes" --> E409["409 duplicate active label"]
+  Duplicate -- "no" --> UpdateNode["update label summary status data<br/>curated_at curated_by"]
+  UpdateNode --> AuditEdit["audit memory_edit<br/>or memory_mark_reviewed"]
+
+  ReviewUI --> Archive["POST /archive"]
+  Archive --> Archived["set archived_at archived_by reason"]
+  Archived --> Hidden["hidden from decisions timeline graph search people retrieval formation digest"]
+  ReviewUI --> Unarchive["POST /unarchive"]
+  Unarchive --> Duplicate2{"active duplicate label?"}
+  Duplicate2 -- "yes" --> E409
+  Duplicate2 -- "no" --> Restore["clear archived fields"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class ReviewUI,List,Detail,Save,ValidateJSON,UpdateNode,AuditEdit,Archive,Archived,Hidden,Unarchive,Restore service
+  class ReviewRows,Sources,Neighbors data
+  class ValidateStatus,Duplicate,Duplicate2 warn
+  class E400,E409 error
+  class Restore success`
+      },
+      {
+        slug: "chat-sessions",
+        title: "Chat Session Persistence",
+        description: "Chat history is user-scoped inside the current workspace and saved separately from streaming query execution.",
+        code: `flowchart TB
+  ChatMount["Chat component mounts"] --> List["GET /api/sessions"]
+  List --> Sessions[("chat_sessions<br/>workspace_id + user_id")]
+  NewAsk["ask(question)"] --> Active{"active session?"}
+  Active -- "no/newSession" --> Create["POST /api/sessions<br/>title from question"]
+  Create --> Sessions
+  Active -- "yes" --> UseExisting["use activeId"]
+  UseExisting --> SaveUser["POST /api/sessions/:id/messages<br/>role user"]
+  Create --> SaveUser
+  SaveUser --> StreamQuery["streamQuery<br/>separate /api/query call"]
+  StreamQuery --> SaveAssistant["POST /api/sessions/:id/messages<br/>role assistant meta"]
+  SaveAssistant --> Messages[("chat_messages")]
+  Open["click old session"] --> Get["GET /api/sessions/:id"]
+  Get --> Messages
+  Delete["delete session"] --> Del["DELETE /api/sessions/:id"]
+  Del --> Cascade["chat_messages cascade delete"]
+  AuthScope["all session routes require<br/>workspace_id + user_id"] --> Sessions
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class ChatMount,List,NewAsk,Create,UseExisting,SaveUser,StreamQuery,SaveAssistant,Open,Get,Delete,Del,AuthScope,Cascade service
+  class Sessions,Messages data
+  class Active warn`
+      },
+      {
+        slug: "slack-sources-oauth-backfill",
+        title: "Slack Sources: OAuth, Channel Selection, Backfill Jobs",
+        description: "sources.py implements Slack install, encrypted token storage, public-channel discovery, selected streams, and resumable backfill jobs.",
+        code: `flowchart TB
+  SourcesUI["Sources.jsx"] --> ListSources["GET /api/sources<br/>admin gate"]
+  ListSources --> Connections[("source_connections<br/>counts active jobs")]
+  SourcesUI --> InstallURL["GET /api/sources/slack/install-url"]
+  InstallURL --> Configured{"Slack secrets configured?"}
+  Configured -- "no" --> ConfigError["configured false + error"]
+  Configured -- "yes" --> OAuthState[("insert oauth_states<br/>10 min expiry")]
+  OAuthState --> SlackAuth["redirect to Slack authorize"]
+  SlackAuth --> Callback["GET /api/integrations/slack/oauth/callback"]
+  Callback --> ConsumeState{"valid unconsumed state?"}
+  ConsumeState -- "no" --> E400["400 invalid state"]
+  ConsumeState -- "yes" --> Exchange["oauth.v2.access"]
+  Exchange --> StoreConn[("source_connections<br/>encrypted bot token")]
+  StoreConn --> Refresh["conversations.list<br/>public channels"]
+  Refresh --> Streams[("source_streams")]
+  Streams --> Select["PATCH /sources/:id/streams/:stream_id"]
+  Select --> AuditSelect["audit source_stream_select"]
+  SourcesUI --> Start["POST /sources/:id/sync"]
+  Start --> AnySelected{"any selected stream?"}
+  AnySelected -- "no" --> E400Select["400 select a channel"]
+  AnySelected -- "yes" --> Job[("insert sync_jobs pending<br/>kind backfill")]
+  Job --> Task["asyncio.create_task<br/>run_slack_sync_job"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class SourcesUI,ListSources,InstallURL,SlackAuth,Callback,Exchange,Refresh,Select,AuditSelect,Start,Task service
+  class Connections,OAuthState,StoreConn,Streams,Job data
+  class Configured,ConsumeState,AnySelected warn
+  class ConfigError,E400,E400Select error`
+      },
+      {
+        slug: "slack-sync-events",
+        title: "Slack Sync Jobs, Events API, Rollup, and Reconciliation",
+        description: "Backfill and live Slack events both convert selected public-channel messages into normal documents for the same ingest/formation pipeline.",
+        code: `flowchart TB
+  Job["run_slack_sync_job"] --> LoadJob[("sync_jobs + connection + selected streams")]
+  LoadJob --> Running["status running"]
+  Running --> StreamLoop["for each selected source_stream"]
+  StreamLoop --> History["conversations.history<br/>cursor stored in sync_cursor"]
+  History --> Messages["messages sorted oldest first"]
+  Messages --> Threads["thread roots with replies<br/>conversations.replies"]
+  Messages --> Loose["loose top-level messages<br/>daily digest"]
+  Threads --> IngestReq["IngestRequest source slack<br/>external_ref channel thread"]
+  Loose --> IngestReq
+  IngestReq --> Ingest["ingest_document<br/>workspace scoped"]
+  Ingest --> Stats["stats documents duplicates streams"]
+  Stats --> Complete["sync_job complete<br/>source last_sync_at"]
+
+  History --> Rate429["Slack 429"]
+  Rate429 --> Paused["sync_job paused<br/>next_retry_at<br/>stream status paused"]
+  History --> APIErr["Slack/API exception"]
+  APIErr --> Failed["sync_job failed<br/>stream status failed"]
+
+  EventRoute["POST /api/integrations/slack/events"] --> Signature{"verify_signature"}
+  Signature -- "bad" --> E401["401 bad slack signature"]
+  Signature -- "ok" --> StoreEvent["slack.store_event<br/>selected team+channel only"]
+  StoreEvent --> SlackEvents[("slack_events buffer")]
+  WorkerIdle["worker idle tick"] --> Rollup["slack.rollup_quiet_threads"]
+  Rollup --> Quiet[("threads quiet beyond SLACK_THREAD_QUIET_S")]
+  Quiet --> RollupDoc["thread_document"]
+  RollupDoc --> Ingest
+  WorkerIdle --> Reconcile["sources.reconcile_tick"]
+  Reconcile --> ReconJob[("sync_jobs kind reconcile")]
+  ReconJob --> Job
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Job,Running,StreamLoop,History,Messages,Threads,Loose,IngestReq,Ingest,Stats,EventRoute,StoreEvent,WorkerIdle,Rollup,RollupDoc,Reconcile service
+  class LoadJob,SlackEvents,Quiet,ReconJob data
+  class Complete success
+  class Rate429,Paused,Signature warn
+  class APIErr,Failed,E401 error`
+      },
+      {
+        slug: "providers",
+        title: "LLM and Embedding Provider Selection",
+        description: "llm.py and embeddings.py hide provider differences while keeping retrieval vectors in one pinned embedding space.",
+        code: `flowchart TB
+  LLMCall["structured_call or stream_text"] --> LLMProvider{"LLM_PROVIDER"}
+  LLMProvider -- "anthropic" --> Claude["AsyncAnthropic<br/>claude-fable-5"]
+  LLMProvider -- "ollama" --> Ollama["Ollama /api/chat<br/>qwen3.5 default"]
+  LLMProvider -- "auto" --> Creds{"Anthropic credentials available?"}
+  Creds -- "yes" --> Claude
+  Creds -- "no" --> Ollama
+  Claude --> StructuredClaude["structured: messages.stream<br/>json_schema output_config"]
+  Claude --> StreamClaude["stream: messages.stream<br/>adaptive thinking"]
+  Ollama --> StructuredOllama["structured: schema in prompt<br/>parse_loose_json fallback"]
+  Ollama --> StreamOllama["stream: /api/chat lines<br/>think false retry without think"]
+
+  EmbedCall["embed_texts"] --> Pinned{"provider already pinned?"}
+  Pinned -- "yes" --> Active["use pinned provider"]
+  Pinned -- "no" --> EmbedProvider{"EMBED_PROVIDER"}
+  EmbedProvider -- "voyage" --> Voyage["Voyage voyage-3-lite"]
+  EmbedProvider -- "ollama" --> OllamaEmbed["Ollama /api/embed<br/>nomic prefix + truncate"]
+  EmbedProvider -- "local" --> Local["local hash embedder"]
+  EmbedProvider -- "auto" --> AutoEmbed{"VOYAGE key?<br/>else Ollama reachable?"}
+  AutoEmbed -- "voyage key" --> Voyage
+  AutoEmbed -- "ollama reachable" --> OllamaEmbed
+  AutoEmbed -- "fallback" --> Local
+  Voyage --> PgVector["to_pgvector string"]
+  OllamaEmbed --> PgVector
+  Local --> PgVector
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class LLMCall,Claude,Ollama,StructuredClaude,StreamClaude,StructuredOllama,StreamOllama,EmbedCall,Active,Voyage,OllamaEmbed,Local,PgVector service
+  class LLMProvider,Creds,Pinned,EmbedProvider,AutoEmbed warn`
+      },
+      {
+        slug: "data-model",
+        title: "Database Model and Tenancy Boundaries",
+        description: "The actual schema groups identity, source connectors, documents/chunks, graph memory, Slack buffers, chat history, and audits by workspace.",
+        code: `flowchart TB
+  Workspaces[("workspaces")]
+  Users[("users")]
+  Memberships[("workspace_memberships<br/>role")]
+  Sessions[("auth_sessions<br/>token_hash workspace_id")]
+  Attempts[("auth_login_attempts")]
+  Audit[("audit_events")]
+
+  Connections[("source_connections")]
+  Streams[("source_streams")]
+  Jobs[("sync_jobs")]
+  OAuth[("oauth_states")]
+
+  Docs[("documents<br/>content_hash source refs")]
+  Chunks[("chunks<br/>embedding vector<br/>generated text_tsv")]
+  Links[("chunk_links")]
+  Nodes[("memory_nodes<br/>curated/archived fields")]
+  Edges[("memory_edges")]
+  SlackEvents[("slack_events")]
+  ChatSessions[("chat_sessions")]
+  ChatMessages[("chat_messages")]
+
+  Workspaces --> Memberships
+  Users --> Memberships
+  Users --> Sessions
+  Workspaces --> Sessions
+  Attempts --> Users
+  Workspaces --> Audit
+  Users --> Audit
+
+  Workspaces --> Connections
+  Connections --> Streams
+  Connections --> Jobs
+  Workspaces --> OAuth
+  Users --> OAuth
+
+  Workspaces --> Docs
+  Docs --> Chunks
+  Chunks --> Links
+  Links --> Nodes
+  Workspaces --> Nodes
+  Nodes --> Edges
+  Workspaces --> Edges
+  Connections --> Docs
+  Streams --> Docs
+  Streams --> SlackEvents
+  Connections --> SlackEvents
+
+  Workspaces --> ChatSessions
+  Users --> ChatSessions
+  ChatSessions --> ChatMessages
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Workspaces,Users,Memberships,Sessions,Attempts,Audit,Connections,Streams,Jobs,OAuth,Docs,Chunks,Links,Nodes,Edges,SlackEvents,ChatSessions,ChatMessages data`
+      },
+      {
+        slug: "module-map",
+        title: "Module Map",
+        description: "Where the code lives and which files call which services.",
+        code: `flowchart LR
+  subgraph Frontend["frontend/src"]
+    App["App.jsx<br/>shell auth hash routing"]
+    ApiJS["api.js<br/>fetch + SSE parser"]
+    UserViews["Home Chat Timeline Decisions People Graph DocModal CmdK"]
+    AdminViews["Auth AddMemory Review Sources Settings StatusFooter"]
+  end
+
+  subgraph FastAPI["backend/app"]
+    Main["main.py"]
+    Auth["auth.py"]
+    Routes["routes/*<br/>documents query memory_views sessions workspace health integrations"]
+    Sources["sources.py + slack.py"]
+    ReviewAPI["memory_review.py"]
+    Core["ingest.py retrieval.py query.py"]
+    Providers["llm.py embeddings.py"]
+    DB["db.py config.py schema.sql"]
+    Ops["observability.py ratelimit.py"]
+  end
+
+  subgraph MemoryPkg["backend/app/memory"]
+    Worker["worker.py"]
+    Formation["formation.py"]
+    Graph["graph.py"]
+    Consolidate["consolidate.py"]
+    Scoring["scoring.py"]
+  end
+
+  subgraph Tooling["tooling"]
+    Tests["backend/tests"]
+    Scripts["scripts/demo.py import_slack.py eval.py reembed.py"]
+    CI[".github/workflows/ci.yml"]
+    Compose["docker-compose.yml"]
+  end
+
+  App --> ApiJS
+  UserViews --> ApiJS
+  AdminViews --> ApiJS
+  ApiJS --> Main
+  Main --> Ops
+  Main --> Auth
+  Main --> Routes
+  Main --> Sources
+  Main --> ReviewAPI
+  Routes --> Core
+  Core --> Providers
+  Core --> MemoryPkg
+  Worker --> Formation
+  Formation --> Graph
+  Worker --> Consolidate
+  Routes --> Scoring
+  Sources --> Core
+  Auth --> DB
+  Core --> DB
+  MemoryPkg --> DB
+  Tests --> FastAPI
+  Scripts --> Main
+  CI --> Tests
+  CI --> Frontend
+  Compose --> Main
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class App,ApiJS,UserViews,AdminViews,Main,Auth,Routes,Sources,ReviewAPI,Core,Providers,Ops,Worker,Formation,Graph,Consolidate,Scoring,Scripts,Compose service
+  class DB,Tests,CI data`
+      },
+      {
+        slug: "tests-ci-scripts",
+        title: "Tests, CI, and Maintenance Scripts",
+        description: "The verification and maintenance code paths that are present in the repository.",
+        code: `flowchart TB
+  Tests["pytest backend/tests"] --> Conftest["conftest.py<br/>whybase_test DB<br/>EMBED_PROVIDER local"]
+  Conftest --> Schema["db.init_schema"]
+  Schema --> Clean[("truncate docs chunks graph slack chat per test")]
+  Tests --> API["test_api_endpoints<br/>bootstrap login logout<br/>protected ingest SSE rate limit"]
+  Tests --> GraphTests["test_graph_db<br/>upsert edges expand merge"]
+  Tests --> WorkerTests["test_ingest_worker_db<br/>dedup claim retry recovery"]
+  Tests --> Pure["test_pure_helpers<br/>chunk hash json rrf topics score slack"]
+
+  CI["GitHub Actions CI"] --> PgService["pgvector/pgvector:pg16 service"]
+  CI --> BackendTests["PYTHONPATH=backend pytest backend/tests"]
+  CI --> FrontendBuild["npm ci + npm run build"]
+
+  Demo["scripts/demo.py"] --> Login["login with env credentials"]
+  Login --> DemoIngest["ingest sample_docs sequentially<br/>wait for formation"]
+  DemoIngest --> DemoQuery["stream 5 sample queries"]
+  Import["scripts/import_slack.py"] --> Export["read Slack export files"]
+  Export --> ImportDocs["thread/digest docs<br/>authenticated ingest"]
+  Eval["scripts/eval.py"] --> DirectDB["direct DB memory-quality scorecard"]
+  Reembed["scripts/reembed.py"] --> Recompute["re-embed all chunks<br/>active provider"]
+
+  classDef service fill:#dbeafe,stroke:#2563eb,color:#172033
+  classDef success fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef error fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+  classDef data fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+  class Tests,Conftest,Schema,API,GraphTests,WorkerTests,Pure,CI,BackendTests,FrontendBuild,Demo,Login,DemoIngest,DemoQuery,Import,Export,ImportDocs,Eval,Reembed,Recompute service
+  class Clean,PgService,DirectDB data
+  class BackendTests,FrontendBuild success`
+      }
+    ];
+
+    const body = document.body;
+    const cards = document.getElementById("cards");
+    const nav = document.getElementById("diagram-nav");
+    const themeToggle = document.getElementById("theme-toggle");
+    let renderRun = 0;
+
+    function diagramId(diagram, index) {
+      return `diagram-${index + 1}-${diagram.slug}`;
+    }
+
+    function escapeHTML(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function buildPageShell() {
+      nav.innerHTML = diagrams.map((diagram, index) => {
+        const id = diagramId(diagram, index);
+        return `<a href="#${id}">${index + 1}. ${escapeHTML(diagram.title)}</a>`;
+      }).join("");
+
+      cards.innerHTML = diagrams.map((diagram, index) => {
+        const id = diagramId(diagram, index);
+        return `
+          <article class="diagram-card" id="${id}">
+            <header class="card-header">
+              <span class="badge">${index + 1}</span>
+              <div>
+                <h2 class="card-title">${escapeHTML(diagram.title)}</h2>
+                <p class="card-desc">${escapeHTML(diagram.description)}</p>
+              </div>
+              <div class="card-actions">
+                <button class="secondary" type="button" onclick="downloadSVG('${id}', '${diagram.slug}')">SVG</button>
+                <button type="button" onclick="downloadPNG('${id}', '${diagram.slug}')">PNG</button>
+              </div>
+            </header>
+            <div class="card-body">
+              <div class="diagram-slot" data-diagram-slot="${id}">Rendering...</div>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function themeVariables(theme) {
+      if (theme === "dark") {
+        return {
+          background: "transparent",
+          primaryColor: "#1d4ed8",
+          primaryTextColor: "#e5e7eb",
+          primaryBorderColor: "#60a5fa",
+          lineColor: "#9ca3af",
+          textColor: "#e5e7eb",
+          mainBkg: "#111827",
+          clusterBkg: "#172033",
+          clusterBorder: "#334155",
+          fontFamily: "ui-sans-serif, system-ui, sans-serif"
+        };
+      }
+      return {
+        background: "transparent",
+        primaryColor: "#dbeafe",
+        primaryTextColor: "#172033",
+        primaryBorderColor: "#2563eb",
+        lineColor: "#475569",
+        textColor: "#172033",
+        mainBkg: "#ffffff",
+        clusterBkg: "#f8fafc",
+        clusterBorder: "#cbd5e1",
+        fontFamily: "ui-sans-serif, system-ui, sans-serif"
+      };
+    }
+
+    async function renderDiagrams() {
+      const theme = body.dataset.theme === "dark" ? "dark" : "light";
+      renderRun += 1;
+      const run = renderRun;
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "loose",
+        theme: "base",
+        flowchart: {
+          curve: "basis",
+          htmlLabels: true,
+          useMaxWidth: true
+        },
+        themeVariables: themeVariables(theme)
+      });
+
+      for (let index = 0; index < diagrams.length; index += 1) {
+        if (run !== renderRun) return;
+        const diagram = diagrams[index];
+        const id = diagramId(diagram, index);
+        const slot = document.querySelector(`[data-diagram-slot="${id}"]`);
+        if (!slot) continue;
+        slot.textContent = "Rendering...";
+        try {
+          const rendered = await mermaid.render(`mmd-${run}-${index}`, diagram.code);
+          slot.innerHTML = rendered.svg;
+          const svg = slot.querySelector("svg");
+          if (svg) {
+            svg.setAttribute("role", "img");
+            svg.setAttribute("aria-label", diagram.title);
+          }
+        } catch (error) {
+          slot.innerHTML = `<pre class="render-error">${escapeHTML(error.message || String(error))}</pre>`;
+        }
+      }
+    }
+
+    function svgBox(svg) {
+      const viewBox = svg.getAttribute("viewBox");
+      if (viewBox) {
+        const parts = viewBox.split(/\s+/).map(Number);
+        if (parts.length === 4 && parts.every(Number.isFinite)) {
+          return { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+        }
+      }
+      const rect = svg.getBoundingClientRect();
+      return { x: 0, y: 0, width: Math.max(rect.width, 1), height: Math.max(rect.height, 1) };
+    }
+
+    function cloneSvgWithWhiteBackground(cardId) {
+      const svg = document.querySelector(`#${cardId} .diagram-slot svg`);
+      if (!svg) throw new Error(`No rendered SVG found for ${cardId}`);
+      const clone = svg.cloneNode(true);
+      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      const box = svgBox(svg);
+      if (!clone.getAttribute("viewBox")) {
+        clone.setAttribute("viewBox", `${box.x} ${box.y} ${box.width} ${box.height}`);
+      }
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", box.x);
+      rect.setAttribute("y", box.y);
+      rect.setAttribute("width", box.width);
+      rect.setAttribute("height", box.height);
+      rect.setAttribute("fill", "#ffffff");
+      clone.insertBefore(rect, clone.firstChild);
+      return { clone, box };
+    }
+
+    function saveBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function downloadSVG(cardId, filename) {
+      const { clone } = cloneSvgWithWhiteBackground(cardId);
+      const source = new XMLSerializer().serializeToString(clone);
+      saveBlob(new Blob([source], { type: "image/svg+xml;charset=utf-8" }), `${filename}.svg`);
+    }
+
+    function downloadPNG(cardId, filename) {
+      const { clone, box } = cloneSvgWithWhiteBackground(cardId);
+      const source = new XMLSerializer().serializeToString(clone);
+      const svgUrl = URL.createObjectURL(new Blob([source], { type: "image/svg+xml;charset=utf-8" }));
+      const image = new Image();
+      image.onload = () => {
+        const scale = 2;
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(box.width * scale);
+        canvas.height = Math.ceil(box.height * scale);
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(svgUrl);
+        canvas.toBlob((blob) => {
+          if (blob) saveBlob(blob, `${filename}.png`);
+        }, "image/png");
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(svgUrl);
+        alert("Could not render PNG for this diagram.");
+      };
+      image.src = svgUrl;
+    }
+
+    function downloadAllSVGs() {
+      diagrams.forEach((diagram, index) => {
+        const id = diagramId(diagram, index);
+        setTimeout(() => downloadSVG(id, `${String(index + 1).padStart(2, "0")}-${diagram.slug}`), index * 120);
+      });
+    }
+
+    themeToggle.addEventListener("click", async () => {
+      const next = body.dataset.theme === "dark" ? "light" : "dark";
+      body.dataset.theme = next;
+      themeToggle.textContent = next === "dark" ? "Light mode" : "Dark mode";
+      await renderDiagrams();
+    });
+
+    buildPageShell();
+    renderDiagrams();
+  </script>
+</body>
+</html>

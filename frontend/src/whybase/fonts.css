@@ -1,0 +1,22 @@
+/* ============================================================
+   WhyBase — Webfonts
+   Geist (Vercel) as the single voice: expressive across weights
+   for display, comfortable at text sizes, with Geist Mono for
+   data, metadata, citations and labels.
+   ============================================================ */
+
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/Geist-Variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/GeistMono-Variable.woff2") format("woff2");
+}

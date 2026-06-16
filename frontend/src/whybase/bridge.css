@@ -1,0 +1,44 @@
+/* ============================================================
+   WhyBase — Legacy alias bridge
+   The Whybase app's existing component CSS references token
+   names from the pre-WhyBase palette. This file maps each of
+   those legacy names onto the new WhyBase semantic tokens so the
+   whole app re-skins from one source of truth. Aliases are
+   defined in :root as var() references to semantic tokens, so
+   they track light/dark automatically (no per-theme duplication).
+   Imported AFTER colors.css.
+   ============================================================ */
+
+:root {
+  /* Surfaces */
+  --panel:    var(--surface);
+  --panel-2:  var(--surface-sunken);
+  --panel-3:  var(--surface-hover);
+
+  /* Text */
+  --muted:    var(--text-secondary);
+  --faint:    var(--text-tertiary);
+
+  /* Accent ramp (legacy step names → semantic accent) */
+  --accent-50:   var(--accent-soft);
+  --accent-100:  var(--accent-soft-hover);
+  --accent-200:  var(--accent-border);
+  --accent-500:  var(--accent);
+  --accent-600:  var(--accent-hover);
+  --accent-700:  var(--accent-active);
+
+  /* Status hues */
+  --green:        var(--success);
+  --green-soft:   var(--success-soft);
+  --green-border: var(--success-border);
+  --amber:        var(--warning);
+  --amber-soft:   var(--warning-soft);
+  --amber-border: var(--warning-border);
+  --red:          var(--danger);
+  --red-soft:     var(--danger-soft);
+  --red-border:   var(--danger-border);
+
+  /* Elevation / motion legacy aliases */
+  --shadow-color: var(--shadow-rgb);
+  --ease:         var(--dur-fast) var(--ease-out);
+}

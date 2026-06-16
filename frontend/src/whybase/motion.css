@@ -1,0 +1,41 @@
+/* ============================================================
+   WhyBase — Motion
+   Motion is meaning. Every transition either communicates state
+   or guides attention. Springs for anything that moves through
+   space; eased curves for colour & opacity. Nothing loops
+   decoratively. All motion respects prefers-reduced-motion.
+   ============================================================ */
+
+:root {
+  /* Durations: instant=hover/press, fast=small changes, base=default,
+     slow=layout/reveals, slower=hero/shared-element */
+  --dur-instant: 90ms;   /* @kind other */
+  --dur-fast:    150ms;  /* @kind other */
+  --dur:         220ms;  /* @kind other */
+  --dur-slow:    340ms;  /* @kind other */
+  --dur-slower:  520ms;  /* @kind other */
+
+  /* Easing — the WhyBase curves (decisive, gentle, symmetric, springs) */
+  --ease-out:       cubic-bezier(0.16, 1, 0.3, 1);     /* @kind other */
+  --ease-out-soft:  cubic-bezier(0.22, 1, 0.36, 1);    /* @kind other */
+  --ease-in-out:    cubic-bezier(0.65, 0, 0.35, 1);    /* @kind other */
+  --ease-spring:    cubic-bezier(0.34, 1.4, 0.5, 1);   /* @kind other */
+  --ease-spring-soft: cubic-bezier(0.3, 1.2, 0.55, 1); /* @kind other */
+  --ease-emphasis:  cubic-bezier(0.2, 0.9, 0.1, 1);    /* @kind other */
+
+  /* Ready-made transition presets */
+  --t-colors: color var(--dur-instant) var(--ease-out),
+              background-color var(--dur-instant) var(--ease-out),
+              border-color var(--dur-instant) var(--ease-out); /* @kind other */
+  --t-control: color var(--dur-instant) var(--ease-out),
+               background-color var(--dur-instant) var(--ease-out),
+               border-color var(--dur-instant) var(--ease-out),
+               box-shadow var(--dur) var(--ease-out),
+               transform var(--dur) var(--ease-spring-soft); /* @kind other */
+  --t-elevate: box-shadow var(--dur) var(--ease-out),
+               transform var(--dur) var(--ease-spring-soft),
+               border-color var(--dur-fast) var(--ease-out); /* @kind other */
+
+  /* Stagger step for sequential reveals (multiply by item index) */
+  --stagger: 42ms; /* @kind other */
+}

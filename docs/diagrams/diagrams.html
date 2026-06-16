@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Whybase for Teams — Architecture Diagrams</title>
+<style>
+  :root {
+    --page: #eef1f5;
+    --card: #ffffff;
+    --bg: #f4f6f9;            /* slightly offset card-body background */
+    --text: #1f2733;
+    --muted: #5c6675;
+    --border: #e2e6ec;
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --header-bg: rgba(255, 255, 255, 0.82);
+    --shadow: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.06);
+  }
+  body[data-theme="dark"] {
+    --page: #0e1014;
+    --card: #171a21;
+    --bg: #1f2430;
+    --text: #e6e9f0;
+    --muted: #9aa3b2;
+    --border: #2a2f3a;
+    --accent: #60a5fa;
+    --accent-text: #0b1220;
+    --header-bg: rgba(18, 21, 27, 0.82);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 132px; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--page);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Sticky header + nav ---- */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--header-bg);
+    backdrop-filter: saturate(180%) blur(10px);
+    -webkit-backdrop-filter: saturate(180%) blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  .header-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .brand .dot {
+    width: 22px; height: 22px; border-radius: 6px;
+    background: linear-gradient(135deg, var(--accent), #7c3aed);
+    flex: 0 0 auto;
+  }
+  .brand h1 {
+    font-size: 16px; font-weight: 700; margin: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .brand small { color: var(--muted); font-weight: 500; }
+  .header-actions { margin-left: auto; display: flex; gap: 8px; flex: 0 0 auto; }
+
+  button.btn {
+    font: inherit; font-size: 13px; font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 7px 12px;
+    cursor: pointer;
+    transition: transform .05s ease, border-color .15s ease, background .15s ease;
+  }
+  button.btn:hover { border-color: var(--accent); }
+  button.btn:active { transform: translateY(1px); }
+  button.btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+
+  nav.diagram-nav {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 8px 20px;
+    max-width: 1180px;
+    margin: 0 auto;
+    scrollbar-width: thin;
+  }
+  nav.diagram-nav a {
+    flex: 0 0 auto;
+    font-size: 12.5px;
+    font-weight: 600;
+    text-decoration: none;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 999px;
+    padding: 5px 11px;
+    white-space: nowrap;
+  }
+  nav.diagram-nav a:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ---- Layout ---- */
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 80px; }
+  .intro { color: var(--muted); font-size: 14.5px; line-height: 1.6; margin: 4px 0 26px; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    margin-bottom: 26px;
+    overflow: hidden;
+    scroll-margin-top: 132px;
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .badge {
+    flex: 0 0 auto;
+    width: 30px; height: 30px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-weight: 700; font-size: 14px;
+    display: grid; place-items: center;
+  }
+  .card-head .titles { min-width: 0; }
+  .card-head h2 { margin: 0; font-size: 16px; font-weight: 700; }
+  .card-head p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); }
+  .card-actions { margin-left: auto; display: flex; gap: 8px; flex: 0 0 auto; }
+  .card-actions button { font-size: 12px; padding: 6px 10px; }
+
+  .card-body {
+    background: var(--bg);
+    padding: 22px;
+    overflow-x: auto;
+  }
+  .mermaid-host { display: flex; justify-content: center; min-height: 60px; }
+  .mermaid-host svg { max-width: 100%; height: auto; }
+  .render-error {
+    color: #b91c1c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px; white-space: pre-wrap; text-align: left;
+  }
+
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 0 20px 40px; }
+  @media (max-width: 640px) {
+    .brand small { display: none; }
+    .header-actions .btn span.lbl { display: none; }
+  }
+</style>
+</head>
+<body data-theme="light">
+  <div class="topbar">
+    <div class="header-row">
+      <div class="brand">
+        <span class="dot" aria-hidden="true"></span>
+        <h1>Whybase for Teams&nbsp;<small>· Architecture</small></h1>
+      </div>
+      <div class="header-actions">
+        <button class="btn" id="downloadAll" title="Download every diagram as SVG">⬇︎ <span class="lbl">Download all SVGs</span></button>
+        <button class="btn" id="themeToggle" title="Toggle dark / light">🌙 <span class="lbl">Dark</span></button>
+      </div>
+    </div>
+    <nav class="diagram-nav" id="nav" aria-label="Diagram navigation"></nav>
+  </div>
+
+  <main>
+    <p class="intro">
+      An institutional-memory layer: it ingests team documents, uses an LLM to distill them into a
+      cited knowledge graph of decisions, people and questions, and answers plain-English questions
+      with provenance. The diagrams below trace the system from a request down to the data model.
+      Use the buttons to export any diagram (PNG renders at 2× on a white background).
+    </p>
+    <div id="cards"></div>
+  </main>
+
+  <footer>Generated architecture reference · rendered with Mermaid.js · light theme by default, toggle for dark.</footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+  <script>
+  // ---- Shared role-colour classes (blue=flow, green=ok, red=error, amber=warn, purple=db/plan) ----
+  const CLASSDEFS = `
+    classDef flow fill:#e0ecff,stroke:#2563eb,stroke-width:1px,color:#0b2a6b;
+    classDef ok fill:#dcfce7,stroke:#16a34a,stroke-width:1px,color:#14532d;
+    classDef error fill:#fee2e2,stroke:#dc2626,stroke-width:1px,color:#7f1d1d;
+    classDef warn fill:#fef3c7,stroke:#d97706,stroke-width:1px,color:#78350f;
+    classDef db fill:#ede9fe,stroke:#7c3aed,stroke-width:1px,color:#4c1d95;
+    classDef plan fill:#f3e8ff,stroke:#9333ea,stroke-width:1px,color:#581c87;
+  `;
+
+  const diagrams = [
+    {
+      id: 'overview',
+      title: 'System overview',
+      desc: 'The major components and how a browser, the backend, Postgres, and the AI providers fit together.',
+      cls: true,
+      code: `flowchart LR
+  UI["React SPA<br/>(Vite single-page app)"]:::flow
+  subgraph api["FastAPI backend — single uvicorn process"]
+    MW["Middleware<br/>request-id · security headers · CORS"]:::flow
+    R["Routers<br/>auth · query · documents · sources<br/>memory-review · feedback · ops"]:::flow
+    RL["In-process rate limiter"]:::warn
+    WK["Formation worker pool<br/>(background tasks)"]:::flow
+  end
+  PG[("Postgres + pgvector<br/>documents · chunks · memory graph")]:::db
+  LLM["LLM provider<br/>Anthropic / Ollama"]:::flow
+  EMB["Embeddings<br/>Voyage / Ollama / local hash"]:::flow
+  SL["Slack API"]:::flow
+  UI -->|"cookie-auth JSON + SSE"| MW --> R
+  R --> RL
+  R --> PG
+  WK --> PG
+  R -->|"reason / synthesize"| LLM
+  R -->|"embed query"| EMB
+  WK -->|"extract memory"| LLM
+  WK -->|"embed chunks"| EMB
+  R -->|"OAuth / history"| SL
+  WK -->|"reconcile / rollup"| SL`
+    },
+    {
+      id: 'request',
+      title: 'Request sequence — "Ask memory"',
+      desc: 'What happens end-to-end when a user asks a question and the cited answer streams back.',
+      cls: false,
+      code: `sequenceDiagram
+  autonumber
+  actor U as User
+  participant FE as React (Chat)
+  participant API as POST /api/query
+  participant AUTH as Auth + rate limit
+  participant RW as Follow-up rewrite (LLM)
+  participant RET as Retrieval engine
+  participant LLM as LLM (streaming)
+  participant DB as Postgres
+  U->>FE: type a question
+  FE->>API: POST {question, history} as SSE
+  API->>AUTH: cookie session + per-user limit
+  AUTH-->>API: ok (else 401 / 429)
+  opt short follow-up
+    API->>RW: rewrite into a standalone question
+    RW-->>API: standalone question
+  end
+  API->>RET: retrieve(search query)
+  RET->>DB: vector + full-text + graph expand
+  DB-->>RET: chunks + nodes + edges
+  RET-->>API: ranked context
+  API-->>FE: SSE status events
+  API->>LLM: stream(system prompt, context)
+  loop tokens
+    LLM-->>API: delta
+    API-->>FE: SSE delta (answer streams live)
+  end
+  API->>API: split + parse metadata block
+  API-->>FE: SSE metadata (citations, timeline)
+  API-->>FE: SSE done
+  FE->>DB: save the assistant message`
+    },
+    {
+      id: 'ingest',
+      title: 'Ingestion → memory formation',
+      desc: 'How raw documents become structured memory: dedup, chunk, embed, store, then the worker forms the graph.',
+      cls: true,
+      code: `flowchart TD
+  IN["POST /api/ingest<br/>or Slack sync job"]:::flow
+  H{"content-hash or<br/>external-ref already seen?"}:::warn
+  DUP["return existing document<br/>duplicate = true"]:::warn
+  CH["chunk text<br/>(~900 chars, paragraph-aware)"]:::flow
+  EM["embed each chunk"]:::flow
+  ST[("store document + chunks")]:::db
+  ENQ["mark formation pending<br/>wake worker"]:::flow
+  IN --> H
+  H -->|"yes"| DUP
+  H -->|"no"| CH --> EM --> ST --> ENQ
+  ENQ --> CLAIM
+  subgraph worker["Formation worker pool"]
+    CLAIM["claim next document<br/>(serialized per workspace)"]:::flow
+    FORM["LLM memory formation<br/>(structured extract)"]:::flow
+    PERSIST[("upsert nodes · edges · chunk links")]:::db
+    CONS["consolidate<br/>merge near-duplicate decisions"]:::flow
+    OK["status = complete"]:::ok
+    CLAIM --> FORM --> PERSIST --> CONS --> OK
+  end`
+    },
+    {
+      id: 'errors',
+      title: 'Error & retry paths',
+      desc: 'Failure handling across the three pipelines plus the auth gates that can reject a request.',
+      cls: true,
+      code: `flowchart TD
+  subgraph form["Memory formation"]
+    F1["formation attempt"]:::flow
+    F2{"raised an exception?"}:::warn
+    FOK["complete"]:::ok
+    F3["attempts += 1"]:::warn
+    F4{"attempts reached the cap?"}:::warn
+    F5["status = pending<br/>backoff 60s · 2^(n-1)"]:::warn
+    F6["status = failed<br/>(surfaced in Ops)"]:::error
+    F1 --> F2
+    F2 -->|"no"| FOK
+    F2 -->|"yes"| F3 --> F4
+    F4 -->|"no"| F5
+    F4 -->|"yes"| F6
+  end
+  subgraph sync["Slack sync job"]
+    S1["sync running"]:::flow
+    S2{"Slack returned 429?"}:::warn
+    S3["status = paused<br/>next_retry_at set · manual retry"]:::warn
+    S4["status = failed"]:::error
+    S1 --> S2
+    S2 -->|"rate limit"| S3
+    S2 -->|"other error"| S4
+  end
+  subgraph q["Ask Memory query"]
+    Q1["LLM streaming"]:::flow
+    Q2{"LLM call failed?"}:::warn
+    Q3["SSE error event<br/>partial answer preserved"]:::error
+    QOK["answer + citations"]:::ok
+    Q1 --> Q2
+    Q2 -->|"yes"| Q3
+    Q2 -->|"no"| QOK
+  end
+  subgraph gate["Auth gates"]
+    A1["401 — not authenticated"]:::error
+    A2["403 — insufficient role"]:::error
+    A3["429 — throttled"]:::warn
+  end`
+    },
+    {
+      id: 'retrieval',
+      title: 'Service internals — retrieval engine',
+      desc: 'Hybrid search: two searches fused by reciprocal-rank fusion, then a graph walk pulls in related evidence.',
+      cls: true,
+      code: `flowchart LR
+  Q["query /<br/>rewritten question"]:::flow
+  VEC["vector search<br/>pgvector cosine · top-k"]:::flow
+  FTS["full-text search<br/>websearch_to_tsquery · top-k"]:::flow
+  RRF["reciprocal-rank fusion<br/>score = sum of 1/(60+rank)"]:::flow
+  SEED["seed chunks"]:::ok
+  GRAPH["graph BFS expand<br/>2 hops · typed edges"]:::flow
+  EV["pull evidence chunks for<br/>decision / question nodes"]:::flow
+  CAP["context cap = 22 chunks<br/>(confidence-ordered)"]:::warn
+  CTX["chronological context<br/>chunks + graph nodes"]:::ok
+  Q --> VEC --> RRF
+  Q --> FTS --> RRF
+  RRF --> SEED --> GRAPH --> EV --> CAP --> CTX`
+    },
+    {
+      id: 'formation',
+      title: 'Service internals — memory formation',
+      desc: 'The LLM reads a document plus a digest of existing memory and emits structured nodes and typed edges.',
+      cls: true,
+      code: `flowchart TD
+  DOC["new document chunks"]:::flow
+  DIG["existing graph digest<br/>(recent 150 nodes)"]:::flow
+  LLM["LLM structured output<br/>(JSON schema)"]:::flow
+  DEC["decisions<br/>what · why · status · people"]:::ok
+  ENT["entities<br/>people · systems · projects"]:::ok
+  QUE["questions<br/>open / resolved"]:::ok
+  UPS[("upsert_node<br/>dedup on kind + label")]:::db
+  LNK[("link chunks as evidence")]:::db
+  EDG[("typed edges<br/>involves · about · revisits<br/>resolves · relates_to")]:::db
+  DOC --> LLM
+  DIG --> LLM
+  LLM --> DEC
+  LLM --> ENT
+  LLM --> QUE
+  DEC --> UPS
+  ENT --> UPS
+  QUE --> UPS
+  UPS --> LNK
+  UPS --> EDG`
+    },
+    {
+      id: 'lifecycle',
+      title: 'Service internals — formation job lifecycle',
+      desc: 'A document’s formation_status as the worker queue claims, retries, fails, or recovers it.',
+      cls: false,
+      code: `stateDiagram-v2
+  [*] --> pending: ingested or enqueued
+  pending --> processing: claimed (skip-locked, per-workspace)
+  processing --> complete: formation succeeded
+  processing --> pending: failure, attempts under cap, backoff
+  processing --> failed: failure, attempts at cap
+  processing --> pending: worker cancelled or crash recovered
+  failed --> pending: admin retry
+  complete --> pending: reform or relink
+  complete --> [*]`
+    },
+    {
+      id: 'data',
+      title: 'Data model',
+      desc: 'The core tables: workspace tenancy, documents and chunks, the memory graph, chat, feedback, and sources.',
+      cls: false,
+      code: `erDiagram
+  workspaces ||--o{ workspace_memberships : has
+  users ||--o{ workspace_memberships : joins
+  workspaces ||--o{ auth_sessions : "logs in"
+  workspaces ||--o{ documents : owns
+  documents ||--o{ chunks : "split into"
+  workspaces ||--o{ memory_nodes : owns
+  memory_nodes ||--o{ memory_edges : "src / dst"
+  chunks ||--o{ chunk_links : links
+  memory_nodes ||--o{ chunk_links : "evidenced by"
+  workspaces ||--o{ chat_sessions : owns
+  chat_sessions ||--o{ chat_messages : contains
+  chat_messages ||--o{ answer_feedback : "flagged by"
+  workspaces ||--o{ source_connections : has
+  source_connections ||--o{ source_streams : channels
+  source_connections ||--o{ sync_jobs : runs
+  documents {
+    int id PK
+    int workspace_id FK
+    text source
+    text title
+    text content_hash
+    text formation_status
+  }
+  chunks {
+    int id PK
+    int document_id FK
+    int chunk_index
+    vector embedding
+    tsvector text_tsv
+  }
+  memory_nodes {
+    int id PK
+    int workspace_id FK
+    text kind
+    text label
+    text status
+    jsonb data
+  }
+  memory_edges {
+    int id PK
+    int src FK
+    int dst FK
+    text relation
+  }`
+    },
+    {
+      id: 'modules',
+      title: 'Module architecture',
+      desc: 'How the backend Python packages depend on each other — HTTP layer, query pipeline, and the memory engine.',
+      cls: true,
+      code: `flowchart TD
+  main["main.py<br/>app + lifespan"]:::flow
+  subgraph routes["routes/ — HTTP layer"]
+    rq["query · documents · sessions"]:::flow
+    rm["memory_views · memory_review"]:::flow
+    rf["answer_feedback · ops · workspace"]:::flow
+    rh["health · integrations"]:::flow
+  end
+  authm["auth.py<br/>sessions · RBAC"]:::flow
+  ing["ingest.py"]:::flow
+  ret["retrieval.py"]:::flow
+  qry["query.py<br/>SSE engine"]:::flow
+  emb["embeddings.py"]:::flow
+  llm["llm.py"]:::flow
+  src["sources.py · slack.py"]:::flow
+  subgraph mem["memory/ — graph + queue"]
+    wk["worker.py"]:::flow
+    fm["formation.py"]:::flow
+    gr["graph.py"]:::flow
+    sc["scoring.py"]:::flow
+    co["consolidate.py"]:::flow
+  end
+  dbm[("db.py — connection pool")]:::db
+  main --> routes
+  routes --> authm
+  routes --> ing
+  routes --> qry
+  routes --> src
+  qry --> ret
+  qry --> llm
+  ret --> emb
+  ret --> gr
+  ret --> sc
+  ing --> emb
+  ing --> wk
+  wk --> fm
+  wk --> co
+  fm --> gr
+  fm --> llm
+  co --> gr
+  authm --> dbm
+  ret --> dbm`
+    },
+    {
+      id: 'roadmap',
+      title: 'Hardening & product roadmap',
+      desc: 'Shipped capabilities and the prioritised next steps for reliability, security, scale, and product.',
+      cls: true,
+      code: `flowchart LR
+  subgraph now["Shipped"]
+    n1["hybrid retrieval<br/>(vector + FTS + RRF)"]:::ok
+    n2["per-workspace<br/>formation queue"]:::ok
+    n3["trust loop:<br/>feedback + memory review"]:::ok
+  end
+  subgraph next["Next — reliability & security"]
+    x1["proxy-aware client IP<br/>(trust X-Forwarded-For via config)"]:::plan
+    x2["auto-resume<br/>rate-limited sync jobs"]:::plan
+    x3["OAuth stream refresh<br/>outside the transaction"]:::plan
+    x4["Content-Security-Policy<br/>header"]:::plan
+  end
+  subgraph later["Later — scale & product"]
+    l1["multi-process<br/>shared work queue"]:::plan
+    l2["fix N+1 in<br/>/api/decisions"]:::plan
+    l3["more connectors:<br/>Notion · GitHub · Jira"]:::plan
+    l4["expand eval scorecard"]:::plan
+  end
+  now --> next --> later`
+    }
+  ];
+
+  // ---- Build nav + cards from the diagram list ----
+  const navEl = document.getElementById('nav');
+  const cardsEl = document.getElementById('cards');
+  diagrams.forEach((d, i) => {
+    const n = i + 1;
+    const a = document.createElement('a');
+    a.href = '#' + d.id;
+    a.textContent = n + '. ' + d.title;
+    navEl.appendChild(a);
+
+    const card = document.createElement('section');
+    card.className = 'card';
+    card.id = d.id;
+    card.innerHTML = `
+      <div class="card-head">
+        <div class="badge">${n}</div>
+        <div class="titles">
+          <h2>${d.title}</h2>
+          <p>${d.desc}</p>
+        </div>
+        <div class="card-actions">
+          <button class="btn" data-svg="${d.id}" title="Download SVG">SVG</button>
+          <button class="btn" data-png="${d.id}" title="Download PNG (2×)">PNG</button>
+        </div>
+      </div>
+      <div class="card-body"><div class="mermaid-host" id="host-${d.id}"></div></div>`;
+    cardsEl.appendChild(card);
+  });
+
+  // ---- Mermaid rendering (manual, so we can re-render on theme change) ----
+  let renderToken = 0;
+  async function renderAll() {
+    if (typeof mermaid === 'undefined') {
+      document.querySelectorAll('.mermaid-host').forEach(h => {
+        h.innerHTML = '<div class="render-error">Mermaid failed to load (CDN blocked?).</div>';
+      });
+      return;
+    }
+    const dark = document.body.dataset.theme === 'dark';
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: dark ? 'dark' : 'default',
+      securityLevel: 'loose',
+      flowchart: { htmlLabels: false, curve: 'basis', useMaxWidth: true },
+      sequence: { useMaxWidth: true },
+      er: { useMaxWidth: true }
+    });
+    renderToken += 1;
+    const token = renderToken;
+    for (const d of diagrams) {
+      const host = document.getElementById('host-' + d.id);
+      const src = d.code + (d.cls ? CLASSDEFS : '');
+      try {
+        const { svg } = await mermaid.render('r-' + d.id + '-' + token, src);
+        if (token !== renderToken) return; // a newer render started
+        host.innerHTML = svg;
+      } catch (e) {
+        host.innerHTML = '<div class="render-error">' + (e && e.message ? e.message : e) + '</div>';
+      }
+    }
+  }
+
+  // ---- Export helpers ----
+  function svgPixelSize(svg) {
+    const vb = svg.viewBox && svg.viewBox.baseVal;
+    if (vb && vb.width && vb.height) return { w: Math.ceil(vb.width), h: Math.ceil(vb.height) };
+    const r = svg.getBoundingClientRect();
+    return { w: Math.ceil(r.width) || 800, h: Math.ceil(r.height) || 600 };
+  }
+
+  function serializeWithWhiteBg(host) {
+    const svg = host.querySelector('svg');
+    if (!svg) return null;
+    const { w, h } = svgPixelSize(svg);
+    const clone = svg.cloneNode(true);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('width', w);
+    clone.setAttribute('height', h);
+    clone.style.maxWidth = 'none';
+    // white background rectangle so transparent SVGs export cleanly
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', '0');
+    rect.setAttribute('y', '0');
+    rect.setAttribute('width', '100%');
+    rect.setAttribute('height', '100%');
+    rect.setAttribute('fill', '#ffffff');
+    clone.insertBefore(rect, clone.firstChild);
+    return { str: new XMLSerializer().serializeToString(clone), w, h };
+  }
+
+  function triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  function fileBase(id) {
+    const i = diagrams.findIndex(d => d.id === id);
+    return String(i + 1).padStart(2, '0') + '-' + id;
+  }
+
+  function downloadSVG(id) {
+    const out = serializeWithWhiteBg(document.getElementById('host-' + id));
+    if (!out) return;
+    triggerDownload(new Blob([out.str], { type: 'image/svg+xml;charset=utf-8' }), fileBase(id) + '.svg');
+  }
+
+  async function downloadPNG(id) {
+    const out = serializeWithWhiteBg(document.getElementById('host-' + id));
+    if (!out) return;
+    const blob = new Blob([out.str], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+      const scale = 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = out.w * scale;
+      canvas.height = out.h * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(b => { if (b) triggerDownload(b, fileBase(id) + '.png'); }, 'image/png');
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function downloadAllSVGs() {
+    for (const d of diagrams) {
+      downloadSVG(d.id);
+      await new Promise(r => setTimeout(r, 250)); // stagger so the browser allows each
+    }
+  }
+
+  // ---- Wire up buttons ----
+  cardsEl.addEventListener('click', (e) => {
+    const svgBtn = e.target.closest('[data-svg]');
+    const pngBtn = e.target.closest('[data-png]');
+    if (svgBtn) downloadSVG(svgBtn.getAttribute('data-svg'));
+    if (pngBtn) downloadPNG(pngBtn.getAttribute('data-png'));
+  });
+  document.getElementById('downloadAll').addEventListener('click', downloadAllSVGs);
+
+  const themeBtn = document.getElementById('themeToggle');
+  function applyThemeLabel() {
+    const dark = document.body.dataset.theme === 'dark';
+    themeBtn.innerHTML = (dark ? '☀️ ' : '🌙 ') + '<span class="lbl">' + (dark ? 'Light' : 'Dark') + '</span>';
+  }
+  themeBtn.addEventListener('click', () => {
+    const dark = document.body.dataset.theme === 'dark';
+    document.body.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('sb-diagrams-theme', document.body.dataset.theme); } catch (_) {}
+    applyThemeLabel();
+    renderAll();
+  });
+
+  // ---- Init ----
+  (function init() {
+    let saved = 'light';
+    try { saved = localStorage.getItem('sb-diagrams-theme') || 'light'; } catch (_) {}
+    document.body.dataset.theme = saved === 'dark' ? 'dark' : 'light';
+    applyThemeLabel();
+    renderAll();
+  })();
+  </script>
+</body>
+</html>
