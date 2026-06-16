@@ -10,12 +10,11 @@ from typing import Any, Dict, List, Optional
 import asyncpg
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from app.core import config, db, mailer
 from app.core.ratelimit import auth_limiter
-from app.domains.ops import demo_data as demo
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +28,11 @@ class AuthContext:
     user_id: int
     email: str
     display_name: str
-    workspace_id: int
-    workspace_name: str
-    role: str
+    # A freshly-registered user has no active workspace until the setup wizard
+    # creates one, so these three are None during onboarding.
+    workspace_id: Optional[int]
+    workspace_name: Optional[str]
+    role: Optional[str]
     session_id: int
     workspaces: List[Dict[str, Any]]
 
@@ -44,10 +45,13 @@ class BootstrapRequest(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    workspace_name: str = ""
+    # Identity-only signup. The workspace is named later, in the setup wizard
+    # (POST /api/workspace/create). workspace_name is accepted but ignored for
+    # backward compatibility with older clients.
     email: str
     display_name: str
     password: str
+    workspace_name: str = ""
 
 
 class JoinRequest(BaseModel):
@@ -142,26 +146,6 @@ async def _unique_slug(conn: asyncpg.Connection, name: str) -> str:
     return slug
 
 
-async def _seed_demo_bg(workspace_id: int, user_id: int) -> None:
-    """Background task: pre-load a fresh workspace with the demo corpus so the
-    first visit has something to query. Failures are logged, never surfaced."""
-    try:
-        result = await demo.seed_demo_data(workspace_id)
-        pool = await db.get_pool()
-        async with pool.acquire() as conn:
-            await audit(
-                conn, "demo_seed", workspace_id, user_id,
-                data={
-                    "created": result["created"],
-                    "duplicates": result["duplicates"],
-                    "document_ids": result["document_ids"],
-                    "source": "signup",
-                },
-            )
-    except Exception:  # background task — must not crash the worker loop
-        logger.exception("demo seed failed for workspace %s", workspace_id)
-
-
 def clean_email(email: str) -> str:
     email = " ".join((email or "").split()).lower()
     if "@" not in email or email.startswith("@") or email.endswith("@"):
@@ -222,8 +206,29 @@ async def _memberships(conn: asyncpg.Connection, user_id: int) -> List[Dict[str,
 
 
 async def _context_for(
-    conn: asyncpg.Connection, user_id: int, workspace_id: int, session_id: int
+    conn: asyncpg.Connection,
+    user_id: int,
+    workspace_id: Optional[int],
+    session_id: int,
 ) -> AuthContext:
+    if workspace_id is None:
+        # Onboarding state: the user exists but hasn't created a workspace yet.
+        urow = await conn.fetchrow(
+            "SELECT id AS user_id, email, display_name FROM users WHERE id=$1",
+            user_id,
+        )
+        if urow is None:
+            raise HTTPException(404, "user not found")
+        return AuthContext(
+            user_id=urow["user_id"],
+            email=urow["email"],
+            display_name=urow["display_name"],
+            workspace_id=None,
+            workspace_name=None,
+            role=None,
+            session_id=session_id,
+            workspaces=await _memberships(conn, user_id),
+        )
     row = await conn.fetchrow(
         "SELECT u.id AS user_id, u.email, u.display_name, w.name AS workspace_name, m.role "
         "FROM users u "
@@ -260,7 +265,7 @@ async def _record_activity(
 async def create_session(
     conn: asyncpg.Connection,
     user_id: int,
-    workspace_id: int,
+    workspace_id: Optional[int],
     request: Request,
     response: Response,
 ) -> int:
@@ -272,7 +277,8 @@ async def create_session(
         user_id, workspace_id, _hash_token(token),
         request.headers.get("user-agent"), _client_ip(request), expires,
     )
-    await _record_activity(conn, workspace_id, user_id)
+    if workspace_id is not None:
+        await _record_activity(conn, workspace_id, user_id)
     response.set_cookie(
         COOKIE_NAME,
         token,
@@ -305,13 +311,15 @@ async def get_current_user(request: Request) -> AuthContext:
         raise HTTPException(401, "not authenticated")
     pool = await db.get_pool()
     async with pool.acquire() as conn:
+        # LEFT JOIN workspace/membership: an onboarding session has no workspace
+        # yet (s.workspace_id IS NULL), and must still authenticate.
         row = await conn.fetchrow(
             "SELECT s.id AS session_id, s.workspace_id, s.last_seen_at, u.id AS user_id, "
             "       u.email, u.display_name, u.disabled, w.name AS workspace_name, m.role "
             "FROM auth_sessions s "
             "JOIN users u ON u.id = s.user_id "
-            "JOIN workspaces w ON w.id = s.workspace_id "
-            "JOIN workspace_memberships m ON m.user_id = u.id AND m.workspace_id = s.workspace_id "
+            "LEFT JOIN workspaces w ON w.id = s.workspace_id "
+            "LEFT JOIN workspace_memberships m ON m.user_id = u.id AND m.workspace_id = s.workspace_id "
             "WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at > now()",
             _hash_token(token),
         )
@@ -320,7 +328,10 @@ async def get_current_user(request: Request) -> AuthContext:
         # Record a daily-active row only on the first request of a new UTC day
         # (keeps analytics accurate without a write on every request).
         prev_seen = row["last_seen_at"]
-        if prev_seen is None or prev_seen.astimezone(timezone.utc).date() < datetime.now(timezone.utc).date():
+        if row["workspace_id"] is not None and (
+            prev_seen is None
+            or prev_seen.astimezone(timezone.utc).date() < datetime.now(timezone.utc).date()
+        ):
             await _record_activity(conn, row["workspace_id"], row["user_id"])
         await conn.execute(
             "UPDATE auth_sessions SET last_seen_at=now() WHERE id=$1", row["session_id"]
@@ -340,10 +351,22 @@ async def get_current_user(request: Request) -> AuthContext:
 
 def require_role(min_role: str):
     async def dep(user: AuthContext = Depends(get_current_user)) -> AuthContext:
-        if _ROLE_RANK.get(user.role, 0) < _ROLE_RANK[min_role]:
+        # role is None during onboarding (no workspace yet) → ranks 0 → blocked.
+        if _ROLE_RANK.get(user.role or "", 0) < _ROLE_RANK[min_role]:
             raise HTTPException(403, "insufficient role")
         return user
     return dep
+
+
+async def require_workspace(
+    user: AuthContext = Depends(get_current_user),
+) -> AuthContext:
+    """Authenticated AND has an active workspace. Use on routes that read or
+    write workspace-scoped data but don't need a minimum role (e.g. chat/query),
+    so an onboarding (workspace-less) session can't reach them."""
+    if user.workspace_id is None:
+        raise HTTPException(409, "create a workspace first")
+    return user
 
 
 async def _login_throttled(conn: asyncpg.Connection, email: str, ip: str) -> bool:
@@ -373,11 +396,17 @@ def user_payload(user: AuthContext) -> Dict[str, Any]:
             "email": user.email,
             "display_name": user.display_name,
         },
-        "workspace": {
-            "id": user.workspace_id,
-            "name": user.workspace_name,
-            "role": user.role,
-        },
+        # null while the user is mid-onboarding (no workspace created yet) —
+        # the frontend renders the setup wizard in that case.
+        "workspace": (
+            {
+                "id": user.workspace_id,
+                "name": user.workspace_name,
+                "role": user.role,
+            }
+            if user.workspace_id is not None
+            else None
+        ),
         "workspaces": user.workspaces,
     }
 
@@ -438,19 +467,16 @@ async def bootstrap(
 
 @router.post("/register")
 async def register(
-    req: RegisterRequest,
-    request: Request,
-    response: Response,
-    background: BackgroundTasks,
+    req: RegisterRequest, request: Request, response: Response
 ) -> Dict[str, Any]:
-    """Public self-serve signup: create a brand-new workspace + owner account.
-    Unlike bootstrap, this is multi-tenant and does not claim orphan data."""
+    """Public self-serve signup — identity only. Creates the user account and a
+    workspace-less session; the setup wizard then calls POST /api/workspace/create
+    to name the workspace and make the user its owner."""
     if not config.ALLOW_PUBLIC_SIGNUP:
         raise HTTPException(403, "public signup is disabled on this instance")
     auth_limiter.enforce(_client_ip(request), "signup")
     email = clean_email(req.email)
     display_name = req.display_name.strip() or email
-    ws_name = req.workspace_name.strip() or f"{display_name}'s Workspace"
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -462,30 +488,15 @@ async def register(
                     409, "an account with this email already exists — sign in instead"
                 )
             password_hash = hash_password(req.password)  # validates length
-            slug = await _unique_slug(conn, ws_name)
-            workspace_id = await conn.fetchval(
-                "INSERT INTO workspaces(name, slug) VALUES($1, $2) RETURNING id",
-                ws_name, slug,
-            )
             user_id = await conn.fetchval(
                 "INSERT INTO users(email, display_name, password_hash) VALUES($1, $2, $3) "
                 "RETURNING id",
                 email, display_name, password_hash,
             )
-            await conn.execute(
-                "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
-                "VALUES($1, $2, 'owner')",
-                workspace_id, user_id,
-            )
-            session_id = await create_session(conn, user_id, workspace_id, request, response)
-            await audit(conn, "register", workspace_id, user_id, "workspace", workspace_id)
-            user = await _context_for(conn, user_id, workspace_id, session_id)
-    seeding = config.SEED_DEMO_ON_SIGNUP
-    if seeding:
-        background.add_task(_seed_demo_bg, workspace_id, user_id)
-    payload = user_payload(user)
-    payload["demo_seeding"] = seeding
-    return payload
+            session_id = await create_session(conn, user_id, None, request, response)
+            await audit(conn, "register", None, user_id, "user", user_id)
+            user = await _context_for(conn, user_id, None, session_id)
+    return user_payload(user)
 
 
 @router.get("/invite/{token}")

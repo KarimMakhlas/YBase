@@ -493,3 +493,16 @@ BEGIN
             FOREIGN KEY (source_stream_id) REFERENCES source_streams(id) ON DELETE CASCADE;
     END IF;
 END $$;
+
+-- Onboarding: a freshly-registered user has no workspace until the setup wizard
+-- creates one (POST /api/workspace/create), so a session can be workspace-less.
+ALTER TABLE auth_sessions ALTER COLUMN workspace_id DROP NOT NULL;
+-- Marks when the workspace owner finished (or skipped) the setup wizard.
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMPTZ;
+-- NOTE: single-owner-per-workspace is enforced in application code
+-- (transfer_ownership + tightened create/patch). The partial unique index
+--   CREATE UNIQUE INDEX workspace_one_owner_idx
+--       ON workspace_memberships(workspace_id) WHERE role = 'owner';
+-- is intentionally NOT added here yet: an existing database may still hold
+-- workspaces with multiple owners, which would fail index creation on boot.
+-- Add it in a later migration once a data audit confirms one owner each.

@@ -604,3 +604,111 @@ async def test_reset_password_rejects_expired_token(pool, workspace_id):
             "/api/auth/reset", json={"token": raw, "new_password": "a fresh new password"}
         )
     assert resp.status_code == 400
+
+
+# --- Chunk 2: onboarding + single-owner roles --------------------------------
+
+async def test_register_creates_no_workspace(pool):
+    """Identity-only signup: the account exists and authenticates, but has no
+    workspace until the wizard creates one."""
+    async with await _client() as client:
+        resp = await client.post(
+            "/api/auth/register",
+            json={
+                "email": f"solo-{uuid4().hex}@example.test",
+                "display_name": "Solo Founder",
+                "password": "correct horse battery staple",
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["workspace"] is None
+        assert body["workspaces"] == []
+        # The workspace-less session still authenticates.
+        me = await client.get("/api/auth/me")
+        assert me.status_code == 200
+        assert me.json()["workspace"] is None
+
+
+async def test_workspace_create_makes_owner_and_points_session(pool):
+    """Wizard step 1: create a workspace → current user becomes its sole owner
+    and the active session is pointed at it."""
+    async with await _client() as client:
+        await client.post(
+            "/api/auth/register",
+            json={
+                "email": f"founder-{uuid4().hex}@example.test",
+                "display_name": "Founder",
+                "password": "correct horse battery staple",
+            },
+        )
+        created = await client.post("/api/workspace/create", json={"name": "Acme Eng"})
+        assert created.status_code == 200
+        ws = created.json()["workspace"]
+        assert ws["name"] == "Acme Eng"
+        assert ws["role"] == "owner"
+        # Subsequent calls now operate inside the new workspace.
+        me = await client.get("/api/auth/me")
+        assert me.json()["workspace"]["name"] == "Acme Eng"
+
+
+async def test_create_workspace_user_cannot_mint_owner(pool, workspace_id):
+    client, _ = await _auth_client(pool, workspace_id, role="owner")
+    async with client:
+        resp = await client.post(
+            "/api/workspace/users",
+            json={
+                "email": f"new-{uuid4().hex}@example.test",
+                "display_name": "New Owner",
+                "password": "correct horse battery staple",
+                "role": "owner",
+            },
+        )
+        assert resp.status_code == 400
+
+
+async def test_transfer_ownership_swaps_roles(pool):
+    ws = await _make_workspace(pool, "Transfer Co")
+    owner_client, owner_id = await _auth_client(pool, ws, role="owner")
+    _, member_id = await _auth_client(pool, ws, role="member")
+    async with owner_client:
+        resp = await owner_client.post(
+            "/api/workspace/transfer-ownership",
+            json={"new_owner_user_id": member_id},
+        )
+        assert resp.status_code == 200
+    async with pool.acquire() as conn:
+        rows = dict(
+            (r["user_id"], r["role"])
+            for r in await conn.fetch(
+                "SELECT user_id, role FROM workspace_memberships WHERE workspace_id=$1",
+                ws,
+            )
+        )
+    assert rows[member_id] == "owner"
+    assert rows[owner_id] == "admin"
+
+
+async def test_transfer_ownership_requires_owner(pool, workspace_id):
+    client, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with client:
+        resp = await client.post(
+            "/api/workspace/transfer-ownership", json={"new_owner_user_id": 999999}
+        )
+        assert resp.status_code == 403
+
+
+async def test_onboarding_status_reports_steps(pool, workspace_id):
+    client, _ = await _auth_client(pool, workspace_id, role="owner")
+    async with client:
+        resp = await client.get("/api/workspace/onboarding")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["steps"]["workspace"] is True
+        assert body["steps"]["invited"] is False
+        assert body["steps"]["connected"] is False
+        assert body["onboarded_at"] is None
+        done = await client.post("/api/workspace/onboarding/complete")
+        assert done.status_code == 200
+        after = await client.get("/api/workspace/onboarding")
+        assert after.json()["onboarded_at"] is not None

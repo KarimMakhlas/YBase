@@ -17,6 +17,128 @@ class InviteCreateRequest(BaseModel):
     email: Optional[str] = None
 
 
+class WorkspaceCreateRequest(BaseModel):
+    name: str = ""
+
+
+class TransferOwnershipRequest(BaseModel):
+    new_owner_user_id: int
+
+
+@router.post("/workspace/create")
+async def create_workspace(
+    req: WorkspaceCreateRequest,
+    current: auth.AuthContext = Depends(auth.get_current_user),
+) -> Dict[str, Any]:
+    """Create a workspace and make the current user its sole owner, then point
+    this session at it. Called by the onboarding wizard (and 'new workspace')."""
+    name = req.name.strip() or f"{current.display_name}'s Workspace"
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            slug = await auth._unique_slug(conn, name)
+            workspace_id = await conn.fetchval(
+                "INSERT INTO workspaces(name, slug) VALUES($1, $2) RETURNING id",
+                name, slug,
+            )
+            await conn.execute(
+                "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
+                "VALUES($1, $2, 'owner')",
+                workspace_id, current.user_id,
+            )
+            # Re-point the active session at the new workspace (same as switch).
+            await conn.execute(
+                "UPDATE auth_sessions SET workspace_id=$2, last_seen_at=now() WHERE id=$1",
+                current.session_id, workspace_id,
+            )
+            await auth.audit(conn, "create_workspace", workspace_id, current.user_id,
+                             "workspace", workspace_id)
+            ctx = await auth._context_for(
+                conn, current.user_id, workspace_id, current.session_id
+            )
+    return auth.user_payload(ctx)
+
+
+@router.get("/workspace/onboarding")
+async def workspace_onboarding(
+    current: auth.AuthContext = Depends(auth.get_current_user),
+) -> Dict[str, Any]:
+    """Setup-checklist state for the current workspace: which onboarding steps
+    are done, and whether the owner has finished/dismissed the wizard."""
+    if current.workspace_id is None:
+        raise HTTPException(409, "create a workspace first")
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT "
+            "  (SELECT onboarded_at FROM workspaces WHERE id=$1) AS onboarded_at, "
+            "  EXISTS(SELECT 1 FROM workspace_invites WHERE workspace_id=$1) AS invited, "
+            "  EXISTS(SELECT 1 FROM source_connections WHERE workspace_id=$1) AS connected, "
+            "  EXISTS(SELECT 1 FROM chat_messages m JOIN chat_sessions s ON s.id=m.session_id "
+            "         WHERE s.workspace_id=$1 AND m.role='assistant') AS asked",
+            current.workspace_id,
+        )
+    return {
+        "onboarded_at": row["onboarded_at"].isoformat() if row["onboarded_at"] else None,
+        "role": current.role,
+        "steps": {
+            "workspace": True,
+            "invited": row["invited"],
+            "connected": row["connected"],
+            "asked": row["asked"],
+        },
+    }
+
+
+@router.post("/workspace/onboarding/complete")
+async def complete_onboarding(
+    current: auth.AuthContext = Depends(auth.require_role("admin")),
+) -> Dict[str, Any]:
+    """Mark the setup wizard finished/skipped — dismisses the checklist."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE workspaces SET onboarded_at=now() WHERE id=$1 AND onboarded_at IS NULL",
+            current.workspace_id,
+        )
+    return {"ok": True}
+
+
+@router.post("/workspace/transfer-ownership")
+async def transfer_ownership(
+    req: TransferOwnershipRequest,
+    current: auth.AuthContext = Depends(auth.require_role("owner")),
+) -> Dict[str, Any]:
+    """Hand the single owner role to another member. Demotes the current owner
+    to admin and promotes the target to owner, atomically."""
+    if req.new_owner_user_id == current.user_id:
+        raise HTTPException(400, "you are already the owner")
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            target = await conn.fetchrow(
+                "SELECT role FROM workspace_memberships "
+                "WHERE workspace_id=$1 AND user_id=$2 FOR UPDATE",
+                current.workspace_id, req.new_owner_user_id,
+            )
+            if target is None:
+                raise HTTPException(404, "that user is not a member of this workspace")
+            # Demote first, then promote, so at most one owner exists at any point.
+            await conn.execute(
+                "UPDATE workspace_memberships SET role='admin' "
+                "WHERE workspace_id=$1 AND user_id=$2",
+                current.workspace_id, current.user_id,
+            )
+            await conn.execute(
+                "UPDATE workspace_memberships SET role='owner' "
+                "WHERE workspace_id=$1 AND user_id=$2",
+                current.workspace_id, req.new_owner_user_id,
+            )
+            await auth.audit(conn, "transfer_ownership", current.workspace_id,
+                             current.user_id, "user", req.new_owner_user_id)
+    return {"ok": True, "new_owner_user_id": req.new_owner_user_id}
+
+
 @router.get("/workspace/users")
 async def list_workspace_users(
     current: auth.AuthContext = Depends(auth.require_role("admin")),
@@ -37,8 +159,9 @@ async def create_workspace_user(
     req: auth.UserCreateRequest,
     current: auth.AuthContext = Depends(auth.require_role("admin")),
 ) -> Dict[str, Any]:
-    if req.role not in ("owner", "admin", "member"):
-        raise HTTPException(400, "role must be owner, admin, or member")
+    # Ownership is single and only moves via transfer-ownership — never minted.
+    if req.role not in ("admin", "member"):
+        raise HTTPException(400, "role must be admin or member")
     email = auth.clean_email(req.email)
     pool = await db.get_pool()
     async with pool.acquire() as conn:
@@ -170,8 +293,9 @@ async def patch_workspace_user(
     req: auth.UserPatchRequest,
     current: auth.AuthContext = Depends(auth.require_role("owner")),
 ) -> Dict[str, Any]:
-    if req.role is not None and req.role not in ("owner", "admin", "member"):
-        raise HTTPException(400, "role must be owner, admin, or member")
+    # Ownership moves only via transfer-ownership; this path can set admin/member.
+    if req.role is not None and req.role not in ("admin", "member"):
+        raise HTTPException(400, "role must be admin or member (use transfer-ownership)")
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():

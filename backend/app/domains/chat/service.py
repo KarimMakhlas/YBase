@@ -38,7 +38,7 @@ async def list_sessions(
 @router.post("/sessions")
 async def create_session(
     req: SessionCreate,
-    current: auth.AuthContext = Depends(auth.get_current_user),
+    current: auth.AuthContext = Depends(auth.require_workspace),
 ) -> Dict[str, Any]:
     title = req.title.strip()[:120] or "New conversation"
     pool = await db.get_pool()
@@ -79,7 +79,7 @@ async def get_session(
 async def add_message(
     session_id: int,
     req: MessageCreate,
-    current: auth.AuthContext = Depends(auth.get_current_user),
+    current: auth.AuthContext = Depends(auth.require_workspace),
 ) -> Dict[str, Any]:
     if req.role not in ("user", "assistant"):
         raise HTTPException(400, "role must be user or assistant")
