@@ -787,3 +787,141 @@ async def test_onboarding_status_reports_steps(pool, workspace_id):
         assert done.status_code == 200
         after = await client.get("/api/workspace/onboarding")
         assert after.json()["onboarded_at"] is not None
+
+
+# ---- Google sign-in ----
+
+def _fake_identity(sub, email, name, email_verified=True):
+    """Build a stand-in for auth._google_fetch_identity (the network round-trip
+    to Google's token + userinfo endpoints)."""
+    async def fetch(_code):
+        return {
+            "sub": sub,
+            "email": email,
+            "name": name,
+            "email_verified": email_verified,
+        }
+    return fetch
+
+
+async def _seed_login_state(pool) -> str:
+    state = f"state-{uuid4().hex}"
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO oauth_login_states(state, provider, redirect_path, expires_at) "
+            "VALUES($1, 'google', 'http://localhost:5173', now() + interval '10 minutes')",
+            state,
+        )
+    return state
+
+
+async def test_auth_providers_reports_google_disabled(pool):
+    """Google is unconfigured in tests → the probe says so and /google/start 404s."""
+    async with await _client() as client:
+        providers = await client.get("/api/auth/providers")
+        assert providers.status_code == 200
+        assert providers.json()["google"] is False
+        start = await client.get("/api/auth/google/start")
+        assert start.status_code == 404
+
+
+async def test_google_callback_creates_passwordless_user(pool, monkeypatch):
+    """A first-time Google user gets a fresh passwordless account, a session
+    cookie, and no workspace yet (→ Chunk-2 wizard)."""
+    state = await _seed_login_state(pool)
+    email = f"gnew-{uuid4().hex}@example.test"
+    monkeypatch.setattr(
+        "app.domains.auth.service._google_fetch_identity",
+        _fake_identity(sub=f"sub-{uuid4().hex}", email=email, name="Gina New"),
+    )
+    async with await _client() as client:
+        resp = await client.get(f"/api/auth/google/callback?code=abc&state={state}")
+        assert resp.status_code in (302, 307)
+        assert auth.COOKIE_NAME in resp.cookies
+        me = await client.get("/api/auth/me")
+        assert me.status_code == 200
+        body = me.json()
+        assert body["user"]["email"] == email
+        assert body["workspace"] is None
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT password_hash, auth_provider, google_sub "
+            "FROM users WHERE lower(email)=lower($1)",
+            email,
+        )
+    assert row["password_hash"] is None
+    assert row["auth_provider"] == "google"
+    assert row["google_sub"]
+
+
+async def test_google_callback_links_existing_password_account(pool, monkeypatch):
+    """Signing in with Google on an email that already has a password account
+    links to that same user (no duplicate) and stamps google_sub. Matching is
+    case-insensitive on email."""
+    email = f"glink-{uuid4().hex}@example.test"
+    async with pool.acquire() as conn:
+        existing_id = await conn.fetchval(
+            "INSERT INTO users(email, display_name, password_hash) "
+            "VALUES($1, $2, $3) RETURNING id",
+            email, "Pat Password", auth.hash_password("correct horse battery staple"),
+        )
+    state = await _seed_login_state(pool)
+    sub = f"sub-{uuid4().hex}"
+    monkeypatch.setattr(
+        "app.domains.auth.service._google_fetch_identity",
+        _fake_identity(sub=sub, email=email.upper(), name="Pat"),
+    )
+    async with await _client() as client:
+        resp = await client.get(f"/api/auth/google/callback?code=abc&state={state}")
+        assert resp.status_code in (302, 307)
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, google_sub FROM users WHERE lower(email)=lower($1)", email
+        )
+    assert len(rows) == 1
+    assert rows[0]["id"] == existing_id
+    assert rows[0]["google_sub"] == sub
+
+
+async def test_google_callback_rejects_unknown_state(pool):
+    """An invalid/expired state is refused before any token exchange — no cookie,
+    redirected back to login with an error flag."""
+    async with await _client() as client:
+        resp = await client.get("/api/auth/google/callback?code=abc&state=nope")
+        assert resp.status_code in (302, 307)
+        assert "auth_error" in resp.headers["location"]
+        assert auth.COOKIE_NAME not in resp.cookies
+
+
+async def test_google_callback_state_is_single_use(pool, monkeypatch):
+    """The state row is consumed on first use, so a replayed callback fails."""
+    state = await _seed_login_state(pool)
+    monkeypatch.setattr(
+        "app.domains.auth.service._google_fetch_identity",
+        _fake_identity(sub=f"sub-{uuid4().hex}", email=f"greplay-{uuid4().hex}@example.test", name="Re Play"),
+    )
+    async with await _client() as client:
+        first = await client.get(f"/api/auth/google/callback?code=abc&state={state}")
+        assert first.status_code in (302, 307)
+        assert auth.COOKIE_NAME in first.cookies
+        second = await client.get(f"/api/auth/google/callback?code=abc&state={state}")
+        assert "auth_error" in second.headers["location"]
+
+
+async def test_login_on_google_only_account_points_to_google(pool):
+    """Password login on a Google-only account returns a friendly 'use Google'
+    message rather than a generic invalid-password error."""
+    email = f"gonly-{uuid4().hex}@example.test"
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO users(email, display_name, password_hash, auth_provider, google_sub) "
+            "VALUES($1, $2, NULL, 'google', $3)",
+            email, "Goo Only", f"sub-{uuid4().hex}",
+        )
+    async with await _client() as client:
+        resp = await client.post(
+            "/api/auth/login",
+            json={"email": email, "password": "irrelevant but long enough"},
+        )
+        assert resp.status_code == 401
+        assert "Google" in resp.json()["detail"]

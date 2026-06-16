@@ -71,6 +71,7 @@ export const getLatestDigest = () => getJSON('/api/digests/latest')
 export const runDigest = () => postJSON('/api/digests/run', {})
 
 export const getBootstrapStatus = () => getJSON('/api/auth/bootstrap-status')
+export const getAuthProviders = () => getJSON('/api/auth/providers')
 export const bootstrap = (body) => postJSON('/api/auth/bootstrap', body)
 export const register = (body) => postJSON('/api/auth/register', body)
 export const login = (body) => postJSON('/api/auth/login', body)

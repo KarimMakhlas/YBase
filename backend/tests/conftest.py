@@ -54,8 +54,9 @@ async def pool():
     async with p.acquire() as conn:
         await conn.execute(
             "TRUNCATE answer_feedback, sync_jobs, source_streams, source_connections, "
-            "oauth_states, documents, chunks, chunk_links, memory_nodes, memory_edges, "
-            "slack_events, chat_sessions, chat_messages RESTART IDENTITY CASCADE"
+            "oauth_states, oauth_login_states, documents, chunks, chunk_links, "
+            "memory_nodes, memory_edges, slack_events, chat_sessions, chat_messages "
+            "RESTART IDENTITY CASCADE"
         )
     yield p
     await db.close_pool()

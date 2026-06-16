@@ -144,5 +144,13 @@ GITHUB_MAX_ITEMS_PER_REPO = int(os.getenv("GITHUB_MAX_ITEMS_PER_REPO", "300"))
 # in production. If empty, Slack/Jira OAuth install is disabled.
 CONNECTOR_SECRET_KEY = os.getenv("CONNECTOR_SECRET_KEY", "")
 
+# Google sign-in (OAuth 2.0 / OpenID Connect). Register an app at
+# console.cloud.google.com with the authorized redirect URI
+# <GOOGLE_REDIRECT_BASE_URL>/api/auth/google/callback. Empty client id/secret
+# hides the "Continue with Google" button and disables the routes.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_BASE_URL = os.getenv("GOOGLE_REDIRECT_BASE_URL", "http://localhost:8100")
+
 # When set (docker image), the backend serves the built frontend from here.
 STATIC_DIR = os.getenv("STATIC_DIR", "")

@@ -506,3 +506,24 @@ ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMPTZ;
 -- is intentionally NOT added here yet: an existing database may still hold
 -- workspaces with multiple owners, which would fail index creation on boot.
 -- Add it in a later migration once a data audit confirms one owner each.
+
+-- Google sign-in: accounts can now authenticate by password OR Google, so a
+-- Google-only user has no password_hash. auth_provider is informational;
+-- google_sub is Google's stable account id (the OIDC `sub` claim).
+ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'password';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub_idx
+    ON users(google_sub) WHERE google_sub IS NOT NULL;
+
+-- Pre-login OAuth state for Google sign-in. The existing oauth_states table
+-- requires workspace_id/user_id (NOT NULL), which don't exist before a Google
+-- user has authenticated — hence a dedicated table with no FK columns.
+CREATE TABLE IF NOT EXISTS oauth_login_states (
+    state         TEXT PRIMARY KEY,
+    provider      TEXT NOT NULL,
+    redirect_path TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    consumed_at   TIMESTAMPTZ,
+    expires_at    TIMESTAMPTZ NOT NULL
+);

@@ -6,11 +6,14 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
 
 import asyncpg
+import httpx
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.core import config, db, mailer
@@ -615,6 +618,13 @@ async def login(
             "FROM users WHERE lower(email)=lower($1)",
             email,
         )
+        # A Google-only account has no password to check — point them at the
+        # right door instead of a generic "invalid password".
+        if user and not user["disabled"] and user["password_hash"] is None:
+            await _record_login_attempt(conn, email, ip, False)
+            raise HTTPException(
+                401, "this account uses Google sign-in — use “Continue with Google”"
+            )
         ok = bool(user) and not user["disabled"] and verify_password(
             req.password, user["password_hash"]
         )
@@ -795,3 +805,163 @@ async def switch_workspace(
                     "workspace", req.workspace_id)
         current = await _context_for(conn, user.user_id, req.workspace_id, user.session_id)
     return user_payload(current)
+
+
+# ---- Google sign-in (OAuth 2.0 / OpenID Connect) ----
+
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
+
+
+def google_configured() -> bool:
+    return bool(config.GOOGLE_CLIENT_ID and config.GOOGLE_CLIENT_SECRET)
+
+
+def _google_redirect_uri() -> str:
+    return config.GOOGLE_REDIRECT_BASE_URL.rstrip("/") + "/api/auth/google/callback"
+
+
+def _login_error_redirect(reason: str = "google") -> RedirectResponse:
+    base = config.APP_BASE_URL.rstrip("/")
+    return RedirectResponse(f"{base}/?auth_error={reason}#/login")
+
+
+async def _google_fetch_identity(code: str) -> Dict[str, Any]:
+    """Exchange an authorization code for tokens, then read the OIDC userinfo.
+    Both hops are server-to-server over TLS straight to Google, so the returned
+    `sub`/`email` are trustworthy without separately verifying the id_token JWT.
+    Factored out so tests can stub the network round-trip."""
+    async with httpx.AsyncClient(timeout=20) as cx:
+        tok = await cx.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": config.GOOGLE_CLIENT_ID,
+                "client_secret": config.GOOGLE_CLIENT_SECRET,
+                "redirect_uri": _google_redirect_uri(),
+                "grant_type": "authorization_code",
+            },
+        )
+        tok.raise_for_status()
+        access_token = tok.json().get("access_token")
+        if not access_token:
+            raise ValueError("Google did not return an access token")
+        info = await cx.get(
+            GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        info.raise_for_status()
+        return info.json()
+
+
+async def _google_find_or_create(
+    conn: asyncpg.Connection, sub: str, email: str, name: str
+) -> int:
+    """Resolve a Google identity to a user id: match on google_sub, else
+    auto-link an existing account by (verified) email, else create a fresh
+    passwordless account."""
+    row = await conn.fetchrow(
+        "SELECT id, disabled FROM users WHERE google_sub=$1", sub
+    )
+    if row is not None:
+        if row["disabled"]:
+            raise HTTPException(403, "this account is disabled")
+        return row["id"]
+    # Google asserts a verified email, so linking by email can't be used to
+    # hijack an account the way an unverified email could.
+    row = await conn.fetchrow(
+        "SELECT id, disabled FROM users WHERE lower(email)=lower($1)", email
+    )
+    if row is not None:
+        if row["disabled"]:
+            raise HTTPException(403, "this account is disabled")
+        await conn.execute(
+            "UPDATE users SET google_sub=$2, updated_at=now() WHERE id=$1",
+            row["id"], sub,
+        )
+        return row["id"]
+    return await conn.fetchval(
+        "INSERT INTO users(email, display_name, password_hash, auth_provider, google_sub) "
+        "VALUES($1, $2, NULL, 'google', $3) RETURNING id",
+        email, name or email, sub,
+    )
+
+
+@router.get("/providers")
+async def auth_providers() -> Dict[str, Any]:
+    """Which third-party sign-in options this instance has configured."""
+    return {"google": google_configured()}
+
+
+@router.get("/google/start")
+async def google_start(request: Request):
+    """Begin Google sign-in: stash a single-use state and bounce to Google."""
+    if not google_configured():
+        raise HTTPException(404, "Google sign-in is not configured")
+    auth_limiter.enforce(_client_ip(request), "login")
+    state = secrets.token_urlsafe(32)
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO oauth_login_states(state, provider, redirect_path, expires_at) "
+            "VALUES($1, 'google', $2, now() + interval '10 minutes')",
+            state, config.APP_BASE_URL.rstrip("/"),
+        )
+    params = urlencode({
+        "client_id": config.GOOGLE_CLIENT_ID,
+        "redirect_uri": _google_redirect_uri(),
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "online",
+        "prompt": "select_account",
+    })
+    return RedirectResponse(f"{GOOGLE_AUTH_URL}?{params}")
+
+
+@router.get("/google/callback")
+async def google_callback(request: Request, code: str = "", state: str = ""):
+    """Google redirects here with ?code&state. Consume the state, resolve the
+    identity, issue a session cookie, and bounce back into the app — where a
+    user with no workspace lands in the Chunk-2 setup wizard."""
+    if not code or not state:
+        return _login_error_redirect()
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        st = await conn.fetchrow(
+            "UPDATE oauth_login_states SET consumed_at=now() "
+            "WHERE state=$1 AND provider='google' AND consumed_at IS NULL AND expires_at > now() "
+            "RETURNING redirect_path",
+            state,
+        )
+    if st is None:
+        return _login_error_redirect()
+    try:
+        identity = await _google_fetch_identity(code)
+    except Exception:
+        logger.exception("google sign-in: token/userinfo exchange failed")
+        return _login_error_redirect()
+
+    sub = identity.get("sub")
+    raw_email = identity.get("email")
+    # email_verified can come back as a bool or the string "true" from Google.
+    verified = identity.get("email_verified")
+    verified_ok = verified is None or verified in (True, "true")
+    if not sub or not raw_email or not verified_ok:
+        return _login_error_redirect()
+    email = clean_email(raw_email)
+    name = identity.get("name") or email.split("@")[0]
+    redirect_to = (st["redirect_path"] or config.APP_BASE_URL.rstrip("/"))
+
+    redirect = RedirectResponse(redirect_to)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            user_id = await _google_find_or_create(conn, sub, email, name)
+            memberships = await _memberships(conn, user_id)
+            workspace_id = memberships[0]["id"] if memberships else None
+            # Set the session cookie on the redirect response itself — a returned
+            # Response bypasses FastAPI's injected-response cookie merging.
+            await create_session(conn, user_id, workspace_id, request, redirect)
+            await audit(conn, "google_login", workspace_id, user_id, "user", user_id)
+    return redirect
