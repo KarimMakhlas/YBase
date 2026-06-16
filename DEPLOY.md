@@ -10,9 +10,9 @@ the whole app is one container on port `8100`. You bring a Postgres database and
    EXISTS vector`, so the database must have pgvector available. These all work:
    Supabase, Neon, Railway Postgres, and recent Fly Postgres. A bare managed
    Postgres without pgvector will fail to start.
-2. **An LLM.** Set `ANTHROPIC_API_KEY` for Claude (recommended in production —
-   formation/answer quality is much higher). Without it the app expects a
-   reachable Ollama server, which isn't practical in most cloud hosts.
+2. **An LLM.** Set `ANTHROPIC_API_KEY` for Claude or `NVIDIA_API_KEY` for
+   NVIDIA's hosted OpenAI-compatible models. Without a hosted key the app
+   expects a reachable Ollama server, which isn't practical in most cloud hosts.
 3. **`CONNECTOR_SECRET_KEY`** — a long random string, required if you use any
    connector (it encrypts OAuth tokens). Generate one:
    `python -c "import secrets;print(secrets.token_urlsafe(48))"`.
@@ -34,7 +34,8 @@ fly deploy
 ```
 
 `fly.toml` already sets `SESSION_COOKIE_SECURE=true`, `LLM_PROVIDER=anthropic`,
-and `force_https`.
+and `force_https`. To use NVIDIA on Fly instead, set `LLM_PROVIDER=nvidia` and
+`NVIDIA_API_KEY`.
 
 ## Option B — Railway
 

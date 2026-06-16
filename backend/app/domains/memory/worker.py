@@ -4,10 +4,10 @@ Documents form one at a time *per workspace* — formation links new memory into
 the workspace's existing graph, so order matters within a workspace — while
 independent workspaces proceed in parallel up to a global concurrency cap
 (config.FORMATION_CONCURRENCY; auto = 1 on local Ollama, whose GPU queue jams
-under concurrent formations, 3 on Anthropic). Failures get bounded retries
-with exponential backoff; restarts can't strand documents (stuck `processing`
-rows are recovered to `pending` on startup, and cancellation re-queues the
-in-flight document before propagating).
+under concurrent formations, 3 on hosted providers). Failures get bounded
+retries with exponential backoff; restarts can't strand documents (stuck
+`processing` rows are recovered to `pending` on startup, and cancellation
+re-queues the in-flight document before propagating).
 """
 
 import asyncio

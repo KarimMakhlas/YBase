@@ -153,9 +153,10 @@ def main() -> None:
         auth = login(cx)
         health = cx.get(f"{BASE}/api/health/details").json()
         provider = health.get("llm_provider", "anthropic")
-        if provider == "anthropic" and not health.get("llm_credentials"):
-            print(f"{RED}No Anthropic credentials found by the backend.{RESET}")
-            print("Set ANTHROPIC_API_KEY in the backend's environment and restart it, "
+        if provider in {"anthropic", "nvidia"} and not health.get("llm_credentials"):
+            key = "ANTHROPIC_API_KEY" if provider == "anthropic" else "NVIDIA_API_KEY"
+            print(f"{RED}No {provider} credentials found by the backend.{RESET}")
+            print(f"Set {key} in the backend's environment and restart it, "
                   "or run a local Ollama server to use it as the provider.")
             sys.exit(1)
         print(f"{GREEN}Backend healthy{RESET} — db ok, "

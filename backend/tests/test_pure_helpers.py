@@ -3,8 +3,11 @@ similarity pairing, and Slack event plumbing — no DB, no network."""
 
 import time
 
+from app.core import config
 from app.domains.documents.ingestion import chunk_text, content_hash
+from app.providers import llm
 from app.providers.llm import parse_loose_json
+from app.domains.query.streaming import _strip_metadata_bleed
 from app.domains.query.retrieval import rrf_fuse
 from app.domains.memory.consolidate import similar_pairs
 from app.domains.memory.formation import fallback_topics
@@ -75,6 +78,34 @@ def test_parse_loose_json_plain_and_fenced():
 def test_parse_loose_json_garbage_is_empty():
     assert parse_loose_json("no json here") == {}
     assert parse_loose_json("[1, 2, 3]") == {}
+
+
+def test_strip_metadata_bleed_removes_card_sections():
+    raw = (
+        "PostgreSQL won because it fit the relational workload [C1].\n\n"
+        "| Caveat | Supporting Chunk(s) |\n"
+        "|---|---|\n"
+        "| MongoDB was faster for writes | [C4] |\n\n"
+        "---\n"
+        "Thus, PostgreSQL was selected."
+    )
+    assert _strip_metadata_bleed(raw) == (
+        "PostgreSQL won because it fit the relational workload [C1]."
+    )
+
+    raw = "PostgreSQL won because it fit the workload [C1].\n\nTimeline:\n- 2026-01-01 Chosen"
+    assert _strip_metadata_bleed(raw) == "PostgreSQL won because it fit the workload [C1]."
+
+
+def test_auto_provider_uses_nvidia_before_ollama(monkeypatch):
+    monkeypatch.setattr(config, "LLM_PROVIDER", "auto")
+    monkeypatch.setattr(config, "NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setattr(config, "NVIDIA_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.setattr(llm, "anthropic_credentials_available", lambda: False)
+
+    assert llm.active_provider() == "nvidia"
+    assert llm.active_model() == "openai/gpt-oss-120b"
+    assert llm.credentials_available()
 
 
 # ---- topic fallback ----

@@ -1,5 +1,6 @@
 """HTTP-level coverage for auth, protected routes, and query SSE."""
 
+import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -174,6 +175,79 @@ async def test_query_streams_sse_events(pool, workspace_id, monkeypatch):
         assert "event: delta" in body
         assert "event: metadata" in body
         assert "event: done" in body
+
+
+async def test_query_strips_metadata_bleed_from_answer(pool, workspace_id, monkeypatch):
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        ingest = await admin.post(
+            "/api/ingest",
+            json={
+                "source": "meeting",
+                "title": "Decision notes",
+                "text": "The team decided to keep PostgreSQL for v1.",
+            },
+        )
+    doc_id = ingest.json()["document_id"]
+    async with pool.acquire() as conn:
+        chunk_id = await conn.fetchval(
+            "SELECT id FROM chunks WHERE document_id=$1 ORDER BY chunk_index LIMIT 1",
+            doc_id,
+        )
+
+    class FakeStream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        @property
+        def text_stream(self):
+            async def gen():
+                yield f"PostgreSQL stayed the default [C{chunk_id}]."
+                yield "\n\n| Caveat | Supporting Chunk(s) |\n"
+                yield "|---|---|\n| MongoDB was faster for writes | [C4] |\n"
+                yield "\n<<<MEMORY_METADATA>>>\n"
+                yield json.dumps({
+                    "takeaway": "PostgreSQL stayed the default.",
+                    "confidence": "high",
+                    "cited_chunk_ids": [chunk_id],
+                    "related_questions": [],
+                    "timeline": [],
+                    "counter_evidence": [
+                        {"point": "MongoDB was faster for writes", "chunk_ids": [chunk_id]},
+                    ],
+                    "insight_cards": [
+                        {
+                            "type": "why_it_won",
+                            "title": "Why Postgres won",
+                            "items": [
+                                {
+                                    "label": "Low operational risk",
+                                    "detail": "The team could keep one datastore for v1.",
+                                    "chunk_ids": [chunk_id],
+                                },
+                            ],
+                        },
+                    ],
+                })
+
+            return gen()
+
+    monkeypatch.setattr("app.providers.llm.stream_text", lambda *_args, **_kwargs: FakeStream())
+
+    member, _ = await _auth_client(pool, workspace_id, role="member")
+    async with member:
+        resp = await member.post("/api/query", json={"question": "What database did we pick?"})
+        assert resp.status_code == 200
+        body = resp.text
+        assert "PostgreSQL stayed the default" in body
+        assert "Caveat" not in body
+        assert "MongoDB was faster for writes" in body  # still present in metadata card data
+        assert '"takeaway": "PostgreSQL stayed the default."' in body
+        assert '"insight_cards": [{"type": "why_it_won"' in body
+        assert f'"sources": [{{"chunk_id": {chunk_id}' in body
 
 
 async def test_query_rate_limit_returns_429(pool, workspace_id, monkeypatch):

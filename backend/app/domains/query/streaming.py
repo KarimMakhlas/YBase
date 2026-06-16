@@ -1,6 +1,6 @@
-"""Query engine: graph-aware retrieval + Claude reasoning, streamed as SSE.
+"""Query engine: graph-aware retrieval + LLM reasoning, streamed as SSE.
 
-Claude streams a markdown answer with [C<id>] citations, then a metadata block
+The LLM streams a markdown answer with [C<id>] citations, then a metadata block
 (confidence, cited chunk ids, related questions, timeline) after a delimiter.
 The answer streams to the client token by token; the metadata is buffered,
 parsed, enriched with provenance, and emitted as a final event."""
@@ -17,6 +17,23 @@ from . import retrieval
 
 DELIM = "<<<MEMORY_METADATA>>>"
 _CITE_RE = re.compile(r"\[C(\d+)\]")
+_ANSWER_TAIL_HOLDBACK_CHARS = 3000
+_INSIGHT_CARD_TYPES = {
+    "why_it_won", "tradeoffs", "alternatives", "open_questions", "decision_anatomy",
+}
+_METADATA_BLEED_PATTERNS = [
+    re.compile(
+        r"(?ims)\n\s*(?:#{1,6}\s*)?"
+        r"(?:timeline|chronology|counter[-\s]?evidence|pushback\s*&\s*counter[-\s]?evidence|"
+        r"caveats?|worth asking next|memory could answer|related questions|follow[-\s]?up questions)"
+        r"\s*:?\s*\n.*$"
+    ),
+    re.compile(
+        r"(?ims)\n\s*\|\s*[^|\n]*(?:date|event|timeline|caveat|counter[-\s]?evidence|"
+        r"supporting chunk|supporting source)[^|\n]*\|.*$"
+    ),
+    re.compile(r"(?ims)\n\s*confidence\s*:\s*(?:high|medium|low|unknown)\b.*$"),
+]
 log = logging.getLogger("whybase.query")
 
 # Follow-ups shorter than this likely lean on the conversation ("why did he
@@ -78,21 +95,43 @@ manufacture disagreement.
 - Be explicit about what memory does NOT contain. Never invent facts, people, or dates.
 
 Answer format:
+- Start with a short, direct takeaway sentence. Make it feel like a smart teammate \
+summarizing the answer, not a report header.
 - Markdown. Cite every factual claim inline with the chunk marker, e.g. [C12]. Cite \
 generously — every paragraph should carry citations.
 - Mention dates so the reader can follow the chronology.
 - If memory cannot answer the question, say so plainly and point to the nearest related \
 memory instead.
+- The visible markdown answer is for the direct narrative answer only: paragraphs and \
+short bullets are allowed, but markdown tables are not.
+- Do NOT include tables or separate sections for timeline, chronology, caveats, pushback, \
+counter-evidence, confidence, sources, citations, related questions, follow-up questions, \
+"you might ask", "memory could answer", or "worth asking next" in the markdown answer.
+- The UI renders separate cards from the JSON metadata: confidence badge, timeline card, \
+pushback/counter-evidence card, insight cards, source citations, trace, and related-question \
+chips. Put that card content only in the JSON metadata after the delimiter.
+- Do NOT add a horizontal rule, metadata heading, or summary section before the delimiter.
 
 After the answer, output a line containing exactly:
 {delim}
 followed by a single JSON object (no prose after it):
-{{"confidence": "high" | "medium" | "low",
+{{"takeaway": "<same short takeaway, without citations>",
+  "confidence": "high" | "medium" | "low",
   "cited_chunk_ids": [<int chunk ids you actually cited>],
   "related_questions": ["<2-4 follow-up questions this memory could answer>"],
   "timeline": [{{"date": "YYYY-MM-DD", "event": "<short event description>"}}],
   "counter_evidence": [{{"point": "<a caveat, dissent, risk, or contradicting fact \
-from memory>", "chunk_ids": [<int chunk ids backing this point>]}}]}}"""
+from memory>", "chunk_ids": [<int chunk ids backing this point>]}}],
+  "insight_cards": [
+    {{"type": "why_it_won" | "tradeoffs" | "alternatives" | "open_questions" | \
+"decision_anatomy",
+      "title": "<short card title>",
+      "items": [
+        {{"label": "<short label>",
+          "detail": "<one sentence explanation>",
+          "chunk_ids": [<int chunk ids backing this item>]}}
+      ]}}
+  ]}}"""
 
 
 def _node_line(n: Dict[str, Any]) -> str:
@@ -163,6 +202,70 @@ def _sse(event: str, payload: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, default=str)}\n\n"
 
 
+def _strip_metadata_bleed(text: str) -> str:
+    """Remove card-shaped metadata sections that smaller models sometimes put
+    in the visible answer just before the metadata delimiter."""
+    cut = len(text)
+    for pattern in _METADATA_BLEED_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            cut = min(cut, match.start())
+    cleaned = text[:cut].rstrip()
+    cleaned = re.sub(r"(?m)(?:\n\s*-{3,}\s*)+\Z", "", cleaned).rstrip()
+    return cleaned
+
+
+def _source_refs(chunk_ids: List[Any], by_id: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    refs = []
+    seen = set()
+    for cid in chunk_ids or []:
+        if not str(cid).isdigit():
+            continue
+        chunk_id = int(cid)
+        if chunk_id in seen:
+            continue
+        c = by_id.get(chunk_id)
+        if c:
+            refs.append({
+                "chunk_id": chunk_id,
+                "document_id": c["document_id"],
+                "source": c["source"],
+                "title": c["title"],
+                "date": c["date"],
+            })
+            seen.add(chunk_id)
+    return refs
+
+
+def _enrich_insight_cards(
+    raw_cards: Any, by_id: Dict[int, Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    if not isinstance(raw_cards, list):
+        return []
+    cards = []
+    for card in raw_cards[:5]:
+        if not isinstance(card, dict):
+            continue
+        card_type = card.get("type") if card.get("type") in _INSIGHT_CARD_TYPES else "decision_anatomy"
+        title = (card.get("title") or "").strip()
+        items = []
+        for item in (card.get("items") or [])[:6]:
+            if not isinstance(item, dict):
+                continue
+            label = (item.get("label") or "").strip()
+            detail = (item.get("detail") or "").strip()
+            if not label and not detail:
+                continue
+            items.append({
+                "label": label,
+                "detail": detail,
+                "sources": _source_refs(item.get("chunk_ids", []), by_id),
+            })
+        if title and items:
+            cards.append({"type": card_type, "title": title, "items": items})
+    return cards
+
+
 async def stream_query(
     question: str, workspace_id: int, history: Optional[List[Dict[str, str]]] = None
 ) -> AsyncIterator[str]:
@@ -216,7 +319,9 @@ async def stream_query(
     buf = ""
     meta_raw = ""
     in_meta = False
-    holdback = len(DELIM) + 2  # never emit a partial delimiter as answer text
+    # Keep enough tail text to remove card-shaped metadata leaks before the
+    # frontend sees them. The delimiter itself must also never stream partially.
+    holdback = max(len(DELIM) + 2, _ANSWER_TAIL_HOLDBACK_CHARS)
 
     try:
         async with llm.stream_text(system, context) as stream:
@@ -227,7 +332,7 @@ async def stream_query(
                 buf += piece
                 idx = buf.find(DELIM)
                 if idx != -1:
-                    head = buf[:idx].rstrip()
+                    head = _strip_metadata_bleed(buf[:idx]).rstrip()
                     if head:
                         answer_text += head
                         yield _sse("delta", {"text": head})
@@ -243,12 +348,14 @@ async def stream_query(
     except Exception as e:
         timer.lap("llm_error")
         log.exception("query failed workspace=%s timings %s", workspace_id, timer.line())
-        yield _sse("error", {"message": f"Claude call failed: {e}"})
+        yield _sse("error", {"message": f"LLM call failed: {e}"})
         return
 
     if not in_meta and buf:
-        answer_text += buf
-        yield _sse("delta", {"text": buf})
+        head = _strip_metadata_bleed(buf)
+        if head:
+            answer_text += head
+            yield _sse("delta", {"text": head})
 
     meta = llm.parse_loose_json(meta_raw)
     cited_ids = {int(i) for i in meta.get("cited_chunk_ids", []) if str(i).isdigit()}
@@ -276,22 +383,17 @@ async def stream_query(
         point = (item.get("point") or "").strip() if isinstance(item, dict) else ""
         if not point:
             continue
-        ev = []
-        for cid in (item.get("chunk_ids", []) if isinstance(item, dict) else []):
-            if not str(cid).isdigit():
-                continue
-            c = by_id.get(int(cid))
-            if c:
-                ev.append({"chunk_id": int(cid), "document_id": c["document_id"],
-                           "source": c["source"], "title": c["title"], "date": c["date"]})
+        ev = _source_refs(item.get("chunk_ids", []) if isinstance(item, dict) else [], by_id)
         counter_evidence.append({"point": point, "evidence": ev})
 
     yield _sse("metadata", {
+        "takeaway": meta.get("takeaway"),
         "confidence": meta.get("confidence", "unknown"),
         "citations": citations,
         "related_questions": meta.get("related_questions", []),
         "timeline": meta.get("timeline", []),
         "counter_evidence": counter_evidence,
+        "insight_cards": _enrich_insight_cards(meta.get("insight_cards", []), by_id),
         "trace": ret.get("trace", {}),
     })
     timer.lap("metadata")

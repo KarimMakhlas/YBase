@@ -30,6 +30,13 @@ const ISSUE_OPTIONS = [
   ['other', 'Other'],
 ]
 const ISSUE_LABELS = Object.fromEntries([['helpful', 'Helpful'], ...ISSUE_OPTIONS])
+const CARD_META = {
+  why_it_won: { label: 'Why it won', Icon: Sparkles },
+  tradeoffs: { label: 'Trade-offs', Icon: Scale },
+  alternatives: { label: 'Alternatives', Icon: FileText },
+  open_questions: { label: 'Open questions', Icon: MessageSquare },
+  decision_anatomy: { label: 'Decision anatomy', Icon: SquareCheck },
+}
 
 function citationLabel(citation) {
   if (!citation) return ''
@@ -139,6 +146,48 @@ function NoMemory({ meta, onAsk, canAdd, onAddDoc }) {
   )
 }
 
+function InsightCards({ cards, onOpenDoc }) {
+  if (!cards || cards.length === 0) return null
+  return (
+    <div className="insight-cards">
+      {cards.map((card, idx) => {
+        const meta = CARD_META[card.type] || CARD_META.decision_anatomy
+        const Icon = meta.Icon
+        return (
+          <section className={`insight-card insight-card--${card.type || 'decision_anatomy'}`} key={`${card.type || 'card'}-${idx}`}>
+            <div className="insight-card-head">
+              <span className="insight-card-kicker"><Icon size={14} strokeWidth={1.8} /> {meta.label}</span>
+              <h4>{card.title}</h4>
+            </div>
+            <div className="insight-card-items">
+              {(card.items || []).map((item, itemIdx) => (
+                <div className="insight-card-item" key={`${item.label || 'item'}-${itemIdx}`}>
+                  {item.label && <b>{item.label}</b>}
+                  {item.detail && <span>{item.detail}</span>}
+                  {item.sources && item.sources.length > 0 && (
+                    <div className="insight-card-srcs">
+                      {item.sources.map((src, srcIdx) => (
+                        <button
+                          key={`${src.chunk_id}-${srcIdx}`}
+                          className="src-badge"
+                          onClick={() => onOpenDoc && onOpenDoc(src.document_id)}
+                          title="Open the source"
+                        >
+                          <i className="src-dot" /> {src.source}: {src.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )
+      })}
+    </div>
+  )
+}
+
 function AssistantExtras({ meta, onAsk, onOpenDoc, canAdd, onAddDoc, onCopy, onRegen, onFlagCitation }) {
   if (!meta) return null
   const empty = !meta.citations || meta.citations.length === 0
@@ -184,6 +233,7 @@ function AssistantExtras({ meta, onAsk, onOpenDoc, canAdd, onAddDoc, onCopy, onR
           ))}
         </div>
       )}
+      <InsightCards cards={meta.insight_cards} onOpenDoc={onOpenDoc} />
       <Citations citations={meta.citations} onOpenDoc={onOpenDoc} onFlagCitation={onFlagCitation} />
       <Trace trace={meta.trace} />
       {!empty && meta.related_questions && meta.related_questions.length > 0 && (

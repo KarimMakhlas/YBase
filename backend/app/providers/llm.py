@@ -1,4 +1,4 @@
-"""LLM client wrappers — Anthropic (Claude) or a local Ollama server.
+"""LLM client wrappers — Anthropic, NVIDIA NIM, or a local Ollama server.
 
 Provider selection (config.LLM_PROVIDER):
   - "anthropic": Claude claude-fable-5 with streaming, adaptive thinking, and
@@ -6,13 +6,19 @@ Provider selection (config.LLM_PROVIDER):
     code works across SDK versions. Note: on Fable 5 the `thinking` param must
     be `{"type": "adaptive"}` or omitted entirely — `{"type": "disabled"}` is
     a 400.
+  - "nvidia": NVIDIA's OpenAI-compatible chat completions endpoint (default
+    openai/gpt-oss-120b). Structured output embeds the JSON schema in the
+    prompt and leniently parses the returned object.
   - "ollama": local models via the Ollama HTTP API (default qwen3.5).
     Structured output uses Ollama's grammar-constrained `format` parameter.
-  - "auto" (default): Anthropic when credentials are present, else Ollama.
+  - "auto" (default): Anthropic when credentials are present, then NVIDIA when
+    configured, else Ollama.
 
 Both providers expose the same two entry points used by formation and the
 query engine: `structured_call()` and `stream_text()`.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -28,29 +34,56 @@ from ..core import config
 client = AsyncAnthropic()
 
 
-def credentials_available() -> bool:
+def anthropic_credentials_available() -> bool:
     if os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"):
         return True
     cred_dir = Path.home() / ".config" / "anthropic" / "credentials"
     return cred_dir.exists() and any(cred_dir.glob("*.json"))
 
 
+def nvidia_credentials_available() -> bool:
+    return bool(config.NVIDIA_API_KEY)
+
+
+def credentials_available(provider: str | None = None) -> bool:
+    provider = provider or active_provider()
+    if provider == "anthropic":
+        return anthropic_credentials_available()
+    if provider == "nvidia":
+        return nvidia_credentials_available()
+    if provider == "ollama":
+        return True
+    return anthropic_credentials_available() or nvidia_credentials_available()
+
+
 def active_provider() -> str:
-    if config.LLM_PROVIDER in ("anthropic", "ollama"):
+    if config.LLM_PROVIDER in ("anthropic", "nvidia", "ollama"):
         return config.LLM_PROVIDER
-    return "anthropic" if credentials_available() else "ollama"
+    if anthropic_credentials_available():
+        return "anthropic"
+    if nvidia_credentials_available():
+        return "nvidia"
+    return "ollama"
 
 
 def active_model() -> str:
-    return config.ANTHROPIC_MODEL if active_provider() == "anthropic" else config.OLLAMA_MODEL
+    provider = active_provider()
+    if provider == "anthropic":
+        return config.ANTHROPIC_MODEL
+    if provider == "nvidia":
+        return config.NVIDIA_MODEL
+    return config.OLLAMA_MODEL
 
 
 async def structured_call(
     system: str, user_text: str, schema: Dict[str, Any], max_tokens: int = 16000
 ) -> Dict[str, Any]:
     """Call constrained to a JSON schema; returns the parsed object."""
-    if active_provider() == "ollama":
+    provider = active_provider()
+    if provider == "ollama":
         return await _ollama_structured(system, user_text, schema)
+    if provider == "nvidia":
+        return await _nvidia_structured(system, user_text, schema, max_tokens=max_tokens)
     async with client.messages.stream(
         model=config.ANTHROPIC_MODEL,
         max_tokens=max_tokens,
@@ -73,8 +106,11 @@ async def structured_call(
 
 def stream_text(system: str, user_text: str, max_tokens: int = 16000):
     """Async context manager with a `.text_stream` iterator of answer tokens."""
-    if active_provider() == "ollama":
+    provider = active_provider()
+    if provider == "ollama":
         return _OllamaStream(system, user_text)
+    if provider == "nvidia":
+        return _NvidiaStream(system, user_text, max_tokens=max_tokens)
     return client.messages.stream(
         model=config.ANTHROPIC_MODEL,
         max_tokens=max_tokens,
@@ -83,6 +119,161 @@ def stream_text(system: str, user_text: str, max_tokens: int = 16000):
         thinking={"type": "adaptive"},
         extra_body={"output_config": {"effort": "high"}},
     )
+
+
+# ---- NVIDIA/OpenAI-compatible chat completions ----
+
+_NVIDIA_TIMEOUT = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=10.0)
+_NVIDIA_SLOW_TIMEOUT = httpx.Timeout(
+    connect=10.0, read=config.FORMATION_READ_TIMEOUT_S, write=60.0, pool=10.0
+)
+
+
+def _nvidia_url(path: str) -> str:
+    return f"{config.NVIDIA_BASE_URL.rstrip('/')}{path}"
+
+
+def _nvidia_headers() -> Dict[str, str]:
+    if not config.NVIDIA_API_KEY:
+        raise RuntimeError("NVIDIA_API_KEY is required when LLM_PROVIDER=nvidia")
+    return {
+        "Authorization": f"Bearer {config.NVIDIA_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
+def _nvidia_max_tokens(requested: int) -> int:
+    if config.NVIDIA_MAX_TOKENS > 0:
+        return min(requested, config.NVIDIA_MAX_TOKENS)
+    return requested
+
+
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        return "".join(parts)
+    return "" if content is None else str(content)
+
+
+async def _nvidia_chat_once(
+    messages: list[Dict[str, str]],
+    *,
+    max_tokens: int,
+    temperature: float,
+    timeout: httpx.Timeout,
+) -> Dict[str, Any]:
+    payload = {
+        "model": config.NVIDIA_MODEL,
+        "messages": messages,
+        "temperature": temperature,
+        "top_p": config.NVIDIA_TOP_P,
+        "max_tokens": _nvidia_max_tokens(max_tokens),
+        "stream": False,
+    }
+    async with httpx.AsyncClient(timeout=timeout) as cx:
+        res = await cx.post(
+            _nvidia_url("/chat/completions"),
+            headers=_nvidia_headers(),
+            json=payload,
+        )
+        res.raise_for_status()
+        return res.json()
+
+
+def _nvidia_message_content(data: Dict[str, Any]) -> str:
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    return _content_text(message.get("content"))
+
+
+async def _nvidia_structured(
+    system: str, user_text: str, schema: Dict[str, Any], *, max_tokens: int
+) -> Dict[str, Any]:
+    schema_note = (
+        "\n\nRespond with ONLY a single JSON object — no markdown fences, no prose "
+        "before or after — that validates against this JSON schema:\n"
+        + json.dumps(schema)
+    )
+    data = await _nvidia_chat_once(
+        [
+            {"role": "system", "content": system + schema_note},
+            {"role": "user", "content": user_text},
+        ],
+        max_tokens=max_tokens,
+        temperature=0.2,
+        timeout=_NVIDIA_SLOW_TIMEOUT,
+    )
+    content = _nvidia_message_content(data)
+    try:
+        obj = json.loads(content)
+    except json.JSONDecodeError:
+        obj = parse_loose_json(content)
+    if not isinstance(obj, dict) or not obj:
+        raise ValueError(f"model did not return a JSON object: {content[:200]!r}")
+    return obj
+
+
+class _NvidiaStream:
+    """Mimics the Anthropic SDK stream context manager for query.py."""
+
+    def __init__(self, system: str, user_text: str, max_tokens: int) -> None:
+        self._system = system
+        self._user_text = user_text
+        self._max_tokens = max_tokens
+        self._cx: httpx.AsyncClient | None = None
+
+    async def __aenter__(self) -> "_NvidiaStream":
+        self._cx = httpx.AsyncClient(timeout=_NVIDIA_TIMEOUT)
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        if self._cx:
+            await self._cx.aclose()
+
+    @property
+    async def text_stream(self):
+        payload = {
+            "model": config.NVIDIA_MODEL,
+            "messages": [
+                {"role": "system", "content": self._system},
+                {"role": "user", "content": self._user_text},
+            ],
+            "temperature": config.NVIDIA_TEMPERATURE,
+            "top_p": config.NVIDIA_TOP_P,
+            "max_tokens": _nvidia_max_tokens(self._max_tokens),
+            "stream": True,
+        }
+        async with self._cx.stream(
+            "POST",
+            _nvidia_url("/chat/completions"),
+            headers=_nvidia_headers(),
+            json=payload,
+        ) as res:
+            res.raise_for_status()
+            async for line in res.aiter_lines():
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line.removeprefix("data:").strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                for choice in chunk.get("choices") or []:
+                    piece = _content_text((choice.get("delta") or {}).get("content"))
+                    if piece:
+                        yield piece
 
 
 # ---- Ollama ----

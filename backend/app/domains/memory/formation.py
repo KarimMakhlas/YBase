@@ -1,10 +1,9 @@
 """Memory formation — the async step that runs after every ingest.
 
-Claude (claude-fable-5, adaptive thinking, effort=high, structured output)
-reads the new document plus a digest of the existing memory graph and
-extracts: decisions (with reasoning, advocates, alternatives, status),
-entities, and open/resolved questions — each tied to evidence chunks and
-linked to existing memory nodes (revisits / resolves / relates_to).
+An LLM reads the new document plus a digest of the existing memory graph and
+extracts decisions (with reasoning, advocates, alternatives, status), entities,
+and open/resolved questions — each tied to evidence chunks and linked to
+existing memory nodes (revisits / resolves / relates_to).
 """
 
 from typing import Any, Dict, List, Optional, Set

@@ -49,8 +49,16 @@ AUTH_RATE_PER_MINUTE = int(os.getenv("AUTH_RATE_PER_MINUTE", "10"))
 # Claude — memory formation, query reasoning, answer synthesis.
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-fable-5")
 
-# LLM provider: "anthropic" | "ollama" | "auto" (auto = Anthropic when
-# credentials are present, otherwise a local Ollama server).
+# NVIDIA NIM/OpenAI-compatible chat completions.
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY", "")
+NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "openai/gpt-oss-120b")
+NVIDIA_MAX_TOKENS = int(os.getenv("NVIDIA_MAX_TOKENS", "4096"))
+NVIDIA_TEMPERATURE = float(os.getenv("NVIDIA_TEMPERATURE", "1"))
+NVIDIA_TOP_P = float(os.getenv("NVIDIA_TOP_P", "1"))
+
+# LLM provider: "anthropic" | "nvidia" | "ollama" | "auto" (auto = Anthropic
+# when credentials are present, then NVIDIA when configured, otherwise Ollama).
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5")

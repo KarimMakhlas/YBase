@@ -4,7 +4,7 @@ An AI **memory layer** over a company's knowledge sources (Slack, Notion, GitHub
 
 > "Why do we use Postgres?" → the original Slack debate, the reasoning at the time, who advocated what, the Jira ticket where it almost got reversed, and the benchmark that settled it — as one coherent, cited answer.
 
-Runs **fully local** (Ollama for both LLM and embeddings, zero API keys) or on **Claude + Voyage** when credentials are present — switching is automatic.
+Runs **fully local** (Ollama for both LLM and embeddings, zero API keys), on **NVIDIA-hosted LLMs**, or on **Claude + Voyage** when credentials are present — switching is automatic.
 
 ## How it works
 
@@ -38,11 +38,12 @@ The graph expansion step is what makes this memory rather than search: a questio
 
 ## Providers
 
-**LLM** (`LLM_PROVIDER`: `auto` | `anthropic` | `ollama`, default `auto`):
+**LLM** (`LLM_PROVIDER`: `auto` | `anthropic` | `nvidia` | `ollama`, default `auto`):
 
 | Provider | When | Details |
 |---|---|---|
 | Anthropic | credentials present | `claude-fable-5`, streaming everywhere, `thinking: {type: "adaptive"}`, `output_config: {effort: "high"}`, structured outputs via json_schema |
+| NVIDIA | `NVIDIA_API_KEY` set | `openai/gpt-oss-120b` by default (`NVIDIA_MODEL`) through NVIDIA's OpenAI-compatible `/chat/completions` endpoint, streaming answers, structured extraction via schema-in-prompt JSON parsing |
 | Ollama | otherwise | `qwen3.5` by default (`OLLAMA_MODEL`), native API, streaming chat with `think: false`. Structured extraction embeds the JSON schema in the prompt instead of Ollama's grammar-constrained `format` — on thinking models the grammar only runs after an unbounded thinking pass (which jams the GPU queue), and `format` + `think:false` together silently drop the grammar |
 
 **Embeddings** (`EMBED_PROVIDER`: `auto` | `voyage` | `ollama` | `local`, default `auto` — picked once and pinned so embedding spaces never mix):
@@ -98,7 +99,7 @@ export WHYBASE_PASSWORD='your-bootstrap-password'
 backend/.venv/bin/python scripts/demo.py
 ```
 
-To use Claude instead, `export ANTHROPIC_API_KEY=sk-ant-...` before starting the backend — the provider switches automatically (check authenticated `GET /api/health/details`).
+To use NVIDIA instead of Ollama, `export NVIDIA_API_KEY=nvapi-...` before starting the backend. To force it even when Anthropic credentials are present, set `LLM_PROVIDER=nvidia`. To use Claude, `export ANTHROPIC_API_KEY=sk-ant-...` — `auto` prefers Anthropic, then NVIDIA, then Ollama (check authenticated `GET /api/health/details`).
 
 The first browser visit shows a bootstrap screen. That creates the initial workspace, owner user, and assigns any existing local memory to that workspace. Passwords must be at least 12 characters.
 
