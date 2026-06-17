@@ -11,6 +11,7 @@ dist/
 # Env / secrets
 .env
 .env.*
+!backend/.env.example
 
 # OS / editor
 .DS_Store
