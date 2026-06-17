@@ -114,6 +114,39 @@ async def complete_onboarding(
     return {"ok": True}
 
 
+@router.post("/workspace/leave")
+async def leave_workspace(
+    current: auth.AuthContext = Depends(auth.get_current_user),
+) -> Dict[str, Any]:
+    """Remove yourself from the active workspace. The sole owner must transfer
+    ownership first (a workspace must always keep an owner). The session
+    re-points to another workspace, or to the workspace-less state if none
+    remain. Not write-gated — leaving a read-only workspace is allowed."""
+    if current.workspace_id is None:
+        raise HTTPException(409, "no active workspace to leave")
+    if current.role == "owner":
+        raise HTTPException(
+            409, "transfer ownership before leaving — a workspace must keep an owner"
+        )
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "DELETE FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",
+                current.workspace_id, current.user_id,
+            )
+            await auth.audit(conn, "leave_workspace", current.workspace_id,
+                             current.user_id, "workspace", current.workspace_id)
+            remaining = await auth._memberships(conn, current.user_id)
+            next_ws = remaining[0]["id"] if remaining else None
+            await conn.execute(
+                "UPDATE auth_sessions SET workspace_id=$2, last_seen_at=now() WHERE id=$1",
+                current.session_id, next_ws,
+            )
+            ctx = await auth._context_for(conn, current.user_id, next_ws, current.session_id)
+    return auth.user_payload(ctx)
+
+
 @router.post("/workspace/transfer-ownership")
 async def transfer_ownership(
     req: TransferOwnershipRequest,

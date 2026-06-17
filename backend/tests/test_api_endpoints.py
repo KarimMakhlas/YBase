@@ -1013,3 +1013,63 @@ async def test_checkout_requires_owner(pool):
     admin, _ = await _auth_client(pool, ws, role="admin")
     async with admin:
         assert (await admin.post("/api/billing/checkout")).status_code == 403
+
+
+# ---- Account: sign-out-everywhere + leave workspace ----
+
+async def test_me_reports_auth_provider(pool, workspace_id):
+    client, _ = await _auth_client(pool, workspace_id, role="member")
+    async with client:
+        body = (await client.get("/api/auth/me")).json()
+        assert body["user"]["auth_provider"] == "password"
+
+
+async def test_logout_all_revokes_every_session(pool, workspace_id):
+    client, user_id = await _auth_client(pool, workspace_id, role="admin")
+    other_token = f"test-{uuid4().hex}"
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO auth_sessions(user_id, workspace_id, token_hash, expires_at) "
+            "VALUES($1, $2, $3, $4)",
+            user_id, workspace_id, auth._hash_token(other_token),
+            datetime.now(timezone.utc) + timedelta(days=1),
+        )
+    async with client:
+        assert (await client.post("/api/auth/logout-all")).status_code == 200
+    # the other device's session is now dead too
+    other = await _client()
+    other.cookies.set(auth.COOKIE_NAME, other_token, path="/")
+    async with other:
+        assert (await other.get("/api/auth/me")).status_code == 401
+
+
+async def test_member_can_leave_and_session_repoints(pool, workspace_id):
+    client, user_id = await _auth_client(pool, workspace_id, role="member")
+    async with pool.acquire() as conn:
+        ws2 = await conn.fetchval(
+            "INSERT INTO workspaces(name, slug) VALUES($1, $2) RETURNING id",
+            "Second WS", f"second-{uuid4().hex[:8]}",
+        )
+        await conn.execute(
+            "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
+            "VALUES($1, $2, 'admin')",
+            ws2, user_id,
+        )
+    async with client:
+        resp = await client.post("/api/workspace/leave")
+        assert resp.status_code == 200
+        # session re-pointed to the remaining workspace
+        assert resp.json()["workspace"]["id"] == ws2
+    async with pool.acquire() as conn:
+        gone = await conn.fetchval(
+            "SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",
+            workspace_id, user_id,
+        )
+    assert gone is None
+
+
+async def test_sole_owner_cannot_leave(pool, workspace_id):
+    owner, _ = await _auth_client(pool, workspace_id, role="owner")
+    async with owner:
+        resp = await owner.post("/api/workspace/leave")
+        assert resp.status_code == 409

@@ -30,6 +30,7 @@ import DocModal from './components/DocModal.jsx'
 import StatusFooter from './components/StatusFooter.jsx'
 import Plans from './components/Plans.jsx'
 import BillingBanner from './components/BillingBanner.jsx'
+import Account from './components/Account.jsx'
 import { ToastProvider } from './components/Toast.jsx'
 import { getBootstrapStatus, getMe, getOnboarding, getBillingStatus, logout } from './api.js'
 import whybaseMark from './assets/whybase-mark.svg'
@@ -53,9 +54,10 @@ const NAV = [
   { id: 'settings', label: 'Settings', icon: SettingsIcon, section: 'Workspace', minRole: 'admin' },
 ]
 
-// `plans` is routable (reached from the billing banner) but not a sidebar item.
-const EXTRA_TABS = new Set(['plans'])
-const LABELS = { ...Object.fromEntries(NAV.map((n) => [n.id, n.label])), plans: 'Plans' }
+// Routable but not sidebar items: plans (from the billing banner) and account
+// (from the workspace switcher in the sidebar footer).
+const EXTRA_TABS = new Set(['plans', 'account'])
+const LABELS = { ...Object.fromEntries(NAV.map((n) => [n.id, n.label])), plans: 'Plans', account: 'Account' }
 const TAB_IDS = new Set([...NAV.map((t) => t.id), ...EXTRA_TABS])
 const ROLE_RANK = { member: 1, admin: 2, owner: 3 }
 
@@ -563,7 +565,7 @@ export default function App() {
                 </span>
               </button>
             )}
-            <button className="ws-switch" title={workspace.name}>
+            <button className="ws-switch" title="Account & workspaces" onClick={() => navigate('account')}>
               <WorkspaceAvatar name={workspace.name} />
               <span className="ws-meta">
                 <b>{workspace.name}</b>
@@ -606,6 +608,14 @@ export default function App() {
                 billing={billing}
                 canPay={role === 'owner'}
                 onUpgraded={() => { loadBilling(); loadAuth() }}
+                onBack={() => navigate('home')}
+              />
+            )}
+            {activeTab === 'account' && (
+              <Account
+                user={authState.user}
+                onAuthChanged={() => { loadAuth(); loadSetup(); loadBilling() }}
+                onNavigate={navigate}
                 onBack={() => navigate('home')}
               />
             )}

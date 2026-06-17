@@ -1522,3 +1522,19 @@ html { scroll-behavior: smooth; }
   font-size: var(--fs-sm, 13.5px); color: var(--text);
 }
 .plan-features li svg { color: var(--accent); flex-shrink: 0; }
+
+/* ---- Chunk 6: account page ---- */
+.account-identity { display: flex; align-items: center; gap: 14px; }
+.account-identity-meta { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.account-email { font-size: var(--fs-md, 14px); font-weight: 600; color: var(--text); }
+.account-ws-list { display: flex; flex-direction: column; gap: 8px; }
+.account-ws-row {
+  display: flex; align-items: center; gap: 11px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--panel);
+}
+.account-ws-row.is-active { border-color: var(--accent); background: var(--accent-soft, var(--surface-2, var(--bg))); }
+.account-ws-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.account-ws-meta b { font-weight: 600; }
+.account-ws-meta small { color: var(--muted); font-size: 12px; text-transform: capitalize; }
+.account-ws-row .wb-btn { margin-left: auto; }

@@ -42,6 +42,9 @@ class AuthContext:
     # here so the write-gate needs no extra query — see require_writable_workspace.
     plan_status: Optional[str] = None
     trial_ends_at: Optional[datetime] = None
+    # 'password' or 'google' — lets the account page hide the password form for
+    # Google-only sign-ins.
+    auth_provider: str = "password"
 
 
 class BootstrapRequest(BaseModel):
@@ -221,7 +224,7 @@ async def _context_for(
     if workspace_id is None:
         # Onboarding state: the user exists but hasn't created a workspace yet.
         urow = await conn.fetchrow(
-            "SELECT id AS user_id, email, display_name FROM users WHERE id=$1",
+            "SELECT id AS user_id, email, display_name, auth_provider FROM users WHERE id=$1",
             user_id,
         )
         if urow is None:
@@ -235,10 +238,11 @@ async def _context_for(
             role=None,
             session_id=session_id,
             workspaces=await _memberships(conn, user_id),
+            auth_provider=urow["auth_provider"],
         )
     row = await conn.fetchrow(
-        "SELECT u.id AS user_id, u.email, u.display_name, w.name AS workspace_name, m.role, "
-        "       w.plan_status, w.trial_ends_at "
+        "SELECT u.id AS user_id, u.email, u.display_name, u.auth_provider, "
+        "       w.name AS workspace_name, m.role, w.plan_status, w.trial_ends_at "
         "FROM users u "
         "JOIN workspace_memberships m ON m.user_id = u.id "
         "JOIN workspaces w ON w.id = m.workspace_id "
@@ -258,6 +262,7 @@ async def _context_for(
         workspaces=await _memberships(conn, user_id),
         plan_status=row["plan_status"],
         trial_ends_at=row["trial_ends_at"],
+        auth_provider=row["auth_provider"],
     )
 
 
@@ -325,8 +330,8 @@ async def get_current_user(request: Request) -> AuthContext:
         # yet (s.workspace_id IS NULL), and must still authenticate.
         row = await conn.fetchrow(
             "SELECT s.id AS session_id, s.workspace_id, s.last_seen_at, u.id AS user_id, "
-            "       u.email, u.display_name, u.disabled, w.name AS workspace_name, m.role, "
-            "       w.plan_status, w.trial_ends_at "
+            "       u.email, u.display_name, u.disabled, u.auth_provider, "
+            "       w.name AS workspace_name, m.role, w.plan_status, w.trial_ends_at "
             "FROM auth_sessions s "
             "JOIN users u ON u.id = s.user_id "
             "LEFT JOIN workspaces w ON w.id = s.workspace_id "
@@ -359,6 +364,7 @@ async def get_current_user(request: Request) -> AuthContext:
         workspaces=workspaces,
         plan_status=row["plan_status"],
         trial_ends_at=row["trial_ends_at"],
+        auth_provider=row["auth_provider"],
     )
 
 
@@ -434,6 +440,7 @@ def user_payload(user: AuthContext) -> Dict[str, Any]:
             "id": user.user_id,
             "email": user.email,
             "display_name": user.display_name,
+            "auth_provider": user.auth_provider,
         },
         # null while the user is mid-onboarding (no workspace created yet) —
         # the frontend renders the setup wizard in that case.
@@ -690,6 +697,26 @@ async def logout(
     async with pool.acquire() as conn:
         await audit(conn, "logout", user.workspace_id, user.user_id, "user", user.user_id)
     await revoke_current_session(request, response)
+    return {"ok": True}
+
+
+@router.post("/logout-all")
+async def logout_all(
+    request: Request,
+    response: Response,
+    user: AuthContext = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Sign out on every device: revoke all of this user's sessions, this one
+    included, and clear the cookie."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE auth_sessions SET revoked_at=now() "
+            "WHERE user_id=$1 AND revoked_at IS NULL",
+            user.user_id,
+        )
+        await audit(conn, "logout_all", user.workspace_id, user.user_id, "user", user.user_id)
+    response.delete_cookie(COOKIE_NAME, path="/")
     return {"ok": True}
 
 
