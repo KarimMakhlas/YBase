@@ -258,3 +258,23 @@ async def test_github_issue_to_doc_shape_without_comments():
     assert "Persist sessions" in doc.text
     assert doc.author == "mav"
     assert doc.external_ref == "github:whybase/app:issue/7"
+
+
+# ---- per-stream re-sync lookback resolver ----
+
+from app.domains.connectors import stream_lookback_days
+
+
+def test_lookback_full_backfill_for_never_synced_stream():
+    assert stream_lookback_days({}, None) == config.CONNECTOR_BACKFILL_DAYS
+    assert stream_lookback_days(None, None) == config.CONNECTOR_BACKFILL_DAYS
+
+
+def test_lookback_short_window_for_already_synced_stream():
+    assert stream_lookback_days({}, "2026-01-01T00:00:00Z") == config.CONNECTOR_RESYNC_WINDOW_DAYS
+
+
+def test_lookback_explicit_days_overrides_per_stream_logic():
+    # the manual "Backfill N days" button / Slack reconcile set state.days
+    assert stream_lookback_days({"days": 30}, None) == 30
+    assert stream_lookback_days({"days": 30}, "2026-01-01T00:00:00Z") == 30

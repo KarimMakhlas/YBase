@@ -114,6 +114,15 @@ APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:5173")
 SLACK_RECONCILE_INTERVAL_S = int(os.getenv("SLACK_RECONCILE_INTERVAL_S", "3600"))
 SLACK_RECONCILE_WINDOW_DAYS = int(os.getenv("SLACK_RECONCILE_WINDOW_DAYS", "1"))
 
+# Periodic Jira/GitHub re-sync. Unlike Slack, these have no realtime path, so the
+# worker re-pulls recent changes every CONNECTOR_RESYNC_INTERVAL_S. A connection
+# that has never synced (or a newly selected project/repo) gets a full
+# CONNECTOR_BACKFILL_DAYS pull; subsequent re-syncs use the shorter
+# CONNECTOR_RESYNC_WINDOW_DAYS (dedup absorbs the overlap). 0 disables re-sync.
+CONNECTOR_RESYNC_INTERVAL_S = int(os.getenv("CONNECTOR_RESYNC_INTERVAL_S", "21600"))  # 6h
+CONNECTOR_RESYNC_WINDOW_DAYS = int(os.getenv("CONNECTOR_RESYNC_WINDOW_DAYS", "2"))
+CONNECTOR_BACKFILL_DAYS = int(os.getenv("CONNECTOR_BACKFILL_DAYS", "90"))
+
 # Live Slack ingestion (Events API). Empty secret disables the endpoint.
 SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")
 SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET", "")

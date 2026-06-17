@@ -204,9 +204,9 @@ async def _tick_integrations() -> None:
     except Exception:
         log.exception("slack rollup tick failed")
     try:
-        await sources.reconcile_tick()
+        await sources.resync_tick()
     except Exception:
-        log.exception("source reconciliation tick failed")
+        log.exception("source resync tick failed")
     try:
         await digest.run_digest_tick()
     except Exception:

@@ -60,6 +60,12 @@ ANTHROPIC_API_KEY=sk-ant-… CONNECTOR_SECRET_KEY=… \
   (`SLACK_REDIRECT_BASE_URL`, `JIRA_REDIRECT_BASE_URL`, `GITHUB_REDIRECT_BASE_URL`)
   and register that exact callback URL in the provider's OAuth app:
   `…/api/integrations/<provider>/oauth/callback`.
+- **Auto-sync:** once a user selects projects/repos, the worker backfills them
+  automatically (no manual "Backfill" click needed) and re-pulls recent changes
+  on a schedule. Tune with `CONNECTOR_RESYNC_INTERVAL_S` (default `21600` = 6h;
+  `0` disables), `CONNECTOR_RESYNC_WINDOW_DAYS` (default `2`), and
+  `CONNECTOR_BACKFILL_DAYS` (default `90`, the first-pull depth). Slack keeps its
+  own `SLACK_RECONCILE_INTERVAL_S` / `SLACK_RECONCILE_WINDOW_DAYS` safety-net knobs.
 - **Verify:** open the URL, create a workspace (demo memory auto-seeds), ask a
   question, and check `GET /api/health/details` shows the expected LLM provider.
 - **Cost control:** `QUERY_RATE_PER_MINUTE` / `INGEST_RATE_PER_MINUTE` cap
