@@ -109,6 +109,36 @@ def _dispatch_sync(provider: str, job_id: int) -> None:
         asyncio.create_task(run_slack_sync_job(job_id))
 
 
+async def _enqueue_connect_resync(conn, connection) -> Optional[int]:
+    """On (re)connect, kick a sync immediately if streams are already selected
+    (the re-auth case) and nothing is running. First-time connects have nothing
+    selected yet — resync_tick picks those up once the user chooses streams.
+    Returns the job id to dispatch after the surrounding transaction commits,
+    or None. Leaves the window unset so the connector derives it per stream."""
+    selected = await conn.fetchval(
+        "SELECT count(*) FROM source_streams WHERE connection_id=$1 AND selected",
+        connection["id"],
+    )
+    active = await conn.fetchval(
+        "SELECT 1 FROM sync_jobs WHERE connection_id=$1 "
+        "AND status IN ('pending','running','paused') LIMIT 1",
+        connection["id"],
+    )
+    if not selected or active:
+        return None
+    kind = "backfill" if connection["last_sync_at"] is None else "reconcile"
+    job_id = await conn.fetchval(
+        "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, state, stats) "
+        "VALUES($1, $2, $3, 'pending', $4, $5, $6) RETURNING id",
+        connection["workspace_id"], connection["id"], connection["provider"], kind,
+        {}, {"documents": 0, "duplicates": 0, "streams": 0},
+    )
+    await auth.audit(conn, "resync_start", connection["workspace_id"], connection["created_by"],
+                     "sync_job", job_id,
+                     {"connection_id": connection["id"], "kind": kind, "trigger": "reconnect"})
+    return job_id
+
+
 async def _refresh_slack_streams(conn, connection) -> List[Dict[str, Any]]:
     token = _decrypt_secret(connection["access_token_enc"])
     cursor = ""
@@ -340,6 +370,9 @@ async def jira_oauth_callback(code: str = "", state: str = ""):
                     "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
                     connection_id, str(e)[:500],
                 )
+            resync_job_id = await _enqueue_connect_resync(conn, connection)
+    if resync_job_id:
+        _dispatch_sync("jira", resync_job_id)
     redirect = (oauth_state["redirect_path"] or "/") + "?jira=connected"
     return RedirectResponse(redirect)
 
@@ -416,6 +449,9 @@ async def github_oauth_callback(code: str = "", state: str = ""):
                     "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
                     connection_id, str(e)[:500],
                 )
+            resync_job_id = await _enqueue_connect_resync(conn, connection)
+    if resync_job_id:
+        _dispatch_sync("github", resync_job_id)
     redirect = (oauth_state["redirect_path"] or "/") + "?github=connected"
     return RedirectResponse(redirect)
 
@@ -736,45 +772,64 @@ async def _sync_stream(
     return created, duplicate
 
 
-async def reconcile_tick() -> int:
-    """Safety net for Events API gaps: when a connection hasn't synced within
-    SLACK_RECONCILE_INTERVAL_S, re-fetch the last SLACK_RECONCILE_WINDOW_DAYS
-    of history for its selected channels. Dedup (content hash + external ref)
-    absorbs the overlap, so re-fetching is free except for API calls. Runs as
-    a normal sync job (kind='reconcile') — visible in the jobs list, with the
-    same rate-limit pausing. Called from the formation worker's idle tick."""
-    if not config.SLACK_RECONCILE_INTERVAL_S:
+async def resync_tick() -> int:
+    """Periodic re-sync safety net across all connectors. For each connected
+    connection with selected streams and no active job whose last_sync_at is
+    older than its provider's interval, enqueue a sync job. Dedup (content hash
+    + external ref) absorbs the overlap, so re-fetching is free except for API
+    calls. Jobs are normal sync jobs — visible in the jobs list, with the same
+    rate-limit pausing. Called from the formation worker's idle tick.
+
+    Slack (realtime via Events API) re-fetches a short SLACK_RECONCILE_WINDOW_DAYS
+    window as a safety net for missed deliveries. Jira/GitHub have no realtime
+    path, so the per-stream lookback is derived at run time by the connector
+    (full backfill for never-synced streams, short window otherwise) — the tick
+    leaves the job window unset and only decides when to fire."""
+    # (provider, interval_seconds, job_state, backfill_when_never)
+    specs: List[tuple] = []
+    if config.SLACK_RECONCILE_INTERVAL_S:
+        specs.append(("slack", config.SLACK_RECONCILE_INTERVAL_S,
+                      {"days": config.SLACK_RECONCILE_WINDOW_DAYS}, False))
+    if config.CONNECTOR_RESYNC_INTERVAL_S:
+        specs.append(("jira", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("github", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+    if not specs:
         return 0
     pool = await db.get_pool()
+    dispatched: List[tuple] = []
     async with pool.acquire() as conn:
-        due = await conn.fetch(
-            "SELECT c.id, c.workspace_id FROM source_connections c "
-            "WHERE c.provider='slack' AND c.status='connected' "
-            "AND c.access_token_enc IS NOT NULL "
-            "AND EXISTS (SELECT 1 FROM source_streams s "
-            "            WHERE s.connection_id=c.id AND s.selected) "
-            "AND NOT EXISTS (SELECT 1 FROM sync_jobs j WHERE j.connection_id=c.id "
-            "                AND j.status IN ('pending','running','paused')) "
-            "AND COALESCE(c.last_sync_at, 'epoch'::timestamptz) "
-            "    < now() - ($1 || ' seconds')::interval",
-            str(config.SLACK_RECONCILE_INTERVAL_S),
-        )
-        jobs = []
-        for c in due:
-            job_id = await conn.fetchval(
-                "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, "
-                "state, stats) VALUES($1, $2, 'slack', 'pending', 'reconcile', $3, $4) "
-                "RETURNING id",
-                c["workspace_id"], c["id"],
-                {"days": config.SLACK_RECONCILE_WINDOW_DAYS},
-                {"documents": 0, "duplicates": 0, "streams": 0},
+        for provider, interval_s, base_state, backfill_first in specs:
+            due = await conn.fetch(
+                "SELECT c.id, c.workspace_id, (c.last_sync_at IS NULL) AS never "
+                "FROM source_connections c "
+                "WHERE c.provider=$1 AND c.status='connected' "
+                "AND c.access_token_enc IS NOT NULL "
+                "AND EXISTS (SELECT 1 FROM source_streams s "
+                "            WHERE s.connection_id=c.id AND s.selected) "
+                "AND NOT EXISTS (SELECT 1 FROM sync_jobs j WHERE j.connection_id=c.id "
+                "                AND j.status IN ('pending','running','paused')) "
+                "AND COALESCE(c.last_sync_at, 'epoch'::timestamptz) "
+                "    < now() - ($2 || ' seconds')::interval",
+                provider, str(interval_s),
             )
-            await auth.audit(conn, "reconcile_start", c["workspace_id"], None,
-                             "sync_job", job_id, {"connection_id": c["id"]})
-            jobs.append(job_id)
-    for job_id in jobs:
-        asyncio.create_task(run_slack_sync_job(job_id))
-    return len(jobs)
+            for c in due:
+                kind = "backfill" if (backfill_first and c["never"]) else "reconcile"
+                job_id = await conn.fetchval(
+                    "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, "
+                    "state, stats) VALUES($1, $2, $3, 'pending', $4, $5, $6) RETURNING id",
+                    c["workspace_id"], c["id"], provider, kind, base_state,
+                    {"documents": 0, "duplicates": 0, "streams": 0},
+                )
+                await auth.audit(conn, "resync_start", c["workspace_id"], None,
+                                 "sync_job", job_id, {"connection_id": c["id"], "kind": kind})
+                dispatched.append((provider, job_id))
+    for provider, job_id in dispatched:
+        _dispatch_sync(provider, job_id)
+    return len(dispatched)
+
+
+# Back-compat alias: the formation worker and slack.sync re-export this name.
+reconcile_tick = resync_tick
 
 
 async def run_slack_sync_job(job_id: int) -> None:

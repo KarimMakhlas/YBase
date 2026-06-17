@@ -1,4 +1,24 @@
 import os
+from pathlib import Path
+
+
+def _load_dotenv() -> None:
+    """Populate os.environ from backend/.env if present, without overriding
+    variables already set in the real environment. Keeps secrets (connector
+    OAuth keys, API keys) in one gitignored file instead of a long inline
+    launch command. Intentionally dependency-free."""
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
 
 # Postgres (pgvector). Default matches docker-compose.yml (host port 5433).
 DATABASE_URL = os.getenv(
@@ -113,6 +133,15 @@ APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:5173")
 # external-ref dedup absorb the overlap. 0 disables.
 SLACK_RECONCILE_INTERVAL_S = int(os.getenv("SLACK_RECONCILE_INTERVAL_S", "3600"))
 SLACK_RECONCILE_WINDOW_DAYS = int(os.getenv("SLACK_RECONCILE_WINDOW_DAYS", "1"))
+
+# Periodic Jira/GitHub re-sync. Unlike Slack, these have no realtime path, so the
+# worker re-pulls recent changes every CONNECTOR_RESYNC_INTERVAL_S. A connection
+# that has never synced (or a newly selected project/repo) gets a full
+# CONNECTOR_BACKFILL_DAYS pull; subsequent re-syncs use the shorter
+# CONNECTOR_RESYNC_WINDOW_DAYS (dedup absorbs the overlap). 0 disables re-sync.
+CONNECTOR_RESYNC_INTERVAL_S = int(os.getenv("CONNECTOR_RESYNC_INTERVAL_S", "21600"))  # 6h
+CONNECTOR_RESYNC_WINDOW_DAYS = int(os.getenv("CONNECTOR_RESYNC_WINDOW_DAYS", "2"))
+CONNECTOR_BACKFILL_DAYS = int(os.getenv("CONNECTOR_BACKFILL_DAYS", "90"))
 
 # Live Slack ingestion (Events API). Empty secret disables the endpoint.
 SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")

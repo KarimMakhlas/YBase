@@ -16,6 +16,7 @@ import httpx
 
 from app.core import config, crypto, db
 from app.domains.auth import service as auth
+from app.domains.connectors import stream_lookback_days
 from app.domains.documents.ingestion import IngestRequest, ingest_document
 
 AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
@@ -254,12 +255,13 @@ async def run_sync_job(job_id: int) -> None:
             job_id,
         )
     token = crypto.decrypt_secret(connection["access_token_enc"])
-    days = int((job["state"] or {}).get("days", 90))
+    job_state = job["state"] or {}
     stats = {"documents": 0, "duplicates": 0, "streams": 0}
     current_stream_id: Optional[int] = None
     try:
         for stream in streams:
             current_stream_id = stream["id"]
+            days = stream_lookback_days(job_state, stream["last_synced_at"])
             async with pool.acquire() as conn:
                 await conn.execute(
                     "UPDATE source_streams SET status='syncing', last_error=NULL, updated_at=now() "

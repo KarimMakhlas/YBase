@@ -16,6 +16,7 @@ import httpx
 
 from app.core import config, crypto, db
 from app.domains.auth import service as auth
+from app.domains.connectors import stream_lookback_days
 from app.domains.documents.ingestion import IngestRequest, ingest_document
 
 AUTHORIZE_URL = "https://auth.atlassian.com/authorize"
@@ -335,7 +336,7 @@ async def run_sync_job(job_id: int) -> None:
             "updated_at=now() WHERE id=$1",
             job_id,
         )
-    days = int((job["state"] or {}).get("days", 90))
+    job_state = job["state"] or {}
     cloud_id = connection["external_workspace_id"]
     stats = {"documents": 0, "duplicates": 0, "streams": 0}
     current_stream_id: Optional[int] = None
@@ -344,6 +345,7 @@ async def run_sync_job(job_id: int) -> None:
             token = await valid_access_token(conn, connection)
         for stream in streams:
             current_stream_id = stream["id"]
+            days = stream_lookback_days(job_state, stream["last_synced_at"])
             async with pool.acquire() as conn:
                 await conn.execute(
                     "UPDATE source_streams SET status='syncing', last_error=NULL, updated_at=now() "
