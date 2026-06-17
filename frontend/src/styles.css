@@ -1409,6 +1409,7 @@ html { scroll-behavior: smooth; }
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .onb-note { font-size: var(--fs-xs); color: var(--accent); }
+.onb-note--warn { color: var(--warning); }
 .onb-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
 .onb-tile {
   display: flex; align-items: center; gap: 8px; padding: 12px 13px;

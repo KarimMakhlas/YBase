@@ -9,6 +9,8 @@ import { Avatar, Badge, StatusBadge } from '../whybase/ui.jsx'
 export default function People({ focus, onNavigate, onOpenDoc }) {
   const [people, setPeople] = useState(null)
   const [detail, setDetail] = useState(null)
+  const [detailFailed, setDetailFailed] = useState(false)
+  const [reloadDetail, setReloadDetail] = useState(0)
   const [activeId, setActiveId] = useState(focus?.personId ?? null)
   const [q, setQ] = useState('')
   const toast = useToast()
@@ -29,8 +31,11 @@ export default function People({ focus, onNavigate, onOpenDoc }) {
   useEffect(() => {
     if (activeId == null) { setDetail(null); return }
     setDetail(null)
-    getPerson(activeId).catch(() => null).then((d) => d && setDetail(d))
-  }, [activeId])
+    setDetailFailed(false)
+    getPerson(activeId)
+      .then(setDetail)
+      .catch((e) => { setDetailFailed(true); toast(`Couldn’t load this person: ${e.message}`) })
+  }, [activeId, reloadDetail, toast])
 
   const list = useMemo(
     () => (people || []).filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase())),
@@ -93,7 +98,10 @@ export default function People({ focus, onNavigate, onOpenDoc }) {
         </aside>
 
         <section className="md-detail" key={activeId}>
-          {activeId != null && !detail && <div className="wb-skeleton" style={{ height: 120, borderRadius: 'var(--radius-md)' }} />}
+          {activeId != null && !detail && detailFailed && (
+            <div className="md-empty">Couldn’t load this person. <button className="linkbtn" onClick={() => setReloadDetail((n) => n + 1)}>Try again</button></div>
+          )}
+          {activeId != null && !detail && !detailFailed && <div className="wb-skeleton" style={{ height: 120, borderRadius: 'var(--radius-md)' }} />}
           {detail && (
             <>
               <div className="person-head wb-reveal">

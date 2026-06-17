@@ -20,6 +20,7 @@ export default function Onboarding({ user, onWorkspaceCreated, onFinish, onLogou
   const [emails, setEmails] = useState('')
   const [inviteLink, setInviteLink] = useState('')
   const [invitedCount, setInvitedCount] = useState(0)
+  const [failedInvites, setFailedInvites] = useState([])
   const [copied, setCopied] = useState(false)
   const [sampleLoaded, setSampleLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -84,16 +85,22 @@ export default function Onboarding({ user, onWorkspaceCreated, onFinish, onLogou
     setError('')
     try {
       let n = 0
+      const failed = []
       for (const email of list) {
         try {
           await createWorkspaceInvite({ role: 'member', email })
           n += 1
         } catch {
-          /* skip a bad address, keep going */
+          failed.push(email)
         }
       }
-      setInvitedCount(n)
-      goStep(2)
+      setInvitedCount((prev) => prev + n)
+      setFailedInvites(failed)
+      // Only advance if everything went out — otherwise stay so they can see what
+      // failed, and leave just those addresses in the box so a retry doesn't
+      // re-invite the ones that already went through.
+      setEmails(failed.join(', '))
+      if (!failed.length) goStep(2)
     } finally {
       setBusy(false)
     }
@@ -210,6 +217,12 @@ export default function Onboarding({ user, onWorkspaceCreated, onFinish, onLogou
             {invitedCount > 0 && (
               <div className="onb-note">
                 Invited {invitedCount} teammate{invitedCount > 1 ? 's' : ''}.
+              </div>
+            )}
+            {failedInvites.length > 0 && (
+              <div className="onb-note onb-note--warn">
+                Couldn’t send to {failedInvites.length} address{failedInvites.length > 1 ? 'es' : ''}:{' '}
+                {failedInvites.join(', ')}. Check {failedInvites.length > 1 ? 'them' : 'it'} and try again, or skip for now.
               </div>
             )}
             <div className="onb-actions">

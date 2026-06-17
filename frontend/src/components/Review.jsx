@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Search, Archive } from 'lucide-react'
+import { Search, Archive, TriangleAlert } from 'lucide-react'
 import {
   archiveReviewNode, getReviewNode, listReviewNodes, patchReviewNode, unarchiveReviewNode,
 } from '../api.js'
@@ -243,7 +243,7 @@ export default function Review({ focus = null }) {
                   <textarea className="wb-textarea" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)' }} value={form.data} onChange={set('data')} rows={8} spellCheck="false" />
                 </label>
               </div>
-              {jsonError && <div className="doc-error" style={{ marginTop: 10 }}><Archive size={14} strokeWidth={1.8} /> {jsonError}</div>}
+              {jsonError && <div className="doc-error" style={{ marginTop: 10 }}><TriangleAlert size={14} strokeWidth={1.8} /> {jsonError}</div>}
 
               <div className="review-subgrid">
                 <section>

@@ -101,6 +101,13 @@ export default function Settings({ auth, onAuthChanged }) {
     }
   }
 
+  // Disabling signs a member out and blocks their access — confirm first.
+  // Re-enabling is harmless, so it goes straight through.
+  const toggleDisabled = (u) => {
+    if (!u.disabled && !window.confirm(`Disable ${u.display_name}? They’ll be signed out and lose access until you re-enable them.`)) return
+    patch(u.id, { disabled: !u.disabled })
+  }
+
   const transfer = async (userId, name) => {
     if (!window.confirm(
       `Make ${name} the owner of ${wsName}? You’ll become an admin and can no longer ` +
@@ -200,7 +207,7 @@ export default function Settings({ auth, onAuthChanged }) {
                       <option value="admin">admin</option>
                     </select>
                   </span>
-                  <button className="wb-btn wb-btn--sm wb-btn--ghost" onClick={() => patch(u.id, { disabled: !u.disabled })}>
+                  <button className="wb-btn wb-btn--sm wb-btn--ghost" onClick={() => toggleDisabled(u)}>
                     {u.disabled ? 'Enable' : 'Disable'}
                   </button>
                   <button className="wb-btn wb-btn--sm wb-btn--ghost" onClick={() => transfer(u.id, u.display_name)} title="Make this member the owner" disabled={u.disabled}>

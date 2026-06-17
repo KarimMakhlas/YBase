@@ -107,8 +107,8 @@ export default function Graph({ focus, onOpenDoc }) {
   useEffect(() => {
     if (!selected) { setDetail(null); return }
     setDetail(null)
-    getNode(selected.id).then(setDetail).catch(() => {})
-  }, [selected])
+    getNode(selected.id).then(setDetail).catch((e) => toast(`Couldn’t load node details: ${e.message}`))
+  }, [selected, toast])
 
   const laid = useMemo(() => {
     if (!graph) return null

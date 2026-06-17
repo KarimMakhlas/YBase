@@ -493,10 +493,12 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc }) {
 
   const removeSession = async (id, ev) => {
     ev.stopPropagation()
+    if (!window.confirm('Delete this conversation? This can’t be undone.')) return
     try {
       await deleteSession(id)
       setSessions((s) => s.filter((x) => x.id !== id))
       if (id === activeId) newChat()
+      toast('Conversation deleted', 'success')
     } catch (e) {
       toast(`Delete failed: ${e.message}`)
     }
