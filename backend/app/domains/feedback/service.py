@@ -168,7 +168,7 @@ async def _detail(conn, workspace_id: int, feedback_id: int) -> Dict[str, Any]:
 @router.post("")
 async def submit_feedback(
     req: FeedbackCreate,
-    current: auth.AuthContext = Depends(auth.get_current_user),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("member")),
 ) -> Dict[str, Any]:
     issue_type = _clean_issue_type(req.issue_type)
     note = _clean_note(req.note)
@@ -288,7 +288,7 @@ async def get_feedback(
 async def patch_feedback(
     feedback_id: int,
     req: FeedbackPatch,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     pool = await db.get_pool()
     async with pool.acquire() as conn:

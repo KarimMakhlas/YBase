@@ -28,8 +28,10 @@ import Analytics from './components/Analytics.jsx'
 import CmdK from './components/CmdK.jsx'
 import DocModal from './components/DocModal.jsx'
 import StatusFooter from './components/StatusFooter.jsx'
+import Plans from './components/Plans.jsx'
+import BillingBanner from './components/BillingBanner.jsx'
 import { ToastProvider } from './components/Toast.jsx'
-import { getBootstrapStatus, getMe, getOnboarding, logout } from './api.js'
+import { getBootstrapStatus, getMe, getOnboarding, getBillingStatus, logout } from './api.js'
 import whybaseMark from './assets/whybase-mark.svg'
 
 // The product surface, as a grouped left-sidebar nav (Linear-style). `section`
@@ -51,8 +53,10 @@ const NAV = [
   { id: 'settings', label: 'Settings', icon: SettingsIcon, section: 'Workspace', minRole: 'admin' },
 ]
 
-const LABELS = Object.fromEntries(NAV.map((n) => [n.id, n.label]))
-const TAB_IDS = new Set(NAV.map((t) => t.id))
+// `plans` is routable (reached from the billing banner) but not a sidebar item.
+const EXTRA_TABS = new Set(['plans'])
+const LABELS = { ...Object.fromEntries(NAV.map((n) => [n.id, n.label])), plans: 'Plans' }
+const TAB_IDS = new Set([...NAV.map((t) => t.id), ...EXTRA_TABS])
 const ROLE_RANK = { member: 1, admin: 2, owner: 3 }
 
 // Smoothly cross-fade between views using the View Transitions API when available.
@@ -229,10 +233,14 @@ export default function App() {
   const [onboarding, setOnboarding] = useState(false)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [setup, setSetup] = useState(null) // GET /api/workspace/onboarding: checklist state
+  const [billing, setBilling] = useState(null) // GET /api/billing/status: trial/plan state
   const lastNonDocHash = React.useRef('#/home')
 
   const loadSetup = React.useCallback(() => {
     getOnboarding().then(setSetup).catch(() => setSetup(null))
+  }, [])
+  const loadBilling = React.useCallback(() => {
+    getBillingStatus().then(setBilling).catch(() => setBilling(null))
   }, [])
   const currentTabRef = React.useRef('home')
 
@@ -300,12 +308,20 @@ export default function App() {
     document.title = LABELS[tab] ? `WhyBase — ${LABELS[tab]}` : 'WhyBase'
   }, [tab])
 
-  // Setup-checklist state, refetched whenever the active workspace changes.
+  // Setup-checklist + billing state, refetched whenever the active workspace changes.
   const workspaceId = authState.user?.workspace?.id
   useEffect(() => {
-    if (workspaceId) loadSetup()
-    else setSetup(null)
-  }, [workspaceId, loadSetup])
+    if (workspaceId) { loadSetup(); loadBilling() }
+    else { setSetup(null); setBilling(null) }
+  }, [workspaceId, loadSetup, loadBilling])
+
+  // A write blocked by the server (402) re-checks billing so the banner flips
+  // to read-only without a manual refresh.
+  useEffect(() => {
+    const onReadonly = () => loadBilling()
+    window.addEventListener('billing:readonly', onReadonly)
+    return () => window.removeEventListener('billing:readonly', onReadonly)
+  }, [loadBilling])
 
   useEffect(() => {
     const onKey = (e) => {
@@ -477,7 +493,8 @@ export default function App() {
   const role = workspace.role
   const isAdmin = ROLE_RANK[role] >= ROLE_RANK.admin
   const visibleNav = NAV.filter((n) => !n.minRole || ROLE_RANK[role] >= ROLE_RANK[n.minRole])
-  const activeTab = visibleNav.some((n) => n.id === tab) ? tab : 'home'
+  const activeTab =
+    visibleNav.some((n) => n.id === tab) || EXTRA_TABS.has(tab) ? tab : 'home'
 
   // Group visible items by section (preserving order); items without a section
   // render first, headerless.
@@ -581,7 +598,17 @@ export default function App() {
             </div>
           </header>
 
+          <BillingBanner billing={billing} activeTab={activeTab} onUpgrade={() => navigate('plans')} />
+
           <main className="app-content content">
+            {activeTab === 'plans' && (
+              <Plans
+                billing={billing}
+                canPay={role === 'owner'}
+                onUpgraded={() => { loadBilling(); loadAuth() }}
+                onBack={() => navigate('home')}
+              />
+            )}
             {activeTab === 'home' && (
               <Home
                 onAsk={askFromHome}

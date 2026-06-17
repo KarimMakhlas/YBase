@@ -527,3 +527,15 @@ CREATE TABLE IF NOT EXISTS oauth_login_states (
     consumed_at   TIMESTAMPTZ,
     expires_at    TIMESTAMPTZ NOT NULL
 );
+
+-- Per-workspace billing: a 7-day no-card trial, then a single paid "Team" plan.
+-- plan_status ∈ trialing | active | past_due | expired. Trial expiry is computed
+-- lazily (trialing + trial_ends_at <= now() ⇒ effectively expired) — no cron.
+-- Existing/self-hosted workspaces get trial_ends_at = NULL, which never expires.
+-- New SaaS workspaces get trial_ends_at set in POST /api/workspace/create.
+-- stripe_* stay empty until Chunk 5 wires real payments.
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'trial';
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS plan_status TEXT NOT NULL DEFAULT 'trialing';
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;

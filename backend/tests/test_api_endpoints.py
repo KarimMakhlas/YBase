@@ -925,3 +925,91 @@ async def test_login_on_google_only_account_points_to_google(pool):
         )
         assert resp.status_code == 401
         assert "Google" in resp.json()["detail"]
+
+
+# ---- Billing: trial data model + read-only gating (Stripe stubbed) ----
+
+async def _workspace_with_billing(pool, plan_status="trialing", trial_ends_at=None) -> int:
+    """A throwaway workspace with explicit billing state, so a test can force
+    'expired'/'active' without mutating the shared default workspace."""
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "INSERT INTO workspaces(name, slug, plan, plan_status, trial_ends_at) "
+            "VALUES($1, $2, 'trial', $3, $4) RETURNING id",
+            f"WS {uuid4().hex[:8]}", f"ws-{uuid4().hex[:8]}", plan_status, trial_ends_at,
+        )
+
+
+_INGEST = {"source": "meeting", "title": "Note", "text": "We chose Postgres."}
+
+
+async def test_new_workspace_starts_trialing(pool):
+    """Wizard-created workspace gets a 7-day trial and reports it via billing."""
+    async with await _client() as client:
+        await client.post(
+            "/api/auth/register",
+            json={
+                "email": f"trial-{uuid4().hex}@example.test",
+                "display_name": "Trial Founder",
+                "password": "correct horse battery staple",
+            },
+        )
+        await client.post("/api/workspace/create", json={"name": "Trial Co"})
+        status = await client.get("/api/billing/status")
+        assert status.status_code == 200
+        body = status.json()
+        assert body["plan_status"] == "trialing"
+        assert body["writable"] is True
+        assert body["days_left"] == 7
+        assert body["trial_ends_at"] is not None
+
+
+async def test_expired_trial_blocks_writes_but_allows_reads(pool):
+    ws = await _workspace_with_billing(
+        pool, "trialing", datetime.now(timezone.utc) - timedelta(days=1)
+    )
+    admin, _ = await _auth_client(pool, ws, role="admin")
+    async with admin:
+        # A mutating route is 402 (read-only)…
+        blocked = await admin.post("/api/ingest", json=_INGEST)
+        assert blocked.status_code == 402
+        # …but reads stay open, and so do auth + billing.
+        assert (await admin.get("/api/sources")).status_code == 200
+        assert (await admin.get("/api/auth/me")).status_code == 200
+        st = await admin.get("/api/billing/status")
+        assert st.status_code == 200
+        assert st.json()["plan_status"] == "expired"
+        assert st.json()["writable"] is False
+        assert st.json()["days_left"] == 0
+
+
+async def test_query_blocked_when_workspace_read_only(pool):
+    ws = await _workspace_with_billing(pool, "expired", None)
+    member, _ = await _auth_client(pool, ws, role="member")
+    async with member:
+        resp = await member.post("/api/query", json={"question": "why postgres?"})
+        assert resp.status_code == 402
+
+
+async def test_checkout_activates_and_reenables_writes(pool):
+    ws = await _workspace_with_billing(
+        pool, "trialing", datetime.now(timezone.utc) - timedelta(days=1)
+    )
+    owner, _ = await _auth_client(pool, ws, role="owner")
+    async with owner:
+        assert (await owner.post("/api/ingest", json=_INGEST)).status_code == 402
+        checkout = await owner.post("/api/billing/checkout")
+        assert checkout.status_code == 200
+        assert checkout.json() == {"activated": True, "url": None}
+        # The next request re-reads plan_status='active' → writes flow again.
+        assert (await owner.post("/api/ingest", json=_INGEST)).status_code == 200
+        st = await owner.get("/api/billing/status")
+        assert st.json()["plan_status"] == "active"
+        assert st.json()["writable"] is True
+
+
+async def test_checkout_requires_owner(pool):
+    ws = await _workspace_with_billing(pool, "expired", None)
+    admin, _ = await _auth_client(pool, ws, role="admin")
+    async with admin:
+        assert (await admin.post("/api/billing/checkout")).status_code == 403

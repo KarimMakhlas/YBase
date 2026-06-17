@@ -165,7 +165,7 @@ async def ops_overview(
 
 @router.post("/failed-documents/retry")
 async def retry_failed_documents(
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     pool = await db.get_pool()
     async with pool.acquire() as conn:
@@ -190,7 +190,7 @@ async def retry_failed_documents(
 
 @router.post("/demo-seed")
 async def seed_demo_data(
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     result = await _seed_demo_data(current.workspace_id)
     pool = await db.get_pool()

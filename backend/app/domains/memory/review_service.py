@@ -161,7 +161,7 @@ async def get_review_node(
 async def patch_review_node(
     node_id: int,
     req: MemoryPatch,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     pool = await db.get_pool()
     async with pool.acquire() as conn:
@@ -230,7 +230,7 @@ async def patch_review_node(
 async def archive_review_node(
     node_id: int,
     req: ArchiveRequest,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     reason = (req.reason or "").strip()[:500] or None
     pool = await db.get_pool()
@@ -251,7 +251,7 @@ async def archive_review_node(
 @router.post("/{node_id}/unarchive")
 async def unarchive_review_node(
     node_id: int,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     pool = await db.get_pool()
     async with pool.acquire() as conn:

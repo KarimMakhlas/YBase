@@ -13,6 +13,7 @@ export async function postJSON(path, body) {
     body: JSON.stringify(body),
   })
   if (res.status === 401) window.dispatchEvent(new Event('auth:required'))
+  if (res.status === 402) window.dispatchEvent(new Event('billing:readonly'))
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json()
 }
@@ -20,6 +21,7 @@ export async function postJSON(path, body) {
 export async function deleteJSON(path) {
   const res = await fetch(path, { method: 'DELETE', credentials: 'include' })
   if (res.status === 401) window.dispatchEvent(new Event('auth:required'))
+  if (res.status === 402) window.dispatchEvent(new Event('billing:readonly'))
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json()
 }
@@ -32,6 +34,7 @@ export async function patchJSON(path, body) {
     body: JSON.stringify(body),
   })
   if (res.status === 401) window.dispatchEvent(new Event('auth:required'))
+  if (res.status === 402) window.dispatchEvent(new Event('billing:readonly'))
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json()
 }
@@ -72,6 +75,8 @@ export const runDigest = () => postJSON('/api/digests/run', {})
 
 export const getBootstrapStatus = () => getJSON('/api/auth/bootstrap-status')
 export const getAuthProviders = () => getJSON('/api/auth/providers')
+export const getBillingStatus = () => getJSON('/api/billing/status')
+export const billingCheckout = () => postJSON('/api/billing/checkout', {})
 export const bootstrap = (body) => postJSON('/api/auth/bootstrap', body)
 export const register = (body) => postJSON('/api/auth/register', body)
 export const login = (body) => postJSON('/api/auth/login', body)

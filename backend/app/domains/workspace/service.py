@@ -37,9 +37,15 @@ async def create_workspace(
     async with pool.acquire() as conn:
         async with conn.transaction():
             slug = await auth._unique_slug(conn, name)
+            # New SaaS workspaces start a 7-day, no-card trial. Expiry is computed
+            # lazily from trial_ends_at (see auth.workspace_writable).
+            trial_ends_at = datetime.now(timezone.utc) + timedelta(
+                days=config.TRIAL_DAYS
+            )
             workspace_id = await conn.fetchval(
-                "INSERT INTO workspaces(name, slug) VALUES($1, $2) RETURNING id",
-                name, slug,
+                "INSERT INTO workspaces(name, slug, plan, plan_status, trial_ends_at) "
+                "VALUES($1, $2, 'trial', 'trialing', $3) RETURNING id",
+                name, slug, trial_ends_at,
             )
             await conn.execute(
                 "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
@@ -96,7 +102,7 @@ async def workspace_onboarding(
 
 @router.post("/workspace/onboarding/complete")
 async def complete_onboarding(
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     """Mark the setup wizard finished/skipped — dismisses the checklist."""
     pool = await db.get_pool()
@@ -111,7 +117,7 @@ async def complete_onboarding(
 @router.post("/workspace/transfer-ownership")
 async def transfer_ownership(
     req: TransferOwnershipRequest,
-    current: auth.AuthContext = Depends(auth.require_role("owner")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("owner")),
 ) -> Dict[str, Any]:
     """Hand the single owner role to another member. Demotes the current owner
     to admin and promotes the target to owner, atomically."""
@@ -161,7 +167,7 @@ async def list_workspace_users(
 @router.post("/workspace/users")
 async def create_workspace_user(
     req: auth.UserCreateRequest,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     # Ownership is single and only moves via transfer-ownership — never minted.
     if req.role not in ("admin", "member"):
@@ -229,7 +235,7 @@ async def list_workspace_invites(
 @router.post("/workspace/invites")
 async def create_workspace_invite(
     req: InviteCreateRequest,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     if req.role not in ("admin", "member"):
         raise HTTPException(400, "invite role must be admin or member")
@@ -273,7 +279,7 @@ async def create_workspace_invite(
 @router.delete("/workspace/invites/{invite_id}")
 async def revoke_workspace_invite(
     invite_id: int,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     pool = await db.get_pool()
     async with pool.acquire() as conn:
@@ -295,7 +301,7 @@ async def revoke_workspace_invite(
 async def patch_workspace_user(
     user_id: int,
     req: auth.UserPatchRequest,
-    current: auth.AuthContext = Depends(auth.require_role("owner")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("owner")),
 ) -> Dict[str, Any]:
     # Ownership moves only via transfer-ownership; this path can set admin/member.
     if req.role is not None and req.role not in ("admin", "member"):

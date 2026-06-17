@@ -7,12 +7,14 @@ the single place that assembles them onto the FastAPI app.
 from fastapi import APIRouter
 
 from ..domains.auth import service as auth
+from ..domains.billing import service as billing
 from ..domains.connectors import service as sources
 from ..domains.memory import review_service as memory_review
 from .routes import ALL_ROUTERS as DOMAIN_ROUTERS
 
 ALL_ROUTERS = [
     auth.router,
+    billing.router,
     sources.router,
     memory_review.router,
     *DOMAIN_ROUTERS,

@@ -473,7 +473,7 @@ async def patch_stream(
     connection_id: int,
     stream_id: int,
     req: StreamPatch,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     pool = await db.get_pool()
     async with pool.acquire() as conn:
@@ -497,7 +497,7 @@ async def patch_stream(
 async def start_sync(
     connection_id: int,
     req: SyncRequest,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     days = max(1, min(req.days, 180))
     pool = await db.get_pool()
@@ -546,7 +546,7 @@ async def list_jobs(
 async def retry_job(
     connection_id: int,
     job_id: int,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     pool = await db.get_pool()
     async with pool.acquire() as conn:
@@ -588,7 +588,7 @@ async def retry_job(
 @router.delete("/sources/{connection_id}")
 async def delete_source(
     connection_id: int,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     pool = await db.get_pool()
     async with pool.acquire() as conn:

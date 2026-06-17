@@ -144,6 +144,9 @@ GITHUB_MAX_ITEMS_PER_REPO = int(os.getenv("GITHUB_MAX_ITEMS_PER_REPO", "300"))
 # in production. If empty, Slack/Jira OAuth install is disabled.
 CONNECTOR_SECRET_KEY = os.getenv("CONNECTOR_SECRET_KEY", "")
 
+# Billing: length of the no-credit-card free trial for new workspaces (days).
+TRIAL_DAYS = int(os.getenv("TRIAL_DAYS", "7"))
+
 # Google sign-in (OAuth 2.0 / OpenID Connect). Register an app at
 # console.cloud.google.com with the authorized redirect URI
 # <GOOGLE_REDIRECT_BASE_URL>/api/auth/google/callback. Empty client id/secret

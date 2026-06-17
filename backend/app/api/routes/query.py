@@ -24,7 +24,7 @@ class QueryRequest(BaseModel):
 @router.post("/query")
 async def query(
     req: QueryRequest,
-    current: auth.AuthContext = Depends(auth.require_workspace),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("member")),
 ) -> StreamingResponse:
     if not req.question.strip():
         raise HTTPException(400, "question must not be empty")

@@ -8,7 +8,10 @@ export default defineConfig({
     // a plain `npm run dev`.
     port: Number(process.env.PORT) || 5173,
     proxy: {
-      '/api': { target: 'http://localhost:8100', changeOrigin: true },
+      '/api': {
+        target: process.env.VITE_API_TARGET || 'http://localhost:8100',
+        changeOrigin: true,
+      },
     },
   },
 })

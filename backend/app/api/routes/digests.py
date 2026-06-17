@@ -41,7 +41,7 @@ async def latest_digest(
 
 @router.post("/run")
 async def run_digest(
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     row = await digest.generate(current.workspace_id)
     pool = await db.get_pool()

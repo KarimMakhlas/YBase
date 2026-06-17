@@ -32,12 +32,16 @@ class AuthContext:
     email: str
     display_name: str
     # A freshly-registered user has no active workspace until the setup wizard
-    # creates one, so these three are None during onboarding.
+    # creates one, so these are None during onboarding.
     workspace_id: Optional[int]
     workspace_name: Optional[str]
     role: Optional[str]
     session_id: int
     workspaces: List[Dict[str, Any]]
+    # Billing state of the active workspace (None while workspace-less). Carried
+    # here so the write-gate needs no extra query — see require_writable_workspace.
+    plan_status: Optional[str] = None
+    trial_ends_at: Optional[datetime] = None
 
 
 class BootstrapRequest(BaseModel):
@@ -233,7 +237,8 @@ async def _context_for(
             workspaces=await _memberships(conn, user_id),
         )
     row = await conn.fetchrow(
-        "SELECT u.id AS user_id, u.email, u.display_name, w.name AS workspace_name, m.role "
+        "SELECT u.id AS user_id, u.email, u.display_name, w.name AS workspace_name, m.role, "
+        "       w.plan_status, w.trial_ends_at "
         "FROM users u "
         "JOIN workspace_memberships m ON m.user_id = u.id "
         "JOIN workspaces w ON w.id = m.workspace_id "
@@ -251,6 +256,8 @@ async def _context_for(
         role=row["role"],
         session_id=session_id,
         workspaces=await _memberships(conn, user_id),
+        plan_status=row["plan_status"],
+        trial_ends_at=row["trial_ends_at"],
     )
 
 
@@ -318,7 +325,8 @@ async def get_current_user(request: Request) -> AuthContext:
         # yet (s.workspace_id IS NULL), and must still authenticate.
         row = await conn.fetchrow(
             "SELECT s.id AS session_id, s.workspace_id, s.last_seen_at, u.id AS user_id, "
-            "       u.email, u.display_name, u.disabled, w.name AS workspace_name, m.role "
+            "       u.email, u.display_name, u.disabled, w.name AS workspace_name, m.role, "
+            "       w.plan_status, w.trial_ends_at "
             "FROM auth_sessions s "
             "JOIN users u ON u.id = s.user_id "
             "LEFT JOIN workspaces w ON w.id = s.workspace_id "
@@ -349,7 +357,20 @@ async def get_current_user(request: Request) -> AuthContext:
         role=row["role"],
         session_id=row["session_id"],
         workspaces=workspaces,
+        plan_status=row["plan_status"],
+        trial_ends_at=row["trial_ends_at"],
     )
+
+
+def workspace_writable(plan_status: Optional[str], trial_ends_at: Optional[datetime]) -> bool:
+    """Whether a workspace currently accepts writes. Trial expiry is lazy: a
+    'trialing' workspace whose trial_ends_at has passed is treated as expired.
+    trial_ends_at is None for self-hosted/legacy workspaces, which never expire."""
+    if plan_status == "active":
+        return True
+    if plan_status == "trialing":
+        return trial_ends_at is None or trial_ends_at > datetime.now(timezone.utc)
+    return False  # past_due, expired, or anything unrecognized → read-only
 
 
 def require_role(min_role: str):
@@ -357,6 +378,21 @@ def require_role(min_role: str):
         # role is None during onboarding (no workspace yet) → ranks 0 → blocked.
         if _ROLE_RANK.get(user.role or "", 0) < _ROLE_RANK[min_role]:
             raise HTTPException(403, "insufficient role")
+        return user
+    return dep
+
+
+def require_writable_workspace(min_role: str = "member"):
+    """Like require_role, but also 402s when the workspace is read-only (trial
+    expired or payment past due). Use on every mutating route except auth and
+    billing — reads stay open so an expired workspace can still browse its data."""
+    async def dep(user: AuthContext = Depends(get_current_user)) -> AuthContext:
+        if _ROLE_RANK.get(user.role or "", 0) < _ROLE_RANK[min_role]:
+            raise HTTPException(403, "insufficient role")
+        if not workspace_writable(user.plan_status, user.trial_ends_at):
+            raise HTTPException(
+                402, "workspace is read-only — upgrade to keep editing"
+            )
         return user
     return dep
 

@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api", tags=["documents"])
 @router.post("/ingest")
 async def ingest(
     req: IngestRequest,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     ingest_limiter.enforce((current.workspace_id, current.user_id), "ingest")
     doc_id, duplicate = await ingest_document(req, workspace_id=current.workspace_id)
@@ -26,7 +26,7 @@ async def ingest(
 
 @router.post("/relink")
 async def relink(
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     """Re-run memory formation across the whole corpus, oldest first, so links
     can form regardless of original ingestion order (bulk imports)."""
@@ -52,7 +52,7 @@ async def relink(
 @router.delete("/documents/{doc_id}")
 async def delete_document(
     doc_id: int,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     """Delete a document and any memory nodes left without evidence."""
     pool = await db.get_pool()
@@ -99,7 +99,7 @@ async def delete_document(
 @router.post("/documents/{doc_id}/reform")
 async def reform_document(
     doc_id: int,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     """Re-run memory formation on an already-ingested document."""
     pool = await db.get_pool()
