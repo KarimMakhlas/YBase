@@ -54,10 +54,10 @@ const NAV = [
   { id: 'settings', label: 'Settings', icon: SettingsIcon, section: 'Workspace', minRole: 'admin' },
 ]
 
-// Routable but not sidebar items: plans (from the billing banner) and account
-// (from the workspace switcher in the sidebar footer).
+// Routable but not sidebar items: plans/billing (from the billing banner or
+// account page) and account (from the workspace switcher in the sidebar footer).
 const EXTRA_TABS = new Set(['plans', 'account'])
-const LABELS = { ...Object.fromEntries(NAV.map((n) => [n.id, n.label])), plans: 'Plans', account: 'Account' }
+const LABELS = { ...Object.fromEntries(NAV.map((n) => [n.id, n.label])), plans: 'Billing', account: 'Account' }
 const TAB_IDS = new Set([...NAV.map((t) => t.id), ...EXTRA_TABS])
 const ROLE_RANK = { member: 1, admin: 2, owner: 3 }
 

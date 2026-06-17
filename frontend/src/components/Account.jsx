@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { ArrowLeft, Check, LogOut, ArrowRightLeft, DoorOpen } from 'lucide-react'
+import { ArrowLeft, Check, LogOut, ArrowRightLeft, DoorOpen, CreditCard } from 'lucide-react'
 import { updateMe, logoutAll, leaveWorkspace, switchWorkspace } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Avatar, Badge } from '../whybase/ui.jsx'
@@ -18,6 +18,7 @@ export default function Account({ user, onAuthChanged, onNavigate, onBack }) {
 
   const isGoogle = profile.auth_provider === 'google'
   const activeWsId = user.workspace?.id
+  const activeRole = user.workspace?.role
   const workspaces = user.workspaces || []
 
   const saveName = async (e) => {
@@ -172,6 +173,18 @@ export default function Account({ user, onAuthChanged, onNavigate, onBack }) {
       </section>
 
       <section className="settings-section wb-reveal" style={{ '--i': 4 }}>
+        <h3>Billing</h3>
+        <p className="settings-sub">
+          {activeRole === 'owner'
+            ? 'Manage the active workspace plan, trial status, and upgrade controls.'
+            : 'Billing is managed by the workspace owner.'}
+        </p>
+        <button className="wb-btn wb-btn--secondary" onClick={() => onNavigate?.('plans')}>
+          <CreditCard size={15} strokeWidth={1.8} /> {activeRole === 'owner' ? 'Manage billing' : 'View plan'}
+        </button>
+      </section>
+
+      <section className="settings-section wb-reveal" style={{ '--i': 5 }}>
         <h3>Sessions</h3>
         <p className="settings-sub">Signed in on a shared or lost device? Sign out everywhere.</p>
         <button className="wb-btn wb-btn--secondary" onClick={signOutEverywhere}>
