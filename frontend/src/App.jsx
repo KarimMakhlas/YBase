@@ -631,7 +631,7 @@ export default function App() {
               />
             )}
             <div style={{ display: activeTab === 'chat' ? 'block' : 'none', height: '100%' }}>
-              <Chat pendingAsk={ask} canAdd={isAdmin} onAddDoc={() => navigate('add')} onOpenDoc={openDoc} />
+              <Chat pendingAsk={ask} canAdd={isAdmin} onAddDoc={() => navigate('add')} onOpenDoc={openDoc} onNavigate={navigate} />
             </div>
             {activeTab === 'timeline' && (
               <Timeline focus={focus.tab === 'timeline' ? focus : null} onOpenDoc={openDoc} />

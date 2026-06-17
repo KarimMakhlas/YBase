@@ -1073,3 +1073,45 @@ async def test_sole_owner_cannot_leave(pool, workspace_id):
     async with owner:
         resp = await owner.post("/api/workspace/leave")
         assert resp.status_code == 409
+
+
+async def test_sources_reports_last_sync_documents(pool, workspace_id):
+    """GET /api/sources surfaces the most recent completed sync's document count
+    so the UI can show 'N imported' / 'nothing imported'."""
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with pool.acquire() as conn:
+        cid = await conn.fetchval(
+            "INSERT INTO source_connections(workspace_id, provider, name, status, "
+            "external_workspace_id, access_token_enc) "
+            "VALUES($1, 'github', 'acme', 'connected', 'ext', 'enc') RETURNING id",
+            workspace_id,
+        )
+        # older completed job imported 5; latest completed job imported 0
+        await conn.execute(
+            "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, "
+            "state, stats, completed_at) VALUES "
+            "($1,$2,'github','complete','backfill','{}'::jsonb,'{\"documents\":5}'::jsonb, now() - interval '1 hour'),"
+            "($1,$2,'github','complete','reconcile','{}'::jsonb,'{\"documents\":0}'::jsonb, now())",
+            workspace_id, cid,
+        )
+    async with admin:
+        resp = await admin.get("/api/sources")
+        assert resp.status_code == 200
+        conn_row = next(c for c in resp.json()["connections"] if c["id"] == cid)
+    # reflects the *latest* completed job, not the older one
+    assert conn_row["last_sync_documents"] == 0
+
+
+async def test_sources_last_sync_documents_null_without_completed_job(pool, workspace_id):
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with pool.acquire() as conn:
+        cid = await conn.fetchval(
+            "INSERT INTO source_connections(workspace_id, provider, name, status, "
+            "external_workspace_id, access_token_enc) "
+            "VALUES($1, 'github', 'acme2', 'connected', 'ext2', 'enc') RETURNING id",
+            workspace_id,
+        )
+    async with admin:
+        resp = await admin.get("/api/sources")
+        conn_row = next(c for c in resp.json()["connections"] if c["id"] == cid)
+    assert conn_row["last_sync_documents"] is None

@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import {
   streamQuery, listSessions, createSession, getSession, saveMessage, deleteSession,
-  submitAnswerFeedback, getMyAnswerFeedback,
+  submitAnswerFeedback, getMyAnswerFeedback, getStats, seedDemoData,
 } from '../api.js'
 import Md from '../md.jsx'
 import { useToast } from './Toast.jsx'
@@ -352,7 +352,7 @@ function FlagIssueForm({ draft, citations, onCancel, onSubmitted }) {
   )
 }
 
-export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc }) {
+export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNavigate }) {
   const [sessions, setSessions] = useState([])
   const [activeId, setActiveId] = useState(null)
   const [messages, setMessages] = useState([])
@@ -361,6 +361,11 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc }) {
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 900)
   const [feedbackDraft, setFeedbackDraft] = useState(null)
   const [feedbackRefresh, setFeedbackRefresh] = useState(0)
+  // null = unknown (loading); decides whether the empty state shows starters or
+  // "no memory yet" guidance, so a fresh/empty workspace isn't offered demo
+  // questions it can't answer.
+  const [hasMemory, setHasMemory] = useState(null)
+  const [seeding, setSeeding] = useState(false)
   const scrollRef = useRef(null)
   const textareaRef = useRef(null)
   const activeIdRef = useRef(null)
@@ -370,6 +375,28 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc }) {
   useEffect(() => {
     listSessions().then(setSessions).catch((e) => toast(`Failed to load history: ${e.message}`))
   }, [toast])
+
+  const checkMemory = React.useCallback(() => {
+    getStats()
+      .then((s) => setHasMemory((s.counts?.documents || 0) > 0))
+      .catch(() => setHasMemory(null))
+  }, [])
+
+  useEffect(() => { checkMemory() }, [checkMemory])
+
+  const loadSample = async () => {
+    if (seeding) return
+    setSeeding(true)
+    try {
+      await seedDemoData()
+      toast('Sample data is loading — memory will appear in a moment', 'success')
+      setTimeout(checkMemory, 4000)
+    } catch (e) {
+      toast(`Couldn't load sample data: ${e.message}`)
+    } finally {
+      setSeeding(false)
+    }
+  }
 
   const lastAskRef = useRef(0)
   useEffect(() => {
@@ -580,15 +607,40 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc }) {
             {messages.length === 0 && (
               <div className="chat-empty wb-reveal">
                 <h2>Ask your company&apos;s memory</h2>
-                <p>
-                  Answers come from decisions, reasoning and history across Slack, Notion, GitHub and
-                  Jira — every claim cited back to its source.
-                </p>
-                <div className="starters">
-                  {STARTERS.map((s) => (
-                    <button key={s} className="chip-q" onClick={() => ask(s)}>{s}</button>
-                  ))}
-                </div>
+                {hasMemory === false ? (
+                  <>
+                    <p>
+                      This workspace has no memory yet.{' '}
+                      {canAdd
+                        ? 'Connect a source with issues or pull requests, or load sample data to explore first.'
+                        : 'Ask a workspace admin to connect a source like GitHub, Jira, or Slack.'}
+                    </p>
+                    {canAdd && (
+                      <div className="starters">
+                        <button className="wb-btn wb-btn--primary wb-btn--sm" onClick={() => onNavigate?.('sources')}>
+                          Connect a source
+                        </button>
+                        <button className="wb-btn wb-btn--secondary wb-btn--sm" onClick={loadSample} disabled={seeding}>
+                          {seeding ? 'Loading…' : 'Load sample data'}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p>
+                      Answers come from decisions, reasoning and history across Slack, Notion, GitHub and
+                      Jira — every claim cited back to its source.
+                    </p>
+                    {hasMemory && (
+                      <div className="starters">
+                        {STARTERS.map((s) => (
+                          <button key={s} className="chip-q" onClick={() => ask(s)}>{s}</button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
             {messages.map((m, i) =>

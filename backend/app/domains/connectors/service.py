@@ -188,7 +188,9 @@ async def list_sources(
             "c.metadata, c.last_sync_at, c.last_error, c.created_at, c.updated_at, "
             "(SELECT count(*) FROM source_streams s WHERE s.connection_id=c.id) AS stream_count, "
             "(SELECT count(*) FROM source_streams s WHERE s.connection_id=c.id AND s.selected) AS selected_count, "
-            "(SELECT count(*) FROM sync_jobs j WHERE j.connection_id=c.id AND j.status IN ('pending','running','paused')) AS active_jobs "
+            "(SELECT count(*) FROM sync_jobs j WHERE j.connection_id=c.id AND j.status IN ('pending','running','paused')) AS active_jobs, "
+            "(SELECT (j.stats->>'documents')::int FROM sync_jobs j WHERE j.connection_id=c.id "
+            " AND j.status='complete' ORDER BY j.completed_at DESC NULLS LAST LIMIT 1) AS last_sync_documents "
             "FROM source_connections c WHERE c.workspace_id=$1 ORDER BY c.created_at DESC",
             current.workspace_id,
         )

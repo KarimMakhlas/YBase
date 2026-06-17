@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Plus, Search, RotateCw, TriangleAlert, Check } from 'lucide-react'
+import { Plus, Search, RotateCw, TriangleAlert, Check, Info } from 'lucide-react'
 import {
   deleteSource, getGitHubInstallUrl, getJiraInstallUrl, getSlackInstallUrl,
   listSourceJobs, listSources, listSourceStreams, patchSourceStream, startSourceSync,
@@ -17,6 +17,14 @@ function statsText(stats = {}, provider = 'slack') {
   const dupes = stats.duplicates || 0
   const streams = stats.streams || 0
   return `${docs} docs, ${dupes} skipped, ${streams} ${unitFor(provider)}`
+}
+
+// Why a completed sync brought in nothing — shown when the last sync imported 0
+// documents while streams are selected. WhyBase ingests discussion, not code.
+const EMPTY_IMPORT_HINT = {
+  github: 'These repos have no issues or pull requests in the sync window, so there was nothing to import. WhyBase reads issues and PRs — not code, commits, or files.',
+  jira: 'These projects have no issues in the sync window, so there was nothing to import.',
+  slack: 'These channels have no messages in the sync window — or the bot hasn’t been invited to them yet (run /invite in Slack).',
 }
 
 export default function Sources() {
@@ -184,7 +192,14 @@ export default function Sources() {
                   <StatusBadge status={c.status} dot />
                 </div>
                 <span className="source-card-name">{c.name}</span>
-                <span className="source-card-meta tnum">{c.selected_count || 0} of {c.stream_count || 0} {unitFor(c.provider)} · synced {fmtDate(c.last_sync_at)}</span>
+                <span className="source-card-meta tnum">
+                  {c.selected_count || 0} of {c.stream_count || 0} {unitFor(c.provider)} · synced {fmtDate(c.last_sync_at)}
+                  {c.last_sync_at && c.last_sync_documents != null && (
+                    c.last_sync_documents > 0
+                      ? ` · ${c.last_sync_documents} imported`
+                      : ' · nothing imported'
+                  )}
+                </span>
                 {c.active_jobs > 0 && <span className="source-card-meta tnum">{c.active_jobs} active job{c.active_jobs > 1 ? 's' : ''}</span>}
                 {c.last_error && <span className="source-card-err">{c.last_error}</span>}
               </button>
@@ -212,6 +227,12 @@ export default function Sources() {
             </div>
 
             {active.last_error && <div className="source-alert"><TriangleAlert size={16} strokeWidth={1.8} /> {active.last_error}</div>}
+
+            {active.last_sync_at && active.last_sync_documents === 0 && active.selected_count > 0 && !active.active_jobs && (
+              <div className="source-alert" style={{ color: 'var(--text-secondary)', borderColor: 'var(--border)', background: 'var(--surface-inset)' }}>
+                <Info size={16} strokeWidth={1.8} /> Last sync imported nothing. {EMPTY_IMPORT_HINT[active.provider] || 'There was no new content to import in the sync window.'}
+              </div>
+            )}
 
             <div className="dlabel" style={{ marginTop: 'var(--sp-5)' }}>{unitFor(active.provider)} · {(streams || []).filter((s) => s.selected).length} selected</div>
             <div className="stream-table">
