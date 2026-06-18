@@ -27,6 +27,14 @@ const EMPTY_IMPORT_HINT = {
   slack: 'These channels have no messages in the sync window — or the bot hasn’t been invited to them yet (run /invite in Slack).',
 }
 
+// Shown when a connector lacks backend OAuth secrets, so the button explains
+// what to set instead of failing on click.
+const SETUP_HINT = {
+  slack: 'Add SLACK_CLIENT_ID, SLACK_CLIENT_SECRET and SLACK_SIGNING_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
+  jira: 'Add JIRA_CLIENT_ID and JIRA_CLIENT_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
+  github: 'Add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
+}
+
 export default function Sources() {
   const [sources, setSources] = useState(null)
   const [activeId, setActiveId] = useState(null)
@@ -38,6 +46,10 @@ export default function Sources() {
 
   const connections = sources?.connections || []
   const active = connections.find((c) => c.id === activeId) || connections[0] || null
+  // Connectors whose backend OAuth secrets aren't set — surfaced once sources load.
+  const missingConnectors = sources
+    ? ['slack', 'jira', 'github'].filter((p) => sources.configured?.[p] === false)
+    : []
 
   const loadSources = () =>
     listSources()
@@ -147,11 +159,22 @@ export default function Sources() {
   }
 
   const connectButtons = (variant = 'wb-btn--secondary') =>
-    ['slack', 'jira', 'github'].map((p) => (
-      <button key={p} className={`wb-btn ${variant} wb-btn--sm`} onClick={() => connect(p)} disabled={busy}>
-        <Plus size={14} strokeWidth={1.8} /> {INSTALL[p].label}
-      </button>
-    ))
+    ['slack', 'jira', 'github'].map((p) => {
+      // Unknown (before load) counts as ready so buttons don't flash "needs setup".
+      const ready = sources?.configured?.[p] !== false
+      return (
+        <button
+          key={p}
+          className={`wb-btn ${variant} wb-btn--sm${ready ? '' : ' wb-btn--needs-setup'}`}
+          onClick={() => connect(p)}
+          disabled={busy || !ready}
+          title={ready ? `Connect ${INSTALL[p].label}` : SETUP_HINT[p]}
+        >
+          <Plus size={14} strokeWidth={1.8} /> {INSTALL[p].label}
+          {!ready && <span className="needs-setup-tag">needs setup</span>}
+        </button>
+      )
+    })
 
   return (
     <div className="app-page app-page--wide wb-reveal">
@@ -164,9 +187,12 @@ export default function Sources() {
         <div className="sources-connect" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{connectButtons()}</div>
       </div>
 
-      {sources && !sources.configured?.slack && <div className="source-alert"><TriangleAlert size={16} strokeWidth={1.8} /> Slack connector secrets are not configured.</div>}
-      {sources && !sources.configured?.jira && <div className="source-alert"><TriangleAlert size={16} strokeWidth={1.8} /> Jira connector secrets are not configured.</div>}
-      {sources && !sources.configured?.github && <div className="source-alert"><TriangleAlert size={16} strokeWidth={1.8} /> GitHub connector secrets are not configured.</div>}
+      {missingConnectors.length > 0 && (
+        <div className="source-alert source-alert--info">
+          <Info size={16} strokeWidth={1.8} />
+          {missingConnectors.map((p) => INSTALL[p].label).join(', ')} {missingConnectors.length > 1 ? 'need' : 'needs'} setup — add each connector’s <code>*_CLIENT_ID</code> and <code>*_CLIENT_SECRET</code> (plus <code>CONNECTOR_SECRET_KEY</code>) to the backend, then restart to enable {missingConnectors.length > 1 ? 'them' : 'it'}.
+        </div>
+      )}
 
       {!sources && (
         <div style={{ marginTop: 'var(--sp-5)', display: 'flex', flexDirection: 'column', gap: 10 }}>
