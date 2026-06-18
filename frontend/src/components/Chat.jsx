@@ -12,12 +12,29 @@ import { useToast } from './Toast.jsx'
 import { Badge, StatusBadge, SrcBadge, Spinner } from '../whybase/ui.jsx'
 import whybaseMark from '../assets/whybase-mark.svg'
 
+// Generic fallbacks — used before stats load, or when a workspace has no
+// decisions yet to derive concrete questions from. Workspace-agnostic on
+// purpose (the old hard-coded Postgres/Mongo prompts only fit the demo corpus).
 const STARTERS = [
-  'Why did we choose Postgres over MongoDB?',
-  'Was the database decision ever revisited?',
-  'What open questions do we have about scaling?',
-  'Why do we use pgvector instead of a dedicated vector DB?',
+  'What are our most recent decisions, and why?',
+  'What important questions are still open?',
+  'What did we change our minds about recently?',
+  'Summarize the key decisions in memory.',
 ]
+
+// Turn the workspace's actual memory into concrete starter questions, so a
+// populated workspace is offered prompts it can really answer.
+function startersFromStats(stats) {
+  const clip = (s) => (s && s.length > 60 ? `${s.slice(0, 59)}…` : s)
+  const out = []
+  for (const d of (stats?.recent_decisions || []).slice(0, 2)) {
+    if (d.title) out.push(`Why did we decide “${clip(d.title)}”?`)
+  }
+  for (const q of (stats?.open_questions || []).slice(0, 1)) {
+    if (q.title) out.push(`What’s the latest on “${clip(q.title)}”?`)
+  }
+  return out
+}
 
 const SOURCE_ICON = { slack: Hash, notion: FileText, github: SquareCheck, jira: SquareCheck, meeting: Calendar }
 const CONF_TONE = { high: 'success', medium: 'warning', low: 'danger' }
@@ -367,6 +384,7 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNaviga
   // "no memory yet" guidance, so a fresh/empty workspace isn't offered demo
   // questions it can't answer.
   const [hasMemory, setHasMemory] = useState(null)
+  const [starters, setStarters] = useState(STARTERS)
   const [seeding, setSeeding] = useState(false)
   const scrollRef = useRef(null)
   const textareaRef = useRef(null)
@@ -380,7 +398,11 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNaviga
 
   const checkMemory = React.useCallback(() => {
     getStats()
-      .then((s) => setHasMemory((s.counts?.documents || 0) > 0))
+      .then((s) => {
+        setHasMemory((s.counts?.documents || 0) > 0)
+        const dyn = startersFromStats(s)
+        setStarters(dyn.length ? [...dyn, ...STARTERS].slice(0, 4) : STARTERS)
+      })
       .catch(() => setHasMemory(null))
   }, [])
 
@@ -636,7 +658,7 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNaviga
                     </p>
                     {hasMemory && (
                       <div className="starters">
-                        {STARTERS.map((s) => (
+                        {starters.map((s) => (
                           <button key={s} className="chip-q" onClick={() => ask(s)}>{s}</button>
                         ))}
                       </div>
