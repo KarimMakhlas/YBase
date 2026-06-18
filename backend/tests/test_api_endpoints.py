@@ -1115,3 +1115,77 @@ async def test_sources_last_sync_documents_null_without_completed_job(pool, work
         resp = await admin.get("/api/sources")
         conn_row = next(c for c in resp.json()["connections"] if c["id"] == cid)
     assert conn_row["last_sync_documents"] is None
+
+
+def _sse_event(body: str, event: str):
+    """Pull the JSON payload of a named SSE event out of a response body."""
+    for block in body.split("\n\n"):
+        if any(line.strip() == f"event: {event}" for line in block.splitlines()):
+            for line in block.splitlines():
+                if line.startswith("data: "):
+                    return json.loads(line[len("data: "):])
+    return None
+
+
+class _FakeStream:
+    def __init__(self, parts):
+        self._parts = parts
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return None
+
+    @property
+    def text_stream(self):
+        async def gen():
+            for p in self._parts:
+                yield p
+        return gen()
+
+
+async def _ask_with_meta(pool, workspace_id, monkeypatch, meta_json):
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        await admin.post("/api/ingest", json={
+            "source": "meeting", "title": "DB notes",
+            "text": "The team decided to keep PostgreSQL for v1.",
+        })
+        parts = ["We kept Postgres [C1].", "\n<<<MEMORY_METADATA>>>\n", meta_json]
+        monkeypatch.setattr(
+            "app.providers.llm.stream_text", lambda *_a, **_k: _FakeStream(parts))
+        resp = await admin.post("/api/query", json={"question": "what db?"})
+        assert resp.status_code == 200
+        return _sse_event(resp.text, "metadata")
+
+
+async def test_query_citation_carries_precise_quote(pool, workspace_id, monkeypatch):
+    meta = await _ask_with_meta(
+        pool, workspace_id, monkeypatch,
+        '{"confidence":"high","citations":[{"chunk_id":1,"quote":"keep PostgreSQL for v1"}],'
+        '"related_questions":[],"timeline":[]}',
+    )
+    cites = meta["citations"]
+    assert len(cites) == 1
+    assert cites[0]["chunk_id"] == 1
+    assert cites[0]["quote"] == "keep PostgreSQL for v1"  # verbatim span from the chunk
+
+
+async def test_query_citation_quote_none_when_not_verbatim(pool, workspace_id, monkeypatch):
+    meta = await _ask_with_meta(
+        pool, workspace_id, monkeypatch,
+        '{"confidence":"high","citations":[{"chunk_id":1,"quote":"a paraphrase not in the text"}],'
+        '"related_questions":[],"timeline":[]}',
+    )
+    assert meta["citations"][0]["quote"] is None
+
+
+async def test_query_citation_legacy_cited_chunk_ids_still_work(pool, workspace_id, monkeypatch):
+    meta = await _ask_with_meta(
+        pool, workspace_id, monkeypatch,
+        '{"confidence":"high","cited_chunk_ids":[1],"related_questions":[],"timeline":[]}',
+    )
+    cites = meta["citations"]
+    assert len(cites) == 1 and cites[0]["chunk_id"] == 1
+    assert cites[0]["quote"] is None  # no quote in the old shape

@@ -278,3 +278,30 @@ def test_lookback_explicit_days_overrides_per_stream_logic():
     # the manual "Backfill N days" button / Slack reconcile set state.days
     assert stream_lookback_days({"days": 30}, None) == 30
     assert stream_lookback_days({"days": 30}, "2026-01-01T00:00:00Z") == 30
+
+
+# ---- citation quote location (sentence-precise citations) ----
+
+from app.domains.query.streaming import locate_quote
+
+
+def test_locate_quote_exact_substring():
+    chunk = "The billing model is relational. We need real transactions there."
+    assert locate_quote(chunk, "We need real transactions there.") == "We need real transactions there."
+
+
+def test_locate_quote_whitespace_tolerant_maps_back_to_original():
+    # the model re-flowed the newline into a space when copying the quote
+    chunk = "The billing model is\nrelational and joined."
+    got = locate_quote(chunk, "billing model is relational and joined.")
+    assert got == "billing model is\nrelational and joined."  # original span, verbatim
+
+
+def test_locate_quote_not_present_returns_none():
+    assert locate_quote("We chose Postgres for v1.", "We chose MongoDB instead") is None
+
+
+def test_locate_quote_empty_inputs_return_none():
+    assert locate_quote("some text", None) is None
+    assert locate_quote("some text", "   ") is None
+    assert locate_quote("", "text") is None

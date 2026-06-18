@@ -62,8 +62,8 @@ function Citations({ citations, onOpenDoc, onFlagCitation }) {
               role="button"
               tabIndex={0}
               title="Open the full source document"
-              onClick={() => onOpenDoc && onOpenDoc(c.document_id, c.text || c.snippet)}
-              onKeyDown={(e) => e.key === 'Enter' && onOpenDoc && onOpenDoc(c.document_id, c.text || c.snippet)}
+              onClick={() => onOpenDoc && onOpenDoc(c.document_id, c.quote || c.text || c.snippet)}
+              onKeyDown={(e) => e.key === 'Enter' && onOpenDoc && onOpenDoc(c.document_id, c.quote || c.text || c.snippet)}
             >
               <div className="citation-head">
                 <SrcBadge provider={c.source}>{c.source}</SrcBadge>
@@ -80,7 +80,9 @@ function Citations({ citations, onOpenDoc, onFlagCitation }) {
                   </button>
                 )}
               </div>
-              <div className="citation-snip">{c.snippet}</div>
+              {c.quote
+                ? <div className="citation-quote">“{c.quote}”</div>
+                : <div className="citation-snip">{c.snippet}</div>}
             </div>
           ))}
         </div>

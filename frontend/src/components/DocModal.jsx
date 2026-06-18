@@ -4,9 +4,26 @@ import { getDocument } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { SrcBadge } from '../whybase/ui.jsx'
 
+// Find the span of `highlight` within `text`, returning [start, end] or null.
+// Tries an exact match first, then a whitespace-tolerant match so a near-verbatim
+// citation quote (re-flowed spacing/newlines) still lands on the original text.
+function findHighlight(text, highlight) {
+  if (!highlight) return null
+  const exact = text.indexOf(highlight)
+  if (exact !== -1) return [exact, exact + highlight.length]
+  const tokens = highlight.trim().split(/\s+/).map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  if (!tokens.length) return null
+  try {
+    const m = new RegExp(tokens.join('\\s+')).exec(text)
+    return m ? [m.index, m.index + m[0].length] : null
+  } catch {
+    return null
+  }
+}
+
 // Full source document in an overlay — provenance click-through from
 // citations, decisions, people, and search. Optionally highlights the cited
-// chunk's text inside the document.
+// quote (or chunk) inside the document.
 export default function DocModal({ docId, highlight, onClose }) {
   const [doc, setDoc] = useState(null)
   const toast = useToast()
@@ -30,15 +47,15 @@ export default function DocModal({ docId, highlight, onClose }) {
   let body = null
   if (doc) {
     const text = doc.text || doc.text_preview || ''
-    if (highlight && text.includes(highlight)) {
-      const i = text.indexOf(highlight)
+    const span = findHighlight(text, highlight)
+    if (span) {
       body = (
         <>
-          {text.slice(0, i)}
+          {text.slice(0, span[0])}
           <mark className="doc-highlight" ref={(el) => el && el.scrollIntoView({ block: 'center' })}>
-            {highlight}
+            {text.slice(span[0], span[1])}
           </mark>
-          {text.slice(i + highlight.length)}
+          {text.slice(span[1])}
         </>
       )
     } else {

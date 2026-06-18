@@ -36,6 +36,27 @@ _METADATA_BLEED_PATTERNS = [
 ]
 log = logging.getLogger("whybase.query")
 
+
+def locate_quote(chunk_text: str, quote: Optional[str]) -> Optional[str]:
+    """Return the exact substring of `chunk_text` to highlight for a citation,
+    or None if the model's quote can't be located. Tries an exact match, then a
+    whitespace-tolerant match (models often re-flow spacing/newlines when copying),
+    mapping back to the original span so the result is verbatim from the chunk —
+    and therefore highlightable inside the source document."""
+    if not chunk_text or not quote:
+        return None
+    q = quote.strip()
+    if not q:
+        return None
+    if q in chunk_text:
+        return q
+    tokens = [re.escape(t) for t in q.split()]
+    if not tokens:
+        return None
+    m = re.search(r"\s+".join(tokens), chunk_text)
+    return m.group(0) if m else None
+
+
 # Follow-ups shorter than this likely lean on the conversation ("why did he
 # push back?") and retrieve weakly verbatim — rewrite them standalone first.
 FOLLOWUP_MAX_CHARS = 100
@@ -117,7 +138,7 @@ After the answer, output a line containing exactly:
 followed by a single JSON object (no prose after it):
 {{"takeaway": "<same short takeaway, without citations>",
   "confidence": "high" | "medium" | "low",
-  "cited_chunk_ids": [<int chunk ids you actually cited>],
+  "citations": [{{"chunk_id": <int chunk id you cited>, "quote": "<the exact words copied verbatim from that chunk that back the claim — the shortest 1-2 sentence span, character-for-character, no paraphrasing and no ellipsis>"}}],
   "related_questions": ["<2-4 follow-up questions this memory could answer>"],
   "timeline": [{{"date": "YYYY-MM-DD", "event": "<short event description>"}}],
   "counter_evidence": [{{"point": "<a caveat, dissent, risk, or contradicting fact \
@@ -358,7 +379,23 @@ async def stream_query(
             yield _sse("delta", {"text": head})
 
     meta = llm.parse_loose_json(meta_raw)
-    cited_ids = {int(i) for i in meta.get("cited_chunk_ids", []) if str(i).isdigit()}
+    # Preferred shape: citations:[{chunk_id, quote}]. Fall back to the old flat
+    # cited_chunk_ids and inline [C<id>] markers so looser/older model outputs
+    # still yield citations — just without a precise supporting quote.
+    quote_by_id: Dict[int, str] = {}
+    cited_ids = set()
+    for item in meta.get("citations", []) or []:
+        if not isinstance(item, dict):
+            continue
+        cid = item.get("chunk_id")
+        if not (isinstance(cid, int) or (isinstance(cid, str) and cid.isdigit())):
+            continue
+        cid = int(cid)
+        cited_ids.add(cid)
+        q = item.get("quote")
+        if isinstance(q, str) and q.strip():
+            quote_by_id[cid] = q
+    cited_ids |= {int(i) for i in meta.get("cited_chunk_ids", []) if str(i).isdigit()}
     cited_ids |= {int(m) for m in _CITE_RE.findall(answer_text)}
     by_id = {c["id"]: c for c in ret["chunks"]}
     citations = []
@@ -375,7 +412,8 @@ async def stream_query(
             "author": c["author"],
             "date": c["date"],
             "snippet": snippet,
-            "text": c["text"],  # full chunk so the UI can highlight it in-document
+            "quote": locate_quote(c["text"], quote_by_id.get(cid)),  # precise span, or None
+            "text": c["text"],  # full chunk so the UI can fall back to highlighting it
         })
 
     counter_evidence = []
