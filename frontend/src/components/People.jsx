@@ -3,6 +3,7 @@ import { Search, GitCommitHorizontal, CircleHelp } from 'lucide-react'
 import { listPeople, getPerson } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Avatar, Badge, StatusBadge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 // Person pages: everything someone advocated, decided, or raised — built from
 // the involves / raised_by edges memory formation already extracts.
@@ -44,11 +45,11 @@ export default function People({ focus, onNavigate, onOpenDoc }) {
   const activeMeta = (people || []).find((p) => p.id === activeId)
 
   const Header = () => (
-    <>
-      <div className="eyebrow">Memory</div>
-      <h1 className="page-h1">People</h1>
-      <p className="page-lede">Who advocated what, decided what, and asked what — assembled from every source the team has connected.</p>
-    </>
+    <PageHeader
+      kicker="People"
+      title={<>Know who <em>shaped what</em>.</>}
+      lede="Who advocated, decided, and asked — assembled from every source your team has connected."
+    />
   )
 
   if (!people) {

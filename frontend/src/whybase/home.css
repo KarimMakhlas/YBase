@@ -1,0 +1,122 @@
+/* ============================================================
+   WhyBase — app home (dashboard)
+   Editorial + analytical register. Every selector is scoped
+   under .wb-home so it can't collide with other views.
+   Charts are Recharts; motion is Framer Motion (motionPresets).
+   ============================================================ */
+
+.wb-home { padding-bottom: var(--sp-12); }
+
+/* ---- Hero ask bar (lives inside the branded PageHeader) ---- */
+.wb-home .home-ask { display: flex; gap: var(--sp-2); margin: 0 auto; max-width: 600px; }
+.wb-home .home-ask .wb-input-wrap { flex: 1; }
+.wb-home .home-ask .wb-input { height: 52px; font-size: var(--fs-md); box-shadow: var(--shadow-md); border-radius: var(--radius-pill); padding-left: 44px; }
+.wb-home .home-ask .wb-input-wrap__affix--prefix { left: 16px; }
+.wb-home .home-ask .wb-input:focus { box-shadow: var(--shadow-md), 0 0 0 4px var(--accent-soft); }
+.wb-home .home-ask .wb-btn { height: 52px; border-radius: var(--radius-pill); padding: 0 22px; }
+
+.wb-home .home-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: var(--sp-4) auto 0; max-width: 720px; }
+.wb-home .home-chip {
+  font-size: var(--fs-sm); color: var(--text-secondary);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-pill); padding: 6px 13px; cursor: pointer;
+  transition: var(--t-colors), transform var(--dur-fast) var(--ease-spring-soft);
+}
+.wb-home .home-chip:hover { color: var(--accent-text); border-color: var(--accent-border); background: var(--accent-soft); transform: translateY(-1px); }
+
+/* ---- Metrics ---- */
+.wb-home .home-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-5); }
+.wb-home .metric {
+  position: relative; text-align: left;
+  display: flex; flex-direction: column; gap: 3px;
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-xs); cursor: pointer;
+  transition: var(--t-elevate);
+}
+.wb-home .metric:hover { transform: translateY(-2px); border-color: var(--accent-border); box-shadow: var(--shadow-md); }
+.wb-home .metric-num { font-family: var(--font-mono); font-size: 30px; font-weight: var(--fw-semibold); letter-spacing: -0.02em; line-height: 1.05; }
+.wb-home .metric-lab { font-size: var(--fs-sm); color: var(--text-secondary); }
+.wb-home .metric-go { position: absolute; top: 13px; right: 13px; color: var(--text-tertiary); opacity: 0; transform: translate(-2px, 2px); transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out); }
+.wb-home .metric:hover .metric-go { opacity: 1; transform: none; color: var(--accent-text); }
+
+/* ---- Insight band ---- */
+.wb-home .home-insight { display: grid; grid-template-columns: 1.5fr 1fr 1.2fr; gap: var(--sp-4); margin-bottom: var(--sp-6); }
+.wb-home .insight-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
+  padding: var(--sp-5); display: flex; flex-direction: column;
+}
+.wb-home .insight-head { margin-bottom: var(--sp-3); }
+.wb-home .insight-head h3 { margin: 0; font-size: var(--fs-md); font-weight: var(--fw-semibold); letter-spacing: var(--ls-snug); }
+
+/* Donut */
+.wb-home .donut-row { display: flex; align-items: center; gap: var(--sp-4); flex: 1; }
+.wb-home .donut-wrap { position: relative; flex: 0 0 176px; width: 176px; }
+.wb-home .donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+.wb-home .donut-num { font-family: var(--font-mono); font-size: 26px; font-weight: var(--fw-semibold); letter-spacing: -0.02em; }
+.wb-home .donut-lab { font-size: var(--fs-xs); color: var(--text-tertiary); }
+.wb-home .donut-legend { display: flex; flex-direction: column; gap: 7px; flex: 1; min-width: 0; }
+.wb-home .legend-row { display: flex; align-items: center; gap: 9px; background: none; border: none; padding: 3px 0; cursor: pointer; width: 100%; text-align: left; }
+.wb-home .legend-dot { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+.wb-home .legend-name { font-size: var(--fs-sm); color: var(--text-secondary); flex: 1; }
+.wb-home .legend-row:hover .legend-name { color: var(--text); }
+.wb-home .legend-n { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+/* Gauge */
+.wb-home .gauge-wrap { position: relative; }
+.wb-home .gauge-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+.wb-home .gauge-num { font-family: var(--font-mono); font-size: 30px; font-weight: var(--fw-semibold); letter-spacing: -0.02em; }
+.wb-home .gauge-lab { font-size: var(--fs-xs); color: var(--text-tertiary); }
+.wb-home .gauge-split { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 6px; font-size: var(--fs-sm); color: var(--text-secondary); }
+.wb-home .gauge-split b { color: var(--text); font-weight: var(--fw-semibold); }
+.wb-home .dot-sep { width: 4px; height: 4px; border-radius: 50%; background: var(--border-strong); }
+
+/* Coverage & access */
+.wb-home .cov-list { display: flex; flex-direction: column; gap: 11px; flex: 1; }
+.wb-home .cov-row { display: flex; align-items: center; gap: 9px; font-size: var(--fs-sm); color: var(--text-secondary); }
+.wb-home .cov-row svg { color: var(--text-tertiary); flex-shrink: 0; }
+.wb-home .cov-more { margin-top: auto; align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 4px 0 0; color: var(--accent-text); font-size: var(--fs-sm); font-weight: var(--fw-medium); cursor: pointer; }
+.wb-home .cov-more:hover { gap: 8px; }
+
+/* Empty states inside insight cards */
+.wb-home .insight-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; padding: var(--sp-4) 0; min-height: 150px; }
+.wb-home .insight-empty svg { color: var(--text-tertiary); }
+.wb-home .insight-empty p { margin: 0; font-size: var(--fs-sm); color: var(--text-tertiary); max-width: 30ch; line-height: var(--lh-base); }
+
+/* ---- Relitigation alert ---- */
+.wb-home .home-relit {
+  display: flex; gap: 12px; align-items: flex-start;
+  background: var(--info-soft); border: 1px solid var(--info-border);
+  border-radius: var(--radius-md); padding: 14px 16px; margin-bottom: var(--sp-6);
+  font-size: var(--fs-sm); color: var(--text);
+}
+.wb-home .relit-ico { color: var(--info); margin-top: 1px; flex-shrink: 0; }
+.wb-home .home-relit a { color: var(--accent-text); font-weight: var(--fw-medium); cursor: pointer; }
+.wb-home .home-relit a:hover { text-decoration: underline; }
+
+/* ---- Lists ---- */
+.wb-home .home-lists { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+.wb-home .home-list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); padding: var(--sp-4) var(--sp-5); }
+.wb-home .home-list h3 { margin: 0 0 10px; font-family: var(--font-mono); font-size: 11px; font-weight: var(--fw-semibold); text-transform: uppercase; letter-spacing: var(--ls-label); color: var(--text-tertiary); }
+.wb-home .hl-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border-subtle); }
+.wb-home .hl-row:first-of-type { border-top: none; }
+.wb-home .hl-title { font-size: var(--fs-sm); color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-home .hl-muted { color: var(--text-tertiary); white-space: normal; }
+.wb-home .hl-link { cursor: pointer; }
+.wb-home .hl-link:hover { color: var(--accent-text); }
+.wb-home .hl-date { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-tertiary); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.wb-home .hl-more { margin-top: 10px; display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 0; color: var(--accent-text); font-size: var(--fs-sm); font-weight: var(--fw-medium); cursor: pointer; }
+.wb-home .hl-more:hover { gap: 8px; }
+
+/* ---- Responsive ---- */
+@media (max-width: 1080px) {
+  .wb-home .home-insight { grid-template-columns: 1fr 1fr; }
+  .wb-home .insight-card:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 860px) {
+  .wb-home .home-metrics { grid-template-columns: repeat(2, 1fr); }
+  .wb-home .home-insight { grid-template-columns: 1fr; }
+  .wb-home .insight-card:last-child { grid-column: auto; }
+  .wb-home .home-lists { grid-template-columns: 1fr; }
+}

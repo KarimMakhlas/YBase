@@ -1,0 +1,7 @@
+# Screenshot feedback loop output (see scripts/shoot.mjs)
+.shots/
+
+# Playwright
+/test-results/
+/playwright-report/
+/playwright/.cache/

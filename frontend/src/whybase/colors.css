@@ -88,6 +88,11 @@
   --accent-border:    rgba(94, 106, 210, 0.28);
   --accent-ring:      rgba(94, 106, 210, 0.32);
 
+  /* Brand — the indigo gradient from the mark, plus a soft header wash */
+  --brand-grad:  linear-gradient(135deg, var(--indigo-500), var(--indigo-800));
+  --brand-wash:  radial-gradient(110% 130% at 0% 0%, rgba(94, 106, 210, 0.10), transparent 56%),
+                 radial-gradient(80% 120% at 100% 0%, rgba(124, 132, 232, 0.07), transparent 60%);
+
   /* Status — text / soft fill / border */
   --success:          var(--emerald-600);
   --success-soft:     rgba(21, 129, 79, 0.08);
@@ -146,6 +151,10 @@
   --accent-soft-hover:rgba(124, 132, 232, 0.20);
   --accent-border:    rgba(124, 132, 232, 0.34);
   --accent-ring:      rgba(124, 132, 232, 0.40);
+
+  --brand-grad:  linear-gradient(135deg, var(--indigo-400), var(--indigo-700));
+  --brand-wash:  radial-gradient(110% 130% at 0% 0%, rgba(124, 132, 232, 0.16), transparent 56%),
+                 radial-gradient(80% 120% at 100% 0%, rgba(124, 132, 232, 0.10), transparent 60%);
 
   --success:          #3ec98a;
   --success-soft:     rgba(62, 201, 138, 0.13);

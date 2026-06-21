@@ -1,23 +1,33 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { Plus, Search, RotateCw, TriangleAlert, Check, Info } from 'lucide-react'
+import React, { useEffect, useMemo, useState, lazy, Suspense } from 'react'
+import {
+  Plus, Search, RotateCw, TriangleAlert, Check, Info, ChevronDown, Settings2,
+  RefreshCw, CheckCheck, Square,
+} from 'lucide-react'
+import { motion, AnimatePresence, MotionConfig } from 'framer-motion'
 import {
   deleteSource, getGitHubInstallUrl, getJiraInstallUrl, getSlackInstallUrl,
   listSourceJobs, listSources, listSourceStreams, patchSourceStream, startSourceSync,
+  retrySourceJob,
 } from '../api.js'
 import { formatDateTime as fmtDate } from '../format.js'
 import { useToast } from './Toast.jsx'
 import { SrcBadge, StatusBadge } from '../whybase/ui.jsx'
+import { useThemeColors } from '../whybase/charts.js'
+import { staggerContainer, fadeUp, ease } from '../whybase/motionPresets.js'
+import CountUp from '../whybase/CountUp.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
+import '../whybase/sources.css'
+
+// Recharts is heavy — lazy-load (shared chunk with HomeCharts).
+const SyncHealthGauge = lazy(() => import('./SourcesCharts.jsx').then((m) => ({ default: m.SyncHealthGauge })))
+const RingFallback = () => <div className="wb-skeleton" style={{ width: 150, height: 150, borderRadius: '50%' }} />
+
+const JOB_TONE = { complete: 'ok', failed: 'bad', paused: 'warn', running: 'run', pending: 'run' }
 
 const ACTIVE_STATUSES = new Set(['pending', 'running', 'paused'])
 const PROVIDERS = { slack: { unit: 'channels' }, jira: { unit: 'projects' }, github: { unit: 'repos' } }
 const unitFor = (provider) => PROVIDERS[provider]?.unit || 'streams'
-
-function statsText(stats = {}, provider = 'slack') {
-  const docs = stats.documents || 0
-  const dupes = stats.duplicates || 0
-  const streams = stats.streams || 0
-  return `${docs} docs, ${dupes} skipped, ${streams} ${unitFor(provider)}`
-}
+const shortDate = (iso) => { try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) } catch { return '' } }
 
 // Why a completed sync brought in nothing — shown when the last sync imported 0
 // documents while streams are selected. WhyBase ingests discussion, not code.
@@ -27,8 +37,6 @@ const EMPTY_IMPORT_HINT = {
   slack: 'These channels have no messages in the sync window — or the bot hasn’t been invited to them yet (run /invite in Slack).',
 }
 
-// Shown when a connector lacks backend OAuth secrets, so the button explains
-// what to set instead of failing on click.
 const SETUP_HINT = {
   slack: 'Add SLACK_CLIENT_ID, SLACK_CLIENT_SECRET and SLACK_SIGNING_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
   jira: 'Add JIRA_CLIENT_ID and JIRA_CLIENT_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
@@ -42,11 +50,15 @@ export default function Sources() {
   const [jobs, setJobs] = useState(null)
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
+  const [manageOpen, setManageOpen] = useState(false)
+  const [showAllJobs, setShowAllJobs] = useState(false)
+  const [retryBusy, setRetryBusy] = useState(null)
   const toast = useToast()
+
+  const tc = useThemeColors({ accent: '--accent', track: '--border' })
 
   const connections = sources?.connections || []
   const active = connections.find((c) => c.id === activeId) || connections[0] || null
-  // Connectors whose backend OAuth secrets aren't set — surfaced once sources load.
   const missingConnectors = sources
     ? ['slack', 'jira', 'github'].filter((p) => sources.configured?.[p] === false)
     : []
@@ -84,7 +96,7 @@ export default function Sources() {
 
   useEffect(() => {
     if (!active?.id) return undefined
-    setStreams(null); setJobs(null)
+    setStreams(null); setJobs(null); setManageOpen(false); setShowAllJobs(false); setQuery('')
     loadDetails(active.id)
     return undefined
   }, [active?.id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -101,6 +113,8 @@ export default function Sources() {
     if (!q) return list
     return list.filter((s) => s.name.toLowerCase().includes(q) || s.external_id.toLowerCase().includes(q))
   }, [streams, query])
+
+  const selectedStreams = useMemo(() => (streams || []).filter((s) => s.selected), [streams])
 
   const INSTALL = {
     slack: { label: 'Slack', get: getSlackInstallUrl },
@@ -123,12 +137,32 @@ export default function Sources() {
   }
 
   const toggleStream = async (stream) => {
+    // Optimistic — flip locally, then persist.
+    setStreams((list) => list.map((s) => (s.id === stream.id ? { ...s, selected: !s.selected } : s)))
     try {
       const next = await patchSourceStream(active.id, stream.id, { selected: !stream.selected })
       setStreams((list) => list.map((s) => (s.id === next.id ? next : s)))
       await loadSources()
     } catch (e) {
-      toast(`Channel update failed: ${e.message}`)
+      setStreams((list) => list.map((s) => (s.id === stream.id ? { ...s, selected: stream.selected } : s)))
+      toast(`Update failed: ${e.message}`)
+    }
+  }
+
+  const setAllSelected = async (value) => {
+    if (busy) return
+    const targets = (streams || []).filter((s) => s.selected !== value)
+    if (targets.length === 0) return
+    setBusy(true)
+    setStreams((list) => list.map((s) => ({ ...s, selected: value })))
+    try {
+      await Promise.all(targets.map((s) => patchSourceStream(active.id, s.id, { selected: value })))
+      await Promise.all([loadDetails(active.id), loadSources()])
+    } catch (e) {
+      toast(`Bulk update failed: ${e.message}`)
+      loadDetails(active.id)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -146,6 +180,20 @@ export default function Sources() {
     }
   }
 
+  const retry = async (jobId) => {
+    if (retryBusy) return
+    setRetryBusy(jobId)
+    try {
+      await retrySourceJob(active.id, jobId)
+      toast('Retry queued', 'success')
+      await loadDetails(active.id)
+    } catch (e) {
+      toast(`Retry failed: ${e.message}`)
+    } finally {
+      setRetryBusy(null)
+    }
+  }
+
   const disconnect = async () => {
     if (!active?.id || !window.confirm(`Disconnect ${active.name}?`)) return
     try {
@@ -160,7 +208,6 @@ export default function Sources() {
 
   const connectButtons = (variant = 'wb-btn--secondary') =>
     ['slack', 'jira', 'github'].map((p) => {
-      // Unknown (before load) counts as ready so buttons don't flash "needs setup".
       const ready = sources?.configured?.[p] !== false
       return (
         <button
@@ -176,132 +223,262 @@ export default function Sources() {
       )
     })
 
+  // ---- Derived metrics for the active connection ----
+  const unit = active ? unitFor(active.provider) : 'streams'
+  const jobList = jobs || []
+  const importedTotal = jobList.reduce((a, j) => a + (j.stats?.documents || 0), 0)
+  const completed = jobList.filter((j) => j.status === 'complete').length
+  const failed = jobList.filter((j) => j.status === 'failed').length
+  const doneTotal = completed + failed
+  const healthPct = doneTotal ? Math.round((completed / doneTotal) * 100) : (jobList.length ? 100 : 0)
+  const selectedCount = active?.selected_count ?? selectedStreams.length
+  const totalCount = active?.stream_count ?? (streams?.length || 0)
+  // Most-recent-last strip of syncs for the "uptime" visual.
+  const uptime = useMemo(() => [...jobList].reverse().slice(-26), [jobList])
+  const visibleJobs = showAllJobs ? jobList : jobList.slice(0, 4)
+  const isSyncing = (active?.active_jobs || 0) > 0
+  const manyConns = connections.length > 1
+
   return (
-    <div className="app-page app-page--wide wb-reveal">
-      <div className="sources-head">
-        <div>
-          <div className="eyebrow">Workspace</div>
-          <h1 className="page-h1">Sources</h1>
-          <p className="page-lede">Connect Slack, Jira and GitHub to workspace memory. Pick the channels to remember and run a backfill.</p>
-        </div>
-        <div className="sources-connect" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{connectButtons()}</div>
-      </div>
+    <MotionConfig reducedMotion="user">
+      <div className="app-page app-page--wide wb-sources">
+        <PageHeader
+          align="left"
+          kicker="Sources"
+          title={<>Wire up your <em>sources of truth</em>.</>}
+          lede="Connect the tools where decisions actually happen. Pick what to remember — WhyBase keeps it in sync and cites every answer back to it."
+          actions={connectButtons()}
+        />
 
-      {missingConnectors.length > 0 && (
-        <div className="source-alert source-alert--info">
-          <Info size={16} strokeWidth={1.8} />
-          {missingConnectors.map((p) => INSTALL[p].label).join(', ')} {missingConnectors.length > 1 ? 'need' : 'needs'} setup — add each connector’s <code>*_CLIENT_ID</code> and <code>*_CLIENT_SECRET</code> (plus <code>CONNECTOR_SECRET_KEY</code>) to the backend, then restart to enable {missingConnectors.length > 1 ? 'them' : 'it'}.
-        </div>
-      )}
+        {missingConnectors.length > 0 && (
+          <div className="source-alert source-alert--info">
+            <Info size={16} strokeWidth={1.8} />
+            {missingConnectors.map((p) => INSTALL[p].label).join(', ')} {missingConnectors.length > 1 ? 'need' : 'needs'} setup — add each connector’s <code>*_CLIENT_ID</code> and <code>*_CLIENT_SECRET</code> (plus <code>CONNECTOR_SECRET_KEY</code>) to the backend, then restart to enable {missingConnectors.length > 1 ? 'them' : 'it'}.
+          </div>
+        )}
 
-      {!sources && (
-        <div style={{ marginTop: 'var(--sp-5)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {[0, 1].map((i) => <div key={i} className="wb-skeleton" style={{ height: 64, borderRadius: 'var(--radius-md)' }} />)}
-        </div>
-      )}
+        {!sources && (
+          <div style={{ marginTop: 'var(--sp-5)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {[0, 1].map((i) => <div key={i} className="wb-skeleton" style={{ height: 72, borderRadius: 'var(--radius-md)' }} />)}
+          </div>
+        )}
 
-      {sources && connections.length === 0 && (
-        <div className="md-detail" style={{ marginTop: 'var(--sp-6)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--sp-4)', textAlign: 'center' }}>
-          <b style={{ fontSize: 'var(--fs-md)' }}>No sources connected</b>
-          <p className="page-lede" style={{ textAlign: 'center' }}>Connect a system and WhyBase will remember the decisions inside it.</p>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>{connectButtons('wb-btn--primary')}</div>
-        </div>
-      )}
+        {sources && connections.length === 0 && (
+          <div className="src-section" style={{ marginTop: 'var(--sp-6)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--sp-4)', textAlign: 'center', padding: 'var(--sp-9)' }}>
+            <b style={{ fontSize: 'var(--fs-lg)' }}>No sources connected</b>
+            <p className="page-lede" style={{ textAlign: 'center' }}>Connect a system and WhyBase will remember the decisions inside it.</p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>{connectButtons('wb-btn--primary')}</div>
+          </div>
+        )}
 
-      {connections.length > 0 && active && (
-        <div className="master-detail" style={{ marginTop: 'var(--sp-6)' }}>
-          <aside className="md-list">
-            {connections.map((c) => (
-              <button key={c.id} className={`source-card ${active.id === c.id ? 'active' : ''}`} onClick={() => setActiveId(c.id)}>
-                <div className="source-card-top">
-                  <SrcBadge provider={c.provider}>{c.provider}</SrcBadge>
-                  <StatusBadge status={c.status} dot />
-                </div>
-                <span className="source-card-name">{c.name}</span>
-                <span className="source-card-meta tnum">
-                  {c.selected_count || 0} of {c.stream_count || 0} {unitFor(c.provider)} · synced {fmtDate(c.last_sync_at)}
-                  {c.last_sync_at && c.last_sync_documents != null && (
-                    c.last_sync_documents > 0
-                      ? ` · ${c.last_sync_documents} imported`
-                      : ' · nothing imported'
-                  )}
-                </span>
-                {c.active_jobs > 0 && <span className="source-card-meta tnum">{c.active_jobs} active job{c.active_jobs > 1 ? 's' : ''}</span>}
-                {c.last_error && <span className="source-card-err">{c.last_error}</span>}
-              </button>
-            ))}
-          </aside>
-
-          <section className="md-detail" key={active.id}>
-            <div className="source-toolbar">
-              <div className="source-toolbar-id">
-                <SrcBadge provider={active.provider}>{active.provider}</SrcBadge>
-                <div>
-                  <h3>{active.name}</h3>
-                  <span className="tnum">{active.external_workspace_id}</span>
-                </div>
-              </div>
-              <div className="source-toolbar-actions">
-                <div className="wb-input-wrap">
-                  <span className="wb-input-wrap__affix wb-input-wrap__affix--prefix" aria-hidden="true"><Search size={16} strokeWidth={1.8} /></span>
-                  <input className="wb-input wb-input--has-prefix" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${unitFor(active.provider)}`} />
-                </div>
-                <button className="wb-btn wb-btn--secondary wb-btn--sm" onClick={() => loadDetails(active.id)}><RotateCw size={14} strokeWidth={1.8} /> Refresh</button>
-                <button className="wb-btn wb-btn--primary wb-btn--sm" onClick={runBackfill} disabled={busy || !streams?.some((s) => s.selected)}>Backfill 90 days</button>
-                <button className="wb-btn wb-btn--ghost wb-btn--sm" onClick={disconnect}>Disconnect</button>
-              </div>
-            </div>
-
-            {active.last_error && <div className="source-alert"><TriangleAlert size={16} strokeWidth={1.8} /> {active.last_error}</div>}
-
-            {active.last_sync_at && active.last_sync_documents === 0 && active.selected_count > 0 && !active.active_jobs && (
-              <div className="source-alert" style={{ color: 'var(--text-secondary)', borderColor: 'var(--border)', background: 'var(--surface-inset)' }}>
-                <Info size={16} strokeWidth={1.8} /> Last sync imported nothing. {EMPTY_IMPORT_HINT[active.provider] || 'There was no new content to import in the sync window.'}
-              </div>
+        {connections.length > 0 && active && (
+          <motion.div className="src-stage" key={active.id} variants={staggerContainer(0.06)} initial="hidden" animate="show">
+            {/* connection selector — only when there's more than one */}
+            {manyConns && (
+              <motion.div className="src-selector" variants={fadeUp}>
+                {connections.map((c) => (
+                  <button key={c.id} className={`src-tab ${active.id === c.id ? 'active' : ''}`} onClick={() => setActiveId(c.id)}>
+                    {active.id === c.id && <motion.span layoutId="src-tab-accent" className="src-tab-accent" />}
+                    <SrcBadge provider={c.provider} />
+                    <span className="src-tab-name">{c.name}</span>
+                    <StatusBadge status={c.status} dot />
+                  </button>
+                ))}
+              </motion.div>
             )}
 
-            <div className="dlabel" style={{ marginTop: 'var(--sp-5)' }}>{unitFor(active.provider)} · {(streams || []).filter((s) => s.selected).length} selected</div>
-            <div className="stream-table">
-              {!streams && <div className="wb-skeleton" style={{ height: 40 }} />}
-              {streams && filteredStreams.length === 0 && <div className="md-empty" style={{ padding: '12px' }}>No {unitFor(active.provider)} found.</div>}
-              {filteredStreams.map((s) => (
-                <div key={s.id} className={`stream-row ${s.selected ? 'on' : ''}`} onClick={() => toggleStream(s)} role="button" tabIndex={0}>
-                  <label className="wb-check" onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={s.selected} onChange={() => toggleStream(s)} />
-                    <span className="wb-check__box"><Check size={12} strokeWidth={3} /></span>
-                  </label>
-                  <span className="stream-name">{active.provider === 'slack' ? `#${s.name}` : s.name}</span>
-                  <StatusBadge status={s.status} />
-                  <span className="stream-meta tnum">
-                    {active.provider === 'slack'
-                      ? (s.metadata?.num_members ? `${s.metadata.num_members} members` : s.external_id)
-                      : s.external_id}
-                  </span>
-                  <span className="stream-last tnum">{s.last_synced_at ? `synced ${fmtDate(s.last_synced_at)}` : '—'}</span>
-                  {s.last_error && <span className="job-err" style={{ gridColumn: '1 / -1' }}>{s.last_error}</span>}
+            {/* toolbar: identity + actions */}
+            <motion.div className="src-bar" variants={fadeUp}>
+              <div className="src-bar-id">
+                {!manyConns && <SrcBadge provider={active.provider}>{active.provider}</SrcBadge>}
+                <div className="src-bar-name">
+                  <h3>{active.name}</h3>
+                  <span className="src-extid">{active.external_workspace_id}</span>
                 </div>
-              ))}
-            </div>
+              </div>
+              <div className="src-actions">
+                {isSyncing && <span className="src-syncing"><RotateCw size={13} strokeWidth={2} /> syncing</span>}
+                <button className="wb-btn wb-btn--secondary wb-btn--sm" onClick={() => loadDetails(active.id)}><RotateCw size={14} strokeWidth={1.8} /> Refresh</button>
+                <button className="wb-btn wb-btn--primary wb-btn--sm" onClick={runBackfill} disabled={busy || selectedCount === 0}>Backfill 90 days</button>
+                <button className="wb-btn wb-btn--ghost wb-btn--sm" onClick={disconnect}>Disconnect</button>
+              </div>
+            </motion.div>
 
-            <div className="dlabel" style={{ marginTop: 'var(--sp-6)' }}>Sync jobs</div>
-            <div className="jobs-list">
-              {!jobs && <div className="wb-skeleton" style={{ height: 36 }} />}
-              {jobs && jobs.length === 0 && <div className="md-empty" style={{ padding: '4px' }}>No jobs yet.</div>}
-              {jobs && jobs.map((j) => (
-                <div key={j.id} className={`job-row ${j.status === 'failed' ? 'bad' : ''}`}>
-                  <StatusBadge status={j.status} dot />
-                  <b>{j.kind}</b>
-                  <span className="job-stats tnum">{statsText(j.stats, active.provider)}</span>
-                  <span className="job-when tnum">{fmtDate(j.created_at)}</span>
-                  {j.state?.current_stream && <span className="job-stream tnum">{active.provider === 'slack' ? '#' : ''}{j.state.current_stream}</span>}
-                  {j.next_retry_at && <span className="job-stream tnum">retry {fmtDate(j.next_retry_at)}</span>}
-                  {j.error && <span className="job-err">{j.error}</span>}
+            {active.last_error && <motion.div className="source-alert" variants={fadeUp}><TriangleAlert size={16} strokeWidth={1.8} /> {active.last_error}</motion.div>}
+
+            {active.last_sync_at && active.last_sync_documents === 0 && active.selected_count > 0 && !active.active_jobs && (
+              <motion.div className="source-alert source-alert--soft" variants={fadeUp}>
+                <Info size={16} strokeWidth={1.8} /> Last sync imported nothing. {EMPTY_IMPORT_HINT[active.provider] || 'There was no new content to import in the sync window.'}
+              </motion.div>
+            )}
+
+            {/* overview: health ring + facts + sync-history strip */}
+            <motion.div className="src-overview" variants={fadeUp}>
+              <div className="ov-ring">
+                {jobs && doneTotal > 0 ? (
+                  <Suspense fallback={<RingFallback />}>
+                    <SyncHealthGauge pct={healthPct} accent={tc.accent} trackColor={tc.track} />
+                  </Suspense>
+                ) : (
+                  <div className="ov-ring-empty"><span className="gauge-num">—</span><span className="gauge-lab">no syncs yet</span></div>
+                )}
+              </div>
+              <div className="ov-body">
+                <div className="ov-facts">
+                  <div className="ov-fact">
+                    <span className="ov-num tnum">{streams ? <CountUp value={importedTotal} /> : '—'}</span>
+                    <span className="ov-lab">documents imported</span>
+                  </div>
+                  <div className="ov-fact">
+                    <span className="ov-num tnum">{streams ? <CountUp value={selectedCount} /> : '—'}<span className="ov-of"> / {totalCount}</span></span>
+                    <span className="ov-lab">{unit} tracked</span>
+                  </div>
+                  <div className="ov-fact">
+                    <span className="ov-num tnum">{jobs ? <CountUp value={jobList.length} /> : '—'}</span>
+                    <span className="ov-lab">syncs run</span>
+                  </div>
+                  {failed > 0 && (
+                    <div className="ov-fact">
+                      <span className="ov-num tnum" style={{ color: 'var(--danger)' }}><CountUp value={failed} /></span>
+                      <span className="ov-lab">failed</span>
+                    </div>
+                  )}
                 </div>
-              ))}
+                {uptime.length > 0 && (
+                  <div className="uptime">
+                    <div className="uptime-head"><span>Sync history</span><span className="uptime-when">last {fmtDate(active.last_sync_at)}</span></div>
+                    <div className="uptime-strip">
+                      {uptime.map((j) => (
+                        <span
+                          key={j.id}
+                          className={`uptime-seg is-${JOB_TONE[j.status] || 'run'}`}
+                          title={`${j.kind?.replace(/_/g, ' ')} · ${j.status} · ${j.stats?.documents || 0} imported · ${fmtDate(j.created_at)}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+
+            {/* two columns: tracked repos | recent activity */}
+            <div className="src-cols">
+              <motion.div className="src-section" variants={fadeUp}>
+                <div className="src-section-head">
+                  <h4>Tracked {unit} <span className="count-chip tnum">{selectedCount}</span></h4>
+                  <button className={`link-btn ${manageOpen ? 'open' : ''}`} onClick={() => setManageOpen((v) => !v)}>
+                    <Settings2 size={15} strokeWidth={1.8} /> Manage all {totalCount} <ChevronDown className="chev" size={15} strokeWidth={1.8} />
+                  </button>
+                </div>
+
+                {!streams && <div className="wb-skeleton" style={{ height: 44 }} />}
+                {streams && (
+                  <div className="repo-tracked">
+                    {selectedStreams.length === 0 && (
+                      <div className="repo-none">No {unit} tracked yet — open “Manage all” to choose what WhyBase should remember.</div>
+                    )}
+                    {selectedStreams.map((s) => (
+                      <div className="repo-pill" key={s.id}>
+                        <span className="repo-name">{active.provider === 'slack' ? `#${s.name}` : s.name}</span>
+                        <StatusBadge status={s.status} />
+                        <span className="repo-sync">{s.last_synced_at ? `synced ${shortDate(s.last_synced_at)}` : 'not synced'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <AnimatePresence initial={false}>
+                  {manageOpen && streams && (
+                    <motion.div
+                      className="repo-manage"
+                      key="manage"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.28, ease: ease.out }}
+                    >
+                      <div className="repo-manage-inner">
+                        <div className="repo-tools">
+                          <div className="wb-input-wrap">
+                            <span className="wb-input-wrap__affix wb-input-wrap__affix--prefix" aria-hidden="true"><Search size={15} strokeWidth={1.8} /></span>
+                            <input className="wb-input wb-input--has-prefix wb-input--sm" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${unit}`} />
+                          </div>
+                          <div className="repo-bulk">
+                            <button className="wb-btn wb-btn--ghost wb-btn--sm" onClick={() => setAllSelected(true)} disabled={busy} title="Select all"><CheckCheck size={14} strokeWidth={1.8} /> All</button>
+                            <button className="wb-btn wb-btn--ghost wb-btn--sm" onClick={() => setAllSelected(false)} disabled={busy} title="Clear selection"><Square size={14} strokeWidth={1.8} /> None</button>
+                          </div>
+                        </div>
+                        <div className="repo-scroll">
+                          {filteredStreams.length === 0 && <div className="repo-none">No {unit} match “{query}”.</div>}
+                          {filteredStreams.map((s) => (
+                            <div key={s.id} className={`repo-toggle ${s.selected ? 'on' : ''}`} onClick={() => toggleStream(s)} role="button" tabIndex={0}>
+                              <label className="wb-check" onClick={(e) => e.stopPropagation()}>
+                                <input type="checkbox" checked={s.selected} onChange={() => toggleStream(s)} />
+                                <span className="wb-check__box"><Check size={12} strokeWidth={3} /></span>
+                              </label>
+                              <span className="repo-t-name">{active.provider === 'slack' ? `#${s.name}` : s.name}</span>
+                              <span className="repo-t-meta">
+                                {active.provider === 'slack'
+                                  ? (s.metadata?.num_members ? `${s.metadata.num_members} members` : '')
+                                  : (s.last_synced_at ? `synced ${shortDate(s.last_synced_at)}` : '')}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+
+              <motion.div className="src-section" variants={fadeUp}>
+                <div className="src-section-head">
+                  <h4>Recent activity <span className="count-chip tnum">{jobList.length}</span></h4>
+                </div>
+                {!jobs && <div className="wb-skeleton" style={{ height: 40 }} />}
+                {jobs && jobList.length === 0 && <div className="repo-none">No syncs have run yet.</div>}
+                <div className="jobs-list">
+                  <AnimatePresence initial={false}>
+                    {visibleJobs.map((j) => (
+                      <motion.div
+                        key={j.id}
+                        className="job-item"
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.2, ease: ease.out }}
+                      >
+                        <StatusBadge status={j.status} dot />
+                        <div className="job-meta">
+                          <div className="job-kind">{j.kind?.replace(/_/g, ' ')}</div>
+                          <div className="job-sub">
+                            {(j.stats?.documents || 0)} imported · {(j.stats?.duplicates || 0)} skipped
+                            {j.next_retry_at ? ` · retry ${fmtDate(j.next_retry_at)}` : ''}
+                          </div>
+                        </div>
+                        <div className="job-right">
+                          <span className="job-when">{fmtDate(j.created_at)}</span>
+                          {j.status === 'failed' && (
+                            <button className="wb-btn wb-btn--ghost wb-btn--sm" onClick={() => retry(j.id)} disabled={retryBusy === j.id}>
+                              <RefreshCw size={13} strokeWidth={1.8} /> Retry
+                            </button>
+                          )}
+                        </div>
+                        {j.error && <div className="job-err-row">{j.error}</div>}
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+                {jobs && jobList.length > 4 && (
+                  <button className={`link-btn jobs-more ${showAllJobs ? 'open' : ''}`} onClick={() => setShowAllJobs((v) => !v)}>
+                    {showAllJobs ? 'Show less' : `Show all ${jobList.length}`} <ChevronDown className="chev" size={15} strokeWidth={1.8} />
+                  </button>
+                )}
+              </motion.div>
             </div>
-          </section>
-        </div>
-      )}
-    </div>
+          </motion.div>
+        )}
+      </div>
+    </MotionConfig>
   )
 }

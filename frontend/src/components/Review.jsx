@@ -6,6 +6,7 @@ import {
 import { formatDateTime as fmt } from '../format.js'
 import { useToast } from './Toast.jsx'
 import { Badge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 const KINDS = ['', 'decision', 'question', 'entity', 'topic']
 const STATES = [
@@ -161,9 +162,11 @@ export default function Review({ focus = null }) {
 
   return (
     <div className="app-page app-page--wide wb-reveal">
-      <div className="eyebrow">Curate</div>
-      <h1 className="page-h1">Review</h1>
-      <p className="page-lede">Curate extracted memory before it becomes trusted team knowledge. Edit the claim, fix its status, or archive what doesn’t belong.</p>
+      <PageHeader
+        kicker="Review"
+        title={<>Approve what becomes <em>truth</em>.</>}
+        lede="Curate extracted memory before it's trusted. Edit the claim, fix its status, or archive what doesn't belong."
+      />
 
       <div className="filters">
         <select className="wb-select" value={filters.state} onChange={setFilter('state')} aria-label="Review state">

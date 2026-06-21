@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { flushSync } from 'react-dom'
+import { motion, MotionConfig } from 'framer-motion'
 import {
   House, Sparkles, Clock, GitCommitHorizontal, Users, Share2, FilePlus2,
   ListChecks, Flag, Plug, BarChart3, Gauge, Settings as SettingsIcon,
@@ -533,27 +534,37 @@ export default function App() {
             <span className="kbd">⌘K</span>
           </button>
 
-          <nav className="sidebar-nav">
-            {sections.map((s, si) => (
-              <div className="nav-group" key={s.label || `top-${si}`}>
-                {s.label && <div className="nav-group-label">{s.label}</div>}
-                {s.items.map((n) => {
-                  const Icon = n.icon
-                  return (
-                    <button
-                      key={n.id}
-                      className={activeTab === n.id ? 'nav-item active' : 'nav-item'}
-                      onClick={() => navigate(n.id)}
-                      title={n.label}
-                    >
-                      <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
-                      <span>{n.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            ))}
-          </nav>
+          <MotionConfig reducedMotion="user">
+            <nav className="sidebar-nav">
+              {sections.map((s, si) => (
+                <div className="nav-group" key={s.label || `top-${si}`}>
+                  {s.label && <div className="nav-group-label">{s.label}</div>}
+                  {s.items.map((n) => {
+                    const Icon = n.icon
+                    const isActive = activeTab === n.id
+                    return (
+                      <button
+                        key={n.id}
+                        className={isActive ? 'nav-item active' : 'nav-item'}
+                        onClick={() => navigate(n.id)}
+                        title={n.label}
+                      >
+                        {isActive && (
+                          <motion.span
+                            layoutId="nav-active"
+                            className="nav-active-bg"
+                            transition={{ type: 'spring', stiffness: 520, damping: 42 }}
+                          />
+                        )}
+                        <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
+                        <span>{n.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ))}
+            </nav>
+          </MotionConfig>
 
           <div className="sidebar-foot">
             {isAdmin && setup && !setup.complete && (

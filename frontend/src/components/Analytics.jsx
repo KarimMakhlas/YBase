@@ -3,6 +3,7 @@ import { Check, Minus, X } from 'lucide-react'
 import { getAnalyticsOverview, getMemoryQuality } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Badge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 const RANGES = [7, 30, 90]
 const CHECK_ICON = {
@@ -50,20 +51,18 @@ export default function Analytics() {
   }, [toast])
 
   const Header = () => (
-    <div className="sources-head">
-      <div>
-        <div className="eyebrow">Workspace</div>
-        <h1 className="page-h1">Analytics</h1>
-        <p className="page-lede">Usage and activation signals for {data?.workspace?.name || 'the workspace'}.</p>
-      </div>
-      <div className="sources-connect" style={{ paddingTop: 26 }}>
+    <PageHeader
+      kicker="Analytics"
+      title={<>Know what memory is <em>doing</em>.</>}
+      lede={`Usage and activation signals for ${data?.workspace?.name || 'the workspace'}.`}
+      actions={(
         <div className="wb-tabs wb-tabs--segmented">
           {RANGES.map((r) => (
             <button key={r} className={`wb-tab ${r === days ? 'is-active' : ''}`} onClick={() => setDays(r)}>{r}d</button>
           ))}
         </div>
-      </div>
-    </div>
+      )}
+    />
   )
 
   if (!data) {

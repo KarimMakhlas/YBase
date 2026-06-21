@@ -10,14 +10,8 @@ import {
 import Md from '../md.jsx'
 import { useToast } from './Toast.jsx'
 import { Badge, StatusBadge, SrcBadge, Spinner } from '../whybase/ui.jsx'
+import { STARTERS, startersFromStats } from '../lib/starters.js'
 import whybaseMark from '../assets/whybase-mark.svg'
-
-const STARTERS = [
-  'Why did we choose Postgres over MongoDB?',
-  'Was the database decision ever revisited?',
-  'What open questions do we have about scaling?',
-  'Why do we use pgvector instead of a dedicated vector DB?',
-]
 
 const SOURCE_ICON = { slack: Hash, notion: FileText, github: SquareCheck, jira: SquareCheck, meeting: Calendar }
 const CONF_TONE = { high: 'success', medium: 'warning', low: 'danger' }
@@ -367,6 +361,7 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNaviga
   // "no memory yet" guidance, so a fresh/empty workspace isn't offered demo
   // questions it can't answer.
   const [hasMemory, setHasMemory] = useState(null)
+  const [starters, setStarters] = useState(STARTERS)
   const [seeding, setSeeding] = useState(false)
   const scrollRef = useRef(null)
   const textareaRef = useRef(null)
@@ -380,7 +375,11 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNaviga
 
   const checkMemory = React.useCallback(() => {
     getStats()
-      .then((s) => setHasMemory((s.counts?.documents || 0) > 0))
+      .then((s) => {
+        setHasMemory((s.counts?.documents || 0) > 0)
+        const dyn = startersFromStats(s)
+        setStarters(dyn.length ? [...dyn, ...STARTERS].slice(0, 4) : STARTERS)
+      })
       .catch(() => setHasMemory(null))
   }, [])
 
@@ -636,7 +635,7 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNaviga
                     </p>
                     {hasMemory && (
                       <div className="starters">
-                        {STARTERS.map((s) => (
+                        {starters.map((s) => (
                           <button key={s} className="chip-q" onClick={() => ask(s)}>{s}</button>
                         ))}
                       </div>

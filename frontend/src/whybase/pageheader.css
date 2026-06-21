@@ -1,0 +1,46 @@
+/* ============================================================
+   WhyBase — branded page header band (PageHeader.jsx)
+   The brand surface every page leads with: node mark + kicker +
+   display title + lede + actions, over a soft indigo wash.
+   ============================================================ */
+
+.wb-pageheader {
+  position: relative; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--surface); box-shadow: var(--shadow-sm);
+  padding: var(--sp-7); margin-bottom: var(--sp-6);
+}
+.wb-pageheader .ph-wash { position: absolute; inset: 0; background: var(--brand-wash); pointer-events: none; }
+/* faint node-mesh, masked into the top-right — echoes the mark's graph motif */
+.wb-pageheader .ph-wash::after {
+  content: ""; position: absolute; inset: 0;
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(ellipse 56% 80% at 100% 0%, #000, transparent 70%);
+  mask-image: radial-gradient(ellipse 56% 80% at 100% 0%, #000, transparent 70%);
+  opacity: 0.55;
+}
+.wb-pageheader .ph-inner { position: relative; }
+
+.wb-pageheader .ph-kicker { display: inline-flex; align-items: center; gap: 9px; font-family: var(--font-mono); font-size: 11px; font-weight: var(--fw-semibold); text-transform: uppercase; letter-spacing: var(--ls-label); color: var(--text-tertiary); }
+.wb-pageheader .ph-mark { width: 22px; height: 22px; display: block; }
+.wb-pageheader .ph-title { font-size: clamp(28px, 3.3vw, 40px); font-weight: var(--fw-bold); letter-spacing: var(--ls-display, -0.02em); line-height: 1.05; margin: 14px 0 10px; text-wrap: balance; }
+.wb-pageheader .ph-title em { font-style: normal; background: var(--brand-grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.wb-pageheader .ph-lede { color: var(--text-secondary); font-size: clamp(15px, 1.3vw, 17px); line-height: var(--lh-snug); margin: 0; max-width: 62ch; text-wrap: pretty; }
+
+/* ---- Left (dashboard pages: Sources) ---- */
+.wb-pageheader--left .ph-inner { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-6); }
+.wb-pageheader--left .ph-lead { min-width: 0; }
+.wb-pageheader--left .ph-actions { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; padding-top: 6px; }
+
+/* ---- Center (hero pages: Home) ---- */
+.wb-pageheader--center { padding: var(--sp-9) var(--sp-7) var(--sp-8); text-align: center; }
+.wb-pageheader--center .ph-kicker { justify-content: center; }
+.wb-pageheader--center .ph-title { margin-inline: auto; max-width: 20ch; }
+.wb-pageheader--center .ph-lede { margin-inline: auto; }
+.wb-pageheader--center .ph-children { margin-top: var(--sp-6); }
+
+@media (max-width: 760px) {
+  .wb-pageheader--left .ph-inner { flex-direction: column; }
+  .wb-pageheader--left .ph-actions { padding-top: 0; }
+}
