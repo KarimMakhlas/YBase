@@ -1,5 +1,5 @@
 /* ============================================================
-   WhyBase — app home (dashboard)
+   YBase — app home (dashboard)
    Editorial + analytical register. Every selector is scoped
    under .wb-home so it can't collide with other views.
    Charts are Recharts; motion is Framer Motion (motionPresets).

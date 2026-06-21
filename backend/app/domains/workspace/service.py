@@ -292,12 +292,12 @@ async def create_workspace_invite(
     if invite_email:
         url = f"{config.APP_BASE_URL.rstrip('/')}{_invite_path(token)}"
         body = (
-            f"You've been invited to join {current.workspace_name} on WhyBase "
+            f"You've been invited to join {current.workspace_name} on YBase "
             f"as {req.role}.\n\nJoin here:\n{url}\n\n"
             f"This link expires {expires.date().isoformat()}."
         )
         email_result = await email.send(
-            [invite_email], f"Join {current.workspace_name} on WhyBase", body
+            [invite_email], f"Join {current.workspace_name} on YBase", body
         )
     return {
         "id": invite_id,

@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, X } from 'lucide-react'
 import { getJSON, getNode } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { StatusBadge } from '../whybase/ui.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
+import { StatusBadge } from '../ybase/ui.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
 
 // Breadth-first 2-hop neighborhood around a node — focus mode shows how one
 // memory connects instead of the whole hairball.

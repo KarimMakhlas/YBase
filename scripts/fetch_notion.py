@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ingest a Notion markdown export into Whybase.
+"""Ingest a Notion markdown export into YBase.
 
 How to export from Notion:
   1. Open any page (or the root of your workspace)
@@ -10,9 +10,9 @@ How to export from Notion:
 Each .md file becomes one document in memory. Subdirectory names are used as
 tags, and re-running is safe (dedup by content hash means no doubles).
 
-Auth (Whybase admin account):
-    export WHYBASE_EMAIL=you@example.com
-    export WHYBASE_PASSWORD=yourpassword
+Auth (YBase admin account):
+    export YBASE_EMAIL=you@example.com
+    export YBASE_PASSWORD=yourpassword
 """
 
 import argparse
@@ -24,9 +24,9 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-BASE = os.environ.get("WHYBASE_API", "http://localhost:8100")
-AUTH_EMAIL = os.environ.get("WHYBASE_EMAIL")
-AUTH_PASSWORD = os.environ.get("WHYBASE_PASSWORD")
+BASE = os.environ.get("YBASE_API", "http://localhost:8100")
+AUTH_EMAIL = os.environ.get("YBASE_EMAIL")
+AUTH_PASSWORD = os.environ.get("YBASE_PASSWORD")
 
 BOLD, DIM, GREEN, YELLOW, RED, RESET = (
     "\033[1m", "\033[2m", "\033[32m", "\033[33m", "\033[31m", "\033[0m",
@@ -34,7 +34,7 @@ BOLD, DIM, GREEN, YELLOW, RED, RESET = (
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Ingest Notion markdown export into Whybase")
+    p = argparse.ArgumentParser(description="Ingest Notion markdown export into YBase")
     p.add_argument("--export-dir", required=True,
                    help="path to unzipped Notion markdown export directory")
     p.add_argument("--min-chars", type=int, default=100,
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
 
 def sb_login(cx: httpx.Client) -> None:
     if not AUTH_EMAIL or not AUTH_PASSWORD:
-        print(f"{RED}Set WHYBASE_EMAIL and WHYBASE_PASSWORD before running.{RESET}")
+        print(f"{RED}Set YBASE_EMAIL and YBASE_PASSWORD before running.{RESET}")
         sys.exit(1)
     r = cx.post(f"{BASE}/api/auth/login", json={"email": AUTH_EMAIL, "password": AUTH_PASSWORD})
     if r.status_code != 200:
@@ -114,7 +114,7 @@ def main() -> None:
         sys.exit(1)
 
     files = find_markdown_files(root)
-    print(f"{BOLD}Whybase — Notion import{RESET}")
+    print(f"{BOLD}YBase — Notion import{RESET}")
     print(f"  export dir : {root}")
     print(f"  .md files  : {len(files)} found")
     print(f"  min chars  : {args.min_chars}")
@@ -130,7 +130,7 @@ def main() -> None:
     with httpx.Client(base_url=BASE, timeout=60, follow_redirects=True) as cx:
         if not args.dry_run:
             sb_login(cx)
-            print(f"{GREEN}Logged in to Whybase.{RESET}\n")
+            print(f"{GREEN}Logged in to YBase.{RESET}\n")
 
         ingested = skipped_short = dupes = errors = 0
 

@@ -11,12 +11,12 @@ import {
 } from '../api.js'
 import { formatDateTime as fmtDate } from '../format.js'
 import { useToast } from './Toast.jsx'
-import { SrcBadge, StatusBadge } from '../whybase/ui.jsx'
-import { useThemeColors } from '../whybase/charts.js'
-import { staggerContainer, fadeUp, ease } from '../whybase/motionPresets.js'
-import CountUp from '../whybase/CountUp.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
-import '../whybase/sources.css'
+import { SrcBadge, StatusBadge } from '../ybase/ui.jsx'
+import { useThemeColors } from '../ybase/charts.js'
+import { staggerContainer, fadeUp, ease } from '../ybase/motionPresets.js'
+import CountUp from '../ybase/CountUp.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
+import '../ybase/sources.css'
 
 // Recharts is heavy — lazy-load (shared chunk with HomeCharts).
 const SyncHealthGauge = lazy(() => import('./SourcesCharts.jsx').then((m) => ({ default: m.SyncHealthGauge })))
@@ -30,9 +30,9 @@ const unitFor = (provider) => PROVIDERS[provider]?.unit || 'streams'
 const shortDate = (iso) => { try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) } catch { return '' } }
 
 // Why a completed sync brought in nothing — shown when the last sync imported 0
-// documents while streams are selected. WhyBase ingests discussion, not code.
+// documents while streams are selected. YBase ingests discussion, not code.
 const EMPTY_IMPORT_HINT = {
-  github: 'These repos have no issues or pull requests in the sync window, so there was nothing to import. WhyBase reads issues and PRs — not code, commits, or files.',
+  github: 'These repos have no issues or pull requests in the sync window, so there was nothing to import. YBase reads issues and PRs — not code, commits, or files.',
   jira: 'These projects have no issues in the sync window, so there was nothing to import.',
   slack: 'These channels have no messages in the sync window — or the bot hasn’t been invited to them yet (run /invite in Slack).',
 }
@@ -246,7 +246,7 @@ export default function Sources() {
           align="left"
           kicker="Sources"
           title={<>Wire up your <em>sources of truth</em>.</>}
-          lede="Connect the tools where decisions actually happen. Pick what to remember — WhyBase keeps it in sync and cites every answer back to it."
+          lede="Connect the tools where decisions actually happen. Pick what to remember — YBase keeps it in sync and cites every answer back to it."
           actions={connectButtons()}
         />
 
@@ -266,7 +266,7 @@ export default function Sources() {
         {sources && connections.length === 0 && (
           <div className="src-section" style={{ marginTop: 'var(--sp-6)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--sp-4)', textAlign: 'center', padding: 'var(--sp-9)' }}>
             <b style={{ fontSize: 'var(--fs-lg)' }}>No sources connected</b>
-            <p className="page-lede" style={{ textAlign: 'center' }}>Connect a system and WhyBase will remember the decisions inside it.</p>
+            <p className="page-lede" style={{ textAlign: 'center' }}>Connect a system and YBase will remember the decisions inside it.</p>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>{connectButtons('wb-btn--primary')}</div>
           </div>
         )}
@@ -375,7 +375,7 @@ export default function Sources() {
                 {streams && (
                   <div className="repo-tracked">
                     {selectedStreams.length === 0 && (
-                      <div className="repo-none">No {unit} tracked yet — open “Manage all” to choose what WhyBase should remember.</div>
+                      <div className="repo-none">No {unit} tracked yet — open “Manage all” to choose what YBase should remember.</div>
                     )}
                     {selectedStreams.map((s) => (
                       <div className="repo-pill" key={s.id}>

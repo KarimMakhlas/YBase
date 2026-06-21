@@ -5,8 +5,8 @@ import {
   listWorkspaceUsers, patchWorkspaceUser, revokeWorkspaceInvite, transferOwnership,
 } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { Avatar, Badge } from '../whybase/ui.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
+import { Avatar, Badge } from '../ybase/ui.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
 
 const EMPTY = { email: '', display_name: '', password: '', role: 'member' }
 

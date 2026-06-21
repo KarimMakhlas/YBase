@@ -10,7 +10,7 @@ import httpx
 
 from . import config
 
-log = logging.getLogger("whybase.email")
+log = logging.getLogger("ybase.email")
 
 
 def configured() -> bool:

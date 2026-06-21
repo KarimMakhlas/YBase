@@ -14,7 +14,7 @@ from app.core import config, db
 from app.providers.embeddings import embed_texts
 from . import graph
 
-log = logging.getLogger("whybase.consolidate")
+log = logging.getLogger("ybase.consolidate")
 
 
 def _cosine(a: List[float], b: List[float]) -> float:

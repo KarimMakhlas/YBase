@@ -241,7 +241,7 @@ def test_jira_issue_to_doc_shape():
 
 async def test_github_issue_to_doc_shape_without_comments():
     connection = {"id": 11}
-    stream = {"id": 21, "external_id": "whybase/app"}
+    stream = {"id": 21, "external_id": "ybase/app"}
     issue = {
         "number": 7,
         "title": "Adopt persisted sessions",
@@ -254,10 +254,10 @@ async def test_github_issue_to_doc_shape_without_comments():
     }
     doc = await github_issue_to_doc("token-unused", connection, stream, issue)
     assert doc.source == "github"
-    assert doc.title == "whybase/app#7: Adopt persisted sessions"
+    assert doc.title == "ybase/app#7: Adopt persisted sessions"
     assert "Persist sessions" in doc.text
     assert doc.author == "mav"
-    assert doc.external_ref == "github:whybase/app:issue/7"
+    assert doc.external_ref == "github:ybase/app:issue/7"
 
 
 # ---- per-stream re-sync lookback resolver ----

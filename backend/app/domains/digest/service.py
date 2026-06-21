@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from app.core import config, db, mailer as email
 from app.core.dates import iso_date
 
-log = logging.getLogger("whybase.digest")
+log = logging.getLogger("ybase.digest")
 
 
 async def compute_digest(conn, workspace_id: int, since: datetime, until: datetime) -> Dict[str, Any]:

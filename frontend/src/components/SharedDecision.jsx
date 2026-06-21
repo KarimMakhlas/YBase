@@ -26,10 +26,10 @@ export default function SharedDecision({ token }) {
     return (
       <div className="shared-page">
         <div className="shared-card">
-          <div className="auth-mark">WhyBase</div>
+          <div className="auth-mark">YBase</div>
           <h1>Decision unavailable</h1>
           <p>This share link is invalid or has been revoked.</p>
-          <a className="primary-btn" href="#/home">Go to WhyBase</a>
+          <a className="primary-btn" href="#/home">Go to YBase</a>
         </div>
       </div>
     )
@@ -40,7 +40,7 @@ export default function SharedDecision({ token }) {
     <div className="shared-page">
       <div className="shared-card">
         <div className="shared-head">
-          <span className="auth-mark">WhyBase</span>
+          <span className="auth-mark">YBase</span>
           <span className="shared-from">Shared from {state.workspace_name}</span>
         </div>
 
@@ -86,7 +86,7 @@ export default function SharedDecision({ token }) {
 
         <div className="shared-cta">
           <strong>This is one decision from {state.workspace_name}’s memory.</strong>
-          <p>WhyBase remembers your team’s decisions, reasoning, and history — and answers “why” with citations.</p>
+          <p>YBase remembers your team’s decisions, reasoning, and history — and answers “why” with citations.</p>
           <a className="primary-btn" href="#/home">Create your own team memory →</a>
         </div>
       </div>

@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from app.core import config, db
 from app.core.observability import StageTimer
 
-log = logging.getLogger("whybase.worker")
+log = logging.getLogger("ybase.worker")
 
 _wake: Optional[asyncio.Event] = None
 _claim_lock: Optional[asyncio.Lock] = None

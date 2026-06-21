@@ -7,9 +7,9 @@ import {
   Sparkles, ArrowRight, Download, GitFork, MessageSquareQuote, Quote, RotateCcw,
   GitCommitHorizontal, Users, ShieldCheck, Scale, MessageSquare, SquareCheck, CircleHelp,
 } from 'lucide-react'
-import whybaseMark from '../assets/whybase-mark.svg'
-import { staggerContainer, fadeUp, spring, ease, inView } from '../whybase/motionPresets'
-import '../whybase/marketing.css'
+import ybaseMark from '../assets/ybase-mark.svg'
+import { staggerContainer, fadeUp, spring, ease, inView } from '../ybase/motionPresets'
+import '../ybase/marketing.css'
 
 // ---- Graph orchestration variants ----------------------------------------
 // `custom` carries the row index so nodes and the line beneath them animate as
@@ -116,9 +116,9 @@ function MagneticCTA({ children, onClick, href, strength = 0.35 }) {
   )
 }
 
-// The WhyBase marketing landing page — the design system in its editorial
+// The YBase marketing landing page — the design system in its editorial
 // register. Shown to logged-out visitors; CTAs lead into the product (sign in
-// or start a workspace). Motion is powered by Framer Motion via whybase/motionPresets.
+// or start a workspace). Motion is powered by Framer Motion via ybase/motionPresets.
 export default function Marketing({ onEnter }) {
   const rootRef = useRef(null)
   const reduce = useReducedMotion()
@@ -138,7 +138,7 @@ export default function Marketing({ onEnter }) {
 
   const features = [
     { Icon: Quote, title: 'Full provenance', body: 'Every answer carries citation chips that open the original Slack message or doc, with the cited chunk highlighted.' },
-    { Icon: RotateCcw, title: 'Revisit detection', body: 'When a new document relitigates a settled decision, WhyBase surfaces it — so you never re-argue what you already decided.' },
+    { Icon: RotateCcw, title: 'Revisit detection', body: 'When a new document relitigates a settled decision, YBase surfaces it — so you never re-argue what you already decided.' },
     { Icon: GitCommitHorizontal, title: 'Decision log', body: 'Positions on the record, alternatives considered, and the chain of revisits — for every decision your team has made.' },
     { Icon: Users, title: 'People pages', body: 'Everything someone advocated, decided or raised, with their recorded positions quoted verbatim.' },
     { Icon: ShieldCheck, title: 'Runs fully local', body: 'Ollama for LLM and embeddings, zero API keys — or Claude + Voyage when credentials are present. The switch is one env var.' },
@@ -156,7 +156,7 @@ export default function Marketing({ onEnter }) {
       <div className="wb-marketing" ref={rootRef}>
         <nav className={`nav${scrolled ? ' scrolled' : ''}`}>
           <div className="nav-inner">
-            <a className="m-brand" onClick={enter('home')}><img src={whybaseMark} alt="" />WhyBase</a>
+            <a className="m-brand" onClick={enter('home')}><img src={ybaseMark} alt="" />YBase</a>
             <div className="nav-links">
               <a href="#how" onClick={scrollTo('#how')}>How it works</a>
               <a href="#features" onClick={scrollTo('#features')}>Features</a>
@@ -189,7 +189,7 @@ export default function Marketing({ onEnter }) {
             </motion.span>
             <motion.h1 className="title" variants={fadeUp}>Never lose the <em>why</em> behind your team&apos;s decisions</motion.h1>
             <motion.p className="sub" variants={fadeUp}>
-              WhyBase is an AI memory layer over Slack, Notion, GitHub and Jira. Not search — it
+              YBase is an AI memory layer over Slack, Notion, GitHub and Jira. Not search — it
               remembers decisions and their reasoning, links them across sources and time, and answers
               “why” with full provenance.
             </motion.p>
@@ -315,7 +315,7 @@ export default function Marketing({ onEnter }) {
         <footer>
           <div className="wrap foot-inner">
             <div className="foot-brand">
-              <div className="m-brand"><img src={whybaseMark} alt="" />WhyBase</div>
+              <div className="m-brand"><img src={ybaseMark} alt="" />YBase</div>
               <p>An AI memory layer for engineering teams. Never lose the why behind your decisions.</p>
             </div>
             <div className="foot-cols">

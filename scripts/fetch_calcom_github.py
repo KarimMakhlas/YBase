@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch issues + PRs from a public GitHub repo and ingest them into Whybase.
+"""Fetch issues + PRs from a public GitHub repo and ingest them into YBase.
 
 No GitHub OAuth App needed — works with the public GitHub REST API.
 Set GITHUB_TOKEN (or --token) for 5000 req/hr instead of 60.
@@ -14,9 +14,9 @@ Usage:
     # Custom repo / window / limit
     python scripts/fetch_calcom_github.py --repo calcom/cal.com --days 90 --limit 150
 
-Auth (Whybase admin account):
-    export WHYBASE_EMAIL=you@example.com
-    export WHYBASE_PASSWORD=yourpassword
+Auth (YBase admin account):
+    export YBASE_EMAIL=you@example.com
+    export YBASE_PASSWORD=yourpassword
 """
 
 import argparse
@@ -29,9 +29,9 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-BASE = os.environ.get("WHYBASE_API", "http://localhost:8100")
-AUTH_EMAIL = os.environ.get("WHYBASE_EMAIL")
-AUTH_PASSWORD = os.environ.get("WHYBASE_PASSWORD")
+BASE = os.environ.get("YBASE_API", "http://localhost:8100")
+AUTH_EMAIL = os.environ.get("YBASE_EMAIL")
+AUTH_PASSWORD = os.environ.get("YBASE_PASSWORD")
 GITHUB_API = "https://api.github.com"
 
 BOLD, DIM, CYAN, GREEN, YELLOW, RED, RESET = (
@@ -40,7 +40,7 @@ BOLD, DIM, CYAN, GREEN, YELLOW, RED, RESET = (
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Ingest GitHub issues/PRs into Whybase")
+    p = argparse.ArgumentParser(description="Ingest GitHub issues/PRs into YBase")
     p.add_argument("--repo", default="calcom/cal.com", help="owner/repo (default: calcom/cal.com)")
     p.add_argument("--days", type=int, default=90, help="lookback window in days (default: 90)")
     p.add_argument("--limit", type=int, default=150, help="max items to ingest (default: 150)")
@@ -116,7 +116,7 @@ def format_item(repo: str, issue: Dict[str, Any],
 
 def sb_login(cx: httpx.Client) -> None:
     if not AUTH_EMAIL or not AUTH_PASSWORD:
-        print(f"{RED}Set WHYBASE_EMAIL and WHYBASE_PASSWORD before running.{RESET}")
+        print(f"{RED}Set YBASE_EMAIL and YBASE_PASSWORD before running.{RESET}")
         sys.exit(1)
     r = cx.post(f"{BASE}/api/auth/login", json={"email": AUTH_EMAIL, "password": AUTH_PASSWORD})
     if r.status_code != 200:
@@ -138,7 +138,7 @@ def main() -> None:
         "%Y-%m-%dT%H:%M:%SZ"
     )
 
-    print(f"{BOLD}Whybase — GitHub ingestion{RESET}")
+    print(f"{BOLD}YBase — GitHub ingestion{RESET}")
     print(f"  repo  : {repo}")
     print(f"  since : {since_iso}  (last {args.days} days)")
     print(f"  limit : {args.limit} items")
@@ -148,7 +148,7 @@ def main() -> None:
 
     with httpx.Client(base_url=BASE, timeout=60, follow_redirects=True) as cx:
         sb_login(cx)
-        print(f"{GREEN}Logged in to Whybase.{RESET}\n")
+        print(f"{GREEN}Logged in to YBase.{RESET}\n")
 
         with httpx.Client(timeout=45, follow_redirects=True) as gh:
             url: Optional[str] = None

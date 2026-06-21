@@ -1,4 +1,4 @@
-# Whybase for Teams
+# YBase for Teams
 
 An AI **memory layer** over a company's knowledge sources (Slack, Notion, GitHub, Jira). Not search: it remembers *decisions and their reasoning*, links them across sources and time, and answers "why" questions with full provenance.
 
@@ -61,7 +61,7 @@ After switching embedding providers, re-embed the corpus: `backend/.venv/bin/pyt
 Prereqs: Docker, [Ollama](https://ollama.com) running on the host.
 
 ```bash
-cd whybase
+cd ybase
 ollama pull qwen3.5 && ollama pull nomic-embed-text
 docker compose --profile app up -d --build    # db + backend + built UI
 # → http://localhost:8100 (first visit bootstraps the owner account)
@@ -72,7 +72,7 @@ docker compose --profile app up -d --build    # db + backend + built UI
 Prereqs: Docker, Python 3.9+, Node 18+, [Ollama](https://ollama.com).
 
 ```bash
-cd whybase
+cd ybase
 
 # 0. Local models
 ollama pull qwen3.5 && ollama pull nomic-embed-text
@@ -94,8 +94,8 @@ cd ../frontend && npm install && npm run dev          # http://localhost:5173
 
 # 5. Demo: ingest 10 docs + run 5 queries (separate terminal)
 cd ..
-export WHYBASE_EMAIL=owner@example.com
-export WHYBASE_PASSWORD='your-bootstrap-password'
+export YBASE_EMAIL=owner@example.com
+export YBASE_PASSWORD='your-bootstrap-password'
 backend/.venv/bin/python scripts/demo.py
 ```
 
@@ -136,7 +136,7 @@ backend/.venv/bin/python scripts/import_slack.py /path/to/export \
 
 Threads become documents (the natural decision unit); loose chatter rolls into per-day digests kept only when substantial. Mentions, links, and HTML escapes are cleaned; documents ingest oldest-first awaiting formation so revisit links can form.
 
-`scripts/demo.py` and `scripts/import_slack.py` use the authenticated API. Set `WHYBASE_EMAIL` and `WHYBASE_PASSWORD` for an owner/admin user before running them.
+`scripts/demo.py` and `scripts/import_slack.py` use the authenticated API. Set `YBASE_EMAIL` and `YBASE_PASSWORD` for an owner/admin user before running them.
 
 ## API
 
@@ -239,7 +239,7 @@ docs/diagrams/     tracked architecture/workflow diagrams
 
 ```bash
 cd backend && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest            # unit + DB tests (uses whybase_test DB)
+.venv/bin/python -m pytest            # unit + DB tests (uses ybase_test DB)
 cd .. && backend/.venv/bin/python scripts/eval.py   # memory-quality scorecard
 ```
 
@@ -257,4 +257,4 @@ non-zero when issues are found, so it slots into CI.
 
 ## License
 
-Copyright © 2026 Whybase. All rights reserved. This is proprietary software; no license is granted for use, copying, modification, or distribution without prior written permission.
+Copyright © 2026 YBase. All rights reserved. This is proprietary software; no license is granted for use, copying, modification, or distribution without prior written permission.

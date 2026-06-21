@@ -2,8 +2,8 @@ import React, { useState } from 'react'
 import { ArrowLeft, Check } from 'lucide-react'
 import { billingCheckout } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { Badge } from '../whybase/ui.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
+import { Badge } from '../ybase/ui.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
 
 const TEAM_FEATURES = [
   'Unlimited team members',
@@ -49,7 +49,7 @@ export default function Plans({ billing, canPay = false, onUpgraded, onBack }) {
       <PageHeader
         kicker="Billing"
         title={<>Keep your memory <em>editable</em>.</>}
-        lede="WhyBase is free for 7 days, no card required. Upgrade to Team to keep your workspace editable after the trial."
+        lede="YBase is free for 7 days, no card required. Upgrade to Team to keep your workspace editable after the trial."
       />
 
       <div className="plan-card">

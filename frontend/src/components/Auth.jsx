@@ -84,7 +84,7 @@ export default function Auth({ mode, onAuthed, initialView, onBack, resetToken }
     return (
       <div className="auth-page">
         <div className="auth-card">
-          <div className="auth-mark">WhyBase</div>
+          <div className="auth-mark">YBase</div>
           <h1>Check your email</h1>
           <p>
             If an account exists for {form.email || 'that address'}, we’ve sent a
@@ -99,7 +99,7 @@ export default function Auth({ mode, onAuthed, initialView, onBack, resetToken }
     return (
       <div className="auth-page">
         <div className="auth-card">
-          <div className="auth-mark">WhyBase</div>
+          <div className="auth-mark">YBase</div>
           <h1>Password updated</h1>
           <p>Your password has changed and other sessions were signed out. Sign in with your new password.</p>
           <button type="button" onClick={() => (onBack ? onBack() : goView('login'))}>Sign in</button>
@@ -137,7 +137,7 @@ export default function Auth({ mode, onAuthed, initialView, onBack, resetToken }
             <ArrowLeft size={14} strokeWidth={1.8} /> Back to home
           </button>
         )}
-        <div className="auth-mark">WhyBase</div>
+        <div className="auth-mark">YBase</div>
         <h1>{heading}</h1>
         <p>{blurb}</p>
         {googleOn && (view === 'login' || isRegister) && (

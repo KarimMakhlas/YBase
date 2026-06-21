@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 
-log = logging.getLogger("whybase.http")
+log = logging.getLogger("ybase.http")
 
 request_id_var = contextvars.ContextVar("request_id", default="-")
 

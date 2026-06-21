@@ -1,8 +1,8 @@
 /* ============================================================
-   WhyBase — Legacy alias bridge
-   The Whybase app's existing component CSS references token
-   names from the pre-WhyBase palette. This file maps each of
-   those legacy names onto the new WhyBase semantic tokens so the
+   YBase — Legacy alias bridge
+   The YBase app's existing component CSS references token
+   names from the pre-YBase palette. This file maps each of
+   those legacy names onto the new YBase semantic tokens so the
    whole app re-skins from one source of truth. Aliases are
    defined in :root as var() references to semantic tokens, so
    they track light/dark automatically (no per-theme duplication).

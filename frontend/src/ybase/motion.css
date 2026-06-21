@@ -1,5 +1,5 @@
 /* ============================================================
-   WhyBase — Motion
+   YBase — Motion
    Motion is meaning. Every transition either communicates state
    or guides attention. Springs for anything that moves through
    space; eased curves for colour & opacity. Nothing loops
@@ -15,7 +15,7 @@
   --dur-slow:    340ms;  /* @kind other */
   --dur-slower:  520ms;  /* @kind other */
 
-  /* Easing — the WhyBase curves (decisive, gentle, symmetric, springs) */
+  /* Easing — the YBase curves (decisive, gentle, symmetric, springs) */
   --ease-out:       cubic-bezier(0.16, 1, 0.3, 1);     /* @kind other */
   --ease-out-soft:  cubic-bezier(0.22, 1, 0.36, 1);    /* @kind other */
   --ease-in-out:    cubic-bezier(0.65, 0, 0.35, 1);    /* @kind other */

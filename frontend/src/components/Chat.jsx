@@ -9,9 +9,9 @@ import {
 } from '../api.js'
 import Md from '../md.jsx'
 import { useToast } from './Toast.jsx'
-import { Badge, StatusBadge, SrcBadge, Spinner } from '../whybase/ui.jsx'
+import { Badge, StatusBadge, SrcBadge, Spinner } from '../ybase/ui.jsx'
 import { STARTERS, startersFromStats } from '../lib/starters.js'
-import whybaseMark from '../assets/whybase-mark.svg'
+import ybaseMark from '../assets/ybase-mark.svg'
 
 const SOURCE_ICON = { slack: Hash, notion: FileText, github: SquareCheck, jira: SquareCheck, meeting: Calendar }
 const CONF_TONE = { high: 'success', medium: 'warning', low: 'danger' }
@@ -653,7 +653,7 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNaviga
               ) : (
                 <div className="msg assistant" key={i}>
                   <div className="msg-role">
-                    <img src={whybaseMark} width="15" height="15" alt="" /> WhyBase
+                    <img src={ybaseMark} width="15" height="15" alt="" /> YBase
                   </div>
                   {m.status && <div className="thinking"><Spinner size="sm" /> {m.status}</div>}
                   <div className="msg-body">
