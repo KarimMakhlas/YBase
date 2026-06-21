@@ -6,6 +6,7 @@ import {
 } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Avatar, Badge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 const EMPTY = { email: '', display_name: '', password: '', role: 'member' }
 
@@ -127,9 +128,11 @@ export default function Settings({ auth, onAuthChanged }) {
 
   return (
     <div className="app-page wb-reveal">
-      <div className="eyebrow">Workspace</div>
-      <h1 className="page-h1">Settings</h1>
-      <p className="page-lede">Manage who can read and curate {wsName}’s memory.</p>
+      <PageHeader
+        kicker="Settings"
+        title={<>Control who sees <em>memory</em>.</>}
+        lede={`Manage who can read and curate ${wsName}’s memory.`}
+      />
 
       <div className="role-clarity">
         <Badge tone="accent" variant="soft" mono>your role · {myRole}</Badge>

@@ -4,6 +4,7 @@ import { createDecisionShare, getJSON, revokeDecisionShare } from '../api.js'
 import { decisionsToCSV, decisionsToMarkdown, downloadFile } from '../export.js'
 import { useToast } from './Toast.jsx'
 import { Badge, StatusBadge, SrcBadge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 const REL_LABEL = {
   revisits: { out: 'revisits', in: 'revisited by' },
@@ -137,11 +138,11 @@ export default function Decisions({ focus, onOpenDoc }) {
   const people = useMemo(() => [...new Set((decisions || []).flatMap((d) => d.people.concat(d.made_by)))].sort(), [decisions])
 
   const Header = () => (
-    <>
-      <div className="eyebrow">Memory</div>
-      <h1 className="page-h1">Decision log</h1>
-      <p className="page-lede">Every decision the team has made, with the reasoning at the time, who advocated what, and the chain of revisits.</p>
-    </>
+    <PageHeader
+      kicker="Decision log"
+      title={<>Every call, <em>on the record</em>.</>}
+      lede="What you decided, the reasoning at the time, who pushed for what — and every time it was revisited."
+    />
   )
 
   if (failed) {

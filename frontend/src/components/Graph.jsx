@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, X } from 'lucide-react'
 import { getJSON, getNode } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { StatusBadge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 // Breadth-first 2-hop neighborhood around a node — focus mode shows how one
 // memory connects instead of the whole hairball.
@@ -128,11 +129,11 @@ export default function Graph({ focus, onOpenDoc }) {
   useEffect(() => { setPositions({}) }, [laid])
 
   const Header = () => (
-    <>
-      <div className="eyebrow">Memory</div>
-      <h1 className="page-h1">Graph</h1>
-      <p className="page-lede">How decisions, questions, people, and topics connect. Drag nodes to explore; click one for detail.</p>
-    </>
+    <PageHeader
+      kicker="Graph"
+      title={<>See how it <em>all connects</em>.</>}
+      lede="Decisions, questions, people and topics, linked. Drag nodes to explore; click any one for the detail."
+    />
   )
 
   if (!graph) {

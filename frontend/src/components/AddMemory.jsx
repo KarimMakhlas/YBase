@@ -3,6 +3,7 @@ import { Upload, Sparkles, ChevronRight, TriangleAlert } from 'lucide-react'
 import { deleteJSON, getJSON, postJSON } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { SrcBadge, StatusBadge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 const SOURCES = ['slack', 'notion', 'github', 'jira', 'meeting', 'other']
 const EMPTY_FORM = { source: 'slack', title: '', author: '', date: '', tags: '', text: '' }
@@ -143,12 +144,11 @@ export default function AddMemory() {
 
   return (
     <div className="app-page wb-reveal">
-      <div className="eyebrow">Curate</div>
-      <h1 className="page-h1">Add to memory</h1>
-      <p className="page-lede">
-        Paste or drop a document — a Slack thread, meeting notes, a spec, a ticket. Memory formation
-        extracts the decisions, people and open questions.
-      </p>
+      <PageHeader
+        kicker="Add to memory"
+        title={<>Feed the <em>memory</em>.</>}
+        lede="Drop in a Slack thread, meeting notes, a spec or a ticket — WhyBase extracts the decisions, people and open questions."
+      />
 
       <form className="add-form wb-reveal" style={{ '--i': 1 }} onSubmit={submit}>
         <div

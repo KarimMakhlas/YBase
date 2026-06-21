@@ -4,6 +4,7 @@ import { getAnswerFeedback, listAnswerFeedback, patchAnswerFeedback } from '../a
 import { formatDateTime as fmt } from '../format.js'
 import { useToast } from './Toast.jsx'
 import { Badge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 const STATUS_OPTIONS = [
   ['open', 'Open'],
@@ -106,9 +107,11 @@ export default function Feedback({ onOpenDoc, onNavigate }) {
 
   return (
     <div className="app-page app-page--wide wb-reveal">
-      <div className="eyebrow">Curate</div>
-      <h1 className="page-h1">Feedback</h1>
-      <p className="page-lede">Every answer your team flagged — wrong, outdated, missing a citation, or just right. Route each fix into Review or back to the source.</p>
+      <PageHeader
+        kicker="Feedback"
+        title={<>Turn flags into <em>fixes</em>.</>}
+        lede="Every answer your team flagged — wrong, outdated, missing a citation, or spot on. Route each into Review or back to the source."
+      />
 
       <div className="filters">
         <select className="wb-select" value={filters.status} onChange={setStatusFilter} aria-label="Feedback status">

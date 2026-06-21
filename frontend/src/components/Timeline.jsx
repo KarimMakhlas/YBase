@@ -3,6 +3,7 @@ import { RotateCcw } from 'lucide-react'
 import { getJSON } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Badge, StatusBadge, SrcBadge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 const TYPE_LABEL = { document: 'doc', decision: 'decision', question: 'question' }
 const TYPE_TONE = { decision: 'accent', question: 'warning', document: 'neutral' }
@@ -39,11 +40,11 @@ export default function Timeline({ focus, onOpenDoc }) {
   const sources = useMemo(() => [...new Set((events || []).map((e) => e.source).filter(Boolean))].sort(), [events])
 
   const Header = () => (
-    <>
-      <div className="eyebrow">Memory</div>
-      <h1 className="page-h1">Timeline</h1>
-      <p className="page-lede">A continuous chronology of what the team decided and asked — with revisits surfaced in place.</p>
-    </>
+    <PageHeader
+      kicker="Timeline"
+      title={<>The full story, <em>in order</em>.</>}
+      lede="Every decision and question your team raised — in sequence, with revisits surfaced right where they happened."
+    />
   )
 
   if (failed) {

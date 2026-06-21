@@ -4,6 +4,7 @@ import { getOpsOverview, retryFailedDocuments, retrySourceJob, seedDemoData } fr
 import { formatDateTime as fmtDate } from '../format.js'
 import { useToast } from './Toast.jsx'
 import { Badge, StatusBadge, SrcBadge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 export default function Ops({ onNavigate, onAsk }) {
   const [data, setData] = useState(null)
@@ -81,16 +82,12 @@ export default function Ops({ onNavigate, onAsk }) {
 
   return (
     <div className="app-page app-page--wide wb-reveal">
-      <div className="sources-head">
-        <div>
-          <div className="eyebrow">Workspace</div>
-          <h1 className="page-h1">Ops</h1>
-          <p className="page-lede">Readiness, setup guidance and recovery controls for {data?.workspace?.name || 'the workspace'}’s memory pipeline.</p>
-        </div>
-        <div className="sources-connect" style={{ paddingTop: 26 }}>
-          <button className="wb-btn wb-btn--secondary wb-btn--sm" onClick={load}><RotateCw size={14} strokeWidth={1.8} /> Refresh</button>
-        </div>
-      </div>
+      <PageHeader
+        kicker="Ops"
+        title={<>Keep the pipeline <em>healthy</em>.</>}
+        lede={`Readiness, setup guidance and recovery controls for ${data?.workspace?.name || 'the workspace'}’s memory pipeline.`}
+        actions={<button className="wb-btn wb-btn--secondary wb-btn--sm" onClick={load}><RotateCw size={14} strokeWidth={1.8} /> Refresh</button>}
+      />
 
       {!data && (
         <div style={{ marginTop: 'var(--sp-5)', display: 'flex', flexDirection: 'column', gap: 10 }}>

@@ -3,6 +3,7 @@ import { ArrowLeft, Check } from 'lucide-react'
 import { billingCheckout } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Badge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 const TEAM_FEATURES = [
   'Unlimited team members',
@@ -45,12 +46,11 @@ export default function Plans({ billing, canPay = false, onUpgraded, onBack }) {
           <ArrowLeft size={14} strokeWidth={1.8} /> Back
         </button>
       )}
-      <div className="eyebrow">Billing</div>
-      <h1 className="page-h1">Plans</h1>
-      <p className="page-lede">
-        WhyBase is free for 7 days, no card required. Upgrade to the Team plan to keep
-        your workspace editable after the trial.
-      </p>
+      <PageHeader
+        kicker="Billing"
+        title={<>Keep your memory <em>editable</em>.</>}
+        lede="WhyBase is free for 7 days, no card required. Upgrade to Team to keep your workspace editable after the trial."
+      />
 
       <div className="plan-card">
         <div className="plan-card-head">

@@ -3,6 +3,7 @@ import { ArrowLeft, Check, LogOut, ArrowRightLeft, DoorOpen, CreditCard } from '
 import { updateMe, logoutAll, leaveWorkspace, switchWorkspace } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Avatar, Badge } from '../whybase/ui.jsx'
+import PageHeader from '../whybase/PageHeader.jsx'
 
 // Personal account & profile — distinct from workspace Settings (which manages
 // other people). Identity, password, the workspaces you belong to, and sessions.
@@ -97,9 +98,11 @@ export default function Account({ user, onAuthChanged, onNavigate, onBack }) {
           <ArrowLeft size={14} strokeWidth={1.8} /> Back
         </button>
       )}
-      <div className="eyebrow">Account</div>
-      <h1 className="page-h1">Your account</h1>
-      <p className="page-lede">Manage your profile, password, and the workspaces you belong to.</p>
+      <PageHeader
+        kicker="Account"
+        title={<>Your profile, your <em>workspaces</em>.</>}
+        lede="Manage your profile, password, and the workspaces you belong to."
+      />
 
       <section className="settings-section wb-reveal" style={{ '--i': 1 }}>
         <h3>Profile</h3>
