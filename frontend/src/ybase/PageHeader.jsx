@@ -1,10 +1,10 @@
 import React from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { staggerContainer, fadeUp } from './motionPresets.js'
-import whybaseMark from '../assets/whybase-mark.svg'
+import ybaseMark from '../assets/ybase-mark.svg'
 import './pageheader.css'
 
-// The WhyBase branded page header — a band with the node mark, a mono kicker,
+// The YBase branded page header — a band with the node mark, a mono kicker,
 // a display title, a lede, and an actions slot, over a soft indigo wash.
 // Shared by every page so headers read as one brand. Self-contained for
 // reduced motion, so it's a drop-in on any view (no MotionConfig required).
@@ -22,7 +22,7 @@ export default function PageHeader({ kicker, title, lede, actions, align = 'left
         <div className="ph-lead">
           {kicker && (
             <motion.div className="ph-kicker" variants={fadeUp}>
-              <img src={whybaseMark} alt="" className="ph-mark" width="22" height="22" />
+              <img src={ybaseMark} alt="" className="ph-mark" width="22" height="22" />
               <span>{kicker}</span>
             </motion.div>
           )}

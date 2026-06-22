@@ -94,7 +94,7 @@ FORMATION_SCHEMA: Dict[str, Any] = {
     "required": ["context_summary", "decisions", "entities", "questions"],
 }
 
-FORMATION_SYSTEM = """You are the memory-formation engine of a company's "second brain" — an \
+FORMATION_SYSTEM = """You are the memory-formation engine of a company's "YBase" — an \
 institutional memory layer over Slack, Notion, GitHub, Jira and meeting notes.
 
 Given a newly ingested document (split into indexed chunks) and a digest of the EXISTING \

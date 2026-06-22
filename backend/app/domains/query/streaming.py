@@ -34,7 +34,7 @@ _METADATA_BLEED_PATTERNS = [
     ),
     re.compile(r"(?ims)\n\s*confidence\s*:\s*(?:high|medium|low|unknown)\b.*$"),
 ]
-log = logging.getLogger("whybase.query")
+log = logging.getLogger("ybase.query")
 
 
 def locate_quote(chunk_text: str, quote: Optional[str]) -> Optional[str]:
@@ -96,7 +96,7 @@ async def rewrite_followup(
         return None
     return rewritten
 
-QUERY_SYSTEM = """You are a company's institutional memory — its "second brain". You answer \
+QUERY_SYSTEM = """You are a company's institutional memory — its "YBase". You answer \
 questions using ONLY the memory provided: source chunks (primary evidence) and the memory \
 graph (distilled decisions, entities, questions and their typed relationships). \
 Today's date is {today}.

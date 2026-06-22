@@ -14,7 +14,7 @@ ANY real corpus, so it works on freshly-ingested GitHub/Notion data:
 Every answer is printed so the heuristic grade can be spot-checked.
 
 Usage:
-    export WHYBASE_EMAIL=benchmark@test.local WHYBASE_PASSWORD=...
+    export YBASE_EMAIL=benchmark@test.local YBASE_PASSWORD=...
     backend/.venv/bin/python scripts/benchmark_answers.py
 """
 

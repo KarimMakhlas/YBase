@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core import config, db
 
-log = logging.getLogger("whybase.slack")
+log = logging.getLogger("ybase.slack")
 
 _MENTION_RE = re.compile(r"<@([A-Z0-9]+)>")
 _LINK_RE = re.compile(r"<(https?://[^|>]+)\|([^>]+)>")

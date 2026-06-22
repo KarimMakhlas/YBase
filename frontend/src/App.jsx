@@ -34,7 +34,7 @@ import BillingBanner from './components/BillingBanner.jsx'
 import Account from './components/Account.jsx'
 import { ToastProvider } from './components/Toast.jsx'
 import { getBootstrapStatus, getMe, getOnboarding, getBillingStatus, logout } from './api.js'
-import whybaseMark from './assets/whybase-mark.svg'
+import ybaseMark from './assets/ybase-mark.svg'
 
 // The product surface, as a grouped left-sidebar nav (Linear-style). `section`
 // places an item under a heading; the first two items sit above all sections.
@@ -308,7 +308,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    document.title = LABELS[tab] ? `WhyBase — ${LABELS[tab]}` : 'WhyBase'
+    document.title = LABELS[tab] ? `YBase — ${LABELS[tab]}` : 'YBase'
   }, [tab])
 
   // Setup-checklist + billing state, refetched whenever the active workspace changes.
@@ -515,8 +515,8 @@ export default function App() {
         <aside className="app-sidebar">
           <div className="sidebar-top">
             <div className="app-brand">
-              <img src={whybaseMark} alt="" width="24" height="24" />
-              <span>WhyBase</span>
+              <img src={ybaseMark} alt="" width="24" height="24" />
+              <span>YBase</span>
             </div>
             <button
               className="nav-toggle"

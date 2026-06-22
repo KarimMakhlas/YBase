@@ -1,5 +1,5 @@
 /* ============================================================
-   WhyBase — Sources (connection health dashboard)
+   YBase — Sources (connection health dashboard)
    Scoped under .wb-sources. Motion = Framer Motion; the health
    ring = Recharts (lazy). Reuses global .source-alert / .wb-check.
    Full-width, single adaptive stage — no wasted master rail.

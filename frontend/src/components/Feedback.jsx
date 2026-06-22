@@ -3,8 +3,8 @@ import { Quote } from 'lucide-react'
 import { getAnswerFeedback, listAnswerFeedback, patchAnswerFeedback } from '../api.js'
 import { formatDateTime as fmt } from '../format.js'
 import { useToast } from './Toast.jsx'
-import { Badge } from '../whybase/ui.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
+import { Badge } from '../ybase/ui.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
 
 const STATUS_OPTIONS = [
   ['open', 'Open'],

@@ -2,8 +2,8 @@ import React, { useState } from 'react'
 import { ArrowLeft, Check, LogOut, ArrowRightLeft, DoorOpen, CreditCard } from 'lucide-react'
 import { updateMe, logoutAll, leaveWorkspace, switchWorkspace } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { Avatar, Badge } from '../whybase/ui.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
+import { Avatar, Badge } from '../ybase/ui.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
 
 // Personal account & profile — distinct from workspace Settings (which manages
 // other people). Identity, password, the workspaces you belong to, and sessions.

@@ -23,7 +23,7 @@ _load_dotenv()
 # Postgres (pgvector). Default matches docker-compose.yml (host port 5433).
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://whybase:whybase@localhost:5433/whybase",
+    "postgresql://ybase:ybase@localhost:5433/ybase",
 )
 
 # Browser/API security. In production, set CORS_ORIGINS to the exact frontend

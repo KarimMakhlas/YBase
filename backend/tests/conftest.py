@@ -1,11 +1,11 @@
-"""Test setup: dedicated whybase_test database on the same pgvector
+"""Test setup: dedicated ybase_test database on the same pgvector
 container, deterministic local hash embeddings (no Ollama/Voyage needed)."""
 
 import os
 
 # Must run before any `app.*` import — config reads env at import time.
 os.environ["DATABASE_URL"] = (
-    "postgresql://whybase:whybase@localhost:5433/whybase_test"
+    "postgresql://ybase:ybase@localhost:5433/ybase_test"
 )
 os.environ["EMBED_PROVIDER"] = "local"
 # Keep signup fast/deterministic — don't kick off background demo seeding.
@@ -22,7 +22,7 @@ import pytest  # noqa: E402
 from app.core import db  # noqa: E402
 import app.providers.embeddings as embeddings  # noqa: E402
 
-_ADMIN_URL = "postgresql://whybase:whybase@localhost:5433/postgres"
+_ADMIN_URL = "postgresql://ybase:ybase@localhost:5433/postgres"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -30,10 +30,10 @@ def _create_test_db():
     async def go():
         conn = await asyncpg.connect(_ADMIN_URL)
         exists = await conn.fetchval(
-            "SELECT 1 FROM pg_database WHERE datname='whybase_test'"
+            "SELECT 1 FROM pg_database WHERE datname='ybase_test'"
         )
         if not exists:
-            await conn.execute("CREATE DATABASE whybase_test")
+            await conn.execute("CREATE DATABASE ybase_test")
         await conn.close()
 
     asyncio.run(go())

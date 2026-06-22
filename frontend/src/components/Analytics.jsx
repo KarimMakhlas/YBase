@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { Check, Minus, X } from 'lucide-react'
 import { getAnalyticsOverview, getMemoryQuality } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { Badge } from '../whybase/ui.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
+import { Badge } from '../ybase/ui.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
 
 const RANGES = [7, 30, 90]
 const CHECK_ICON = {

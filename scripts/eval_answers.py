@@ -12,7 +12,7 @@ Grading is a deterministic keyword + citation heuristic, so it's a gate, not a
 judge — every full answer is printed so you can spot-check alongside the score.
 
 Usage:
-    export WHYBASE_EMAIL=owner@team.com WHYBASE_PASSWORD=...
+    export YBASE_EMAIL=owner@team.com YBASE_PASSWORD=...
     backend/.venv/bin/python scripts/eval_answers.py --seed   # ingest corpus first
     backend/.venv/bin/python scripts/eval_answers.py          # score only
 """

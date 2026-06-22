@@ -16,11 +16,11 @@ benchmark used the canonical `calcom/cal.diy`.
 ## How to reproduce
 
 ```bash
-cd whybase
+cd ybase
 # backend + Postgres + Ollama must be running
 
 # 1. Create an isolated test workspace (public signup), or use your own admin login.
-export WHYBASE_EMAIL=you@example.com WHYBASE_PASSWORD=...
+export YBASE_EMAIL=you@example.com YBASE_PASSWORD=...
 
 # 2. Ingest ~30 real issues/PRs (set GITHUB_TOKEN for faster fetch)
 backend/.venv/bin/python scripts/fetch_calcom_github.py --repo calcom/cal.diy --days 365 --limit 30

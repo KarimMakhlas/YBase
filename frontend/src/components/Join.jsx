@@ -48,7 +48,7 @@ export default function Join({ token, onJoined, onCancel }) {
     return (
       <div className="auth-page">
         <div className="auth-card">
-          <div className="auth-mark">WhyBase</div>
+          <div className="auth-mark">YBase</div>
           <h1>Invite unavailable</h1>
           <p>{msg}</p>
           <button type="button" onClick={onCancel}>Go to sign in</button>
@@ -60,7 +60,7 @@ export default function Join({ token, onJoined, onCancel }) {
   return (
     <div className="auth-page">
       <form className="auth-card" onSubmit={submit}>
-        <div className="auth-mark">WhyBase</div>
+        <div className="auth-mark">YBase</div>
         <h1>Join {preview.workspace_name}</h1>
         <p>
           You’ve been invited as <strong>{preview.role}</strong>. Create your account to join,

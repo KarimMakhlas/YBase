@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import a Slack workspace export into Whybase.
+"""Import a Slack workspace export into YBase.
 
 Point this at an unzipped Slack export directory (Workspace Settings →
 Import/Export Data → Export). Threads become documents (they're the natural
@@ -25,9 +25,9 @@ from pathlib import Path
 
 import httpx
 
-BASE = os.environ.get("WHYBASE_API", "http://localhost:8100")
-AUTH_EMAIL = os.environ.get("WHYBASE_EMAIL")
-AUTH_PASSWORD = os.environ.get("WHYBASE_PASSWORD")
+BASE = os.environ.get("YBASE_API", "http://localhost:8100")
+AUTH_EMAIL = os.environ.get("YBASE_EMAIL")
+AUTH_PASSWORD = os.environ.get("YBASE_PASSWORD")
 FORMATION_DEADLINE = 600  # local models form memory slowly
 
 SKIP_SUBTYPES = {
@@ -139,7 +139,7 @@ def ingest(docs: list, wait: bool) -> None:
     with httpx.Client(timeout=60) as cx:
         if not AUTH_EMAIL or not AUTH_PASSWORD:
             print(f"{RED}Authenticated API required.{RESET}")
-            print("Set WHYBASE_EMAIL and WHYBASE_PASSWORD for an owner/admin user.")
+            print("Set YBASE_EMAIL and YBASE_PASSWORD for an owner/admin user.")
             sys.exit(1)
         login = cx.post(f"{BASE}/api/auth/login", json={
             "email": AUTH_EMAIL,
@@ -175,7 +175,7 @@ def ingest(docs: list, wait: bool) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Import a Slack export into Whybase")
+    ap = argparse.ArgumentParser(description="Import a Slack export into YBase")
     ap.add_argument("export_dir", type=Path)
     ap.add_argument("--channel", action="append", help="only these channels (repeatable)")
     ap.add_argument("--since", help="only messages on/after this date (YYYY-MM-DD)")

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Whybase - Code Workflow Diagrams</title>
+  <title>YBase - Code Workflow Diagrams</title>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <style>
     body {
@@ -290,7 +290,7 @@
   <header class="site-header">
     <div class="header-row">
       <div class="title-block">
-        <h1>Whybase - Code Workflow Diagrams</h1>
+        <h1>YBase - Code Workflow Diagrams</h1>
         <p>Generated from the current codebase. No business-model or future-pricing diagrams, only implemented code paths and explicit maintenance workflows.</p>
       </div>
       <div class="header-actions">
@@ -326,7 +326,7 @@
         description: "What app.main does at process startup and shutdown: schema init, stuck-job recovery, worker startup, middleware, routers, and optional static UI mount.",
         code: `flowchart TB
   Uvicorn["uvicorn app.main:app"] --> SetupLogs["setup_logging"]
-  SetupLogs --> App["FastAPI app<br/>Whybase for Teams"]
+  SetupLogs --> App["FastAPI app<br/>YBase for Teams"]
   App --> Middleware["CORSMiddleware<br/>RequestContextMiddleware<br/>SecurityHeadersMiddleware"]
   App --> Routers["include routers<br/>auth sources memory_review routes/*"]
   App --> Lifespan["lifespan startup"]
@@ -1090,7 +1090,7 @@
         title: "Tests, CI, and Maintenance Scripts",
         description: "The verification and maintenance code paths that are present in the repository.",
         code: `flowchart TB
-  Tests["pytest backend/tests"] --> Conftest["conftest.py<br/>whybase_test DB<br/>EMBED_PROVIDER local"]
+  Tests["pytest backend/tests"] --> Conftest["conftest.py<br/>ybase_test DB<br/>EMBED_PROVIDER local"]
   Conftest --> Schema["db.init_schema"]
   Schema --> Clean[("truncate docs chunks graph slack chat per test")]
   Tests --> API["test_api_endpoints<br/>bootstrap login logout<br/>protected ingest SSE rate limit"]
