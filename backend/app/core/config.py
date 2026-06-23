@@ -53,6 +53,13 @@ SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "false").lower() in (
 )
 SESSION_DAYS = int(os.getenv("SESSION_DAYS", "14"))
 PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "12"))
+# Trusted real-client-IP header set by the platform's proxy (NOT forwardable by
+# the client), used for rate-limit keying and session records. Set this in
+# production to the header your host injects: "fly-client-ip" on Fly,
+# "cf-connecting-ip" behind Cloudflare, "true-client-ip" on some CDNs. When
+# empty, the rightmost X-Forwarded-For entry is used (correct for a single
+# trusted proxy), falling back to the direct socket peer.
+REAL_IP_HEADER = os.getenv("REAL_IP_HEADER", "")
 
 # Public self-serve signup. When true (cloud/public beta) anyone can create a
 # new workspace at /api/auth/register. Set false for single-tenant self-hosted
@@ -221,6 +228,13 @@ GITHUB_MAX_ITEMS_PER_REPO = int(os.getenv("GITHUB_MAX_ITEMS_PER_REPO", "300"))
 # Secret used to encrypt connector tokens at rest. Set to a long random value
 # in production. If empty, Slack/Jira OAuth install is disabled.
 CONNECTOR_SECRET_KEY = os.getenv("CONNECTOR_SECRET_KEY", "")
+# Previous CONNECTOR_SECRET_KEYs, comma-separated, kept temporarily during a key
+# rotation so tokens encrypted with them still decrypt. Set the new key in
+# CONNECTOR_SECRET_KEY, move the old one here, run scripts/rotate_connector_key.py
+# to re-encrypt everything with the new key, then clear this.
+CONNECTOR_SECRET_KEYS_OLD = [
+    k.strip() for k in os.getenv("CONNECTOR_SECRET_KEYS_OLD", "").split(",") if k.strip()
+]
 
 # Billing: length of the no-credit-card free trial for new workspaces (days).
 TRIAL_DAYS = int(os.getenv("TRIAL_DAYS", "7"))

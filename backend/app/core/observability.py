@@ -8,6 +8,8 @@ import logging
 import time
 import uuid
 
+from . import config
+
 log = logging.getLogger("ybase.http")
 
 request_id_var = contextvars.ContextVar("request_id", default="-")

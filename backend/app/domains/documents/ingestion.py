@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from app.core import db
-from app.providers.embeddings import embed_texts, to_pgvector
+from app.providers.embeddings import active_embed_model, embed_texts, to_pgvector
 from ..memory import worker
 
 
@@ -90,6 +90,7 @@ async def ingest_document(req: IngestRequest, workspace_id: int) -> Tuple[int, b
 
     pieces = chunk_text(req.text)
     embeddings = await embed_texts(pieces)
+    embed_model = await active_embed_model()  # record provenance per chunk
     async with pool.acquire() as conn:
         async with conn.transaction():
             doc_id = await conn.fetchval(
@@ -102,9 +103,9 @@ async def ingest_document(req: IngestRequest, workspace_id: int) -> Tuple[int, b
             )
             for i, (piece, emb) in enumerate(zip(pieces, embeddings)):
                 await conn.execute(
-                    "INSERT INTO chunks(document_id, chunk_index, text, embedding) "
-                    "VALUES($1, $2, $3, $4::vector)",
-                    doc_id, i, piece, to_pgvector(emb),
+                    "INSERT INTO chunks(document_id, chunk_index, text, embedding, embed_model) "
+                    "VALUES($1, $2, $3, $4::vector, $5)",
+                    doc_id, i, piece, to_pgvector(emb), embed_model,
                 )
     await schedule_formation(doc_id)
     return doc_id, False

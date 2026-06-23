@@ -123,9 +123,21 @@ def _reset_path(token: str) -> str:
 
 
 def _client_ip(request: Request) -> str:
+    # A platform-injected real-client-IP header (fly-client-ip, cf-connecting-ip,
+    # …) is the only value the client cannot forge, so prefer it when configured.
+    if config.REAL_IP_HEADER:
+        real = request.headers.get(config.REAL_IP_HEADER)
+        if real:
+            return real.strip()
+    # Otherwise trust the RIGHTMOST X-Forwarded-For entry: with a single trusted
+    # proxy in front (the typical PaaS setup) that is the IP the proxy actually
+    # observed. The leftmost entries are client-supplied and spoofable — taking
+    # the first one (the old behaviour) let an attacker forge their rate-limit key.
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
     return request.client.host if request.client else ""
 
 

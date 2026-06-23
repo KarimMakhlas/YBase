@@ -76,6 +76,21 @@ async def active_embedder() -> str:
     return _provider
 
 
+async def active_embed_model() -> str:
+    """Stable identifier for the model that produced an embedding, stored per
+    chunk (chunks.embed_model) so a future provider/model/dimension change can
+    find what needs re-embedding. The dimension is included because that is what
+    the schema's vector(N) column locks in."""
+    provider = await active_embedder()
+    if provider == "voyage":
+        name = "voyage-3-lite"
+    elif provider == "ollama":
+        name = config.OLLAMA_EMBED_MODEL
+    else:
+        name = "local-hash"
+    return f"{provider}:{name}:{config.EMBED_DIM}"
+
+
 async def _voyage_embed(texts: List[str], kind: str) -> List[List[float]]:
     async with httpx.AsyncClient(timeout=60) as cx:
         r = await cx.post(
