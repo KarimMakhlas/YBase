@@ -1,5 +1,7 @@
 """Ingestion dedup and the formation job queue's state machine."""
 
+import asyncio
+
 from app.core import config
 from app.domains.documents.ingestion import IngestRequest, ingest_document
 from app.domains.memory import worker
@@ -92,6 +94,67 @@ async def test_worker_failure_backs_off_then_fails_permanently(pool, workspace_i
         else:
             assert row["formation_status"] == "failed"
             assert "boom" in row["formation_error"]
+
+
+async def test_run_one_times_out_hung_formation(pool, workspace_id, monkeypatch):
+    """A formation call that hangs must not pin the worker forever: _run_one
+    bounds it with FORMATION_TASK_TIMEOUT_S and records a normal failure so the
+    document backs off instead of retrying hot."""
+    doc_id, _ = await ingest_document(_req(), workspace_id=workspace_id)
+    await worker._claim()  # mark 'processing', as the loop does before _run_one
+
+    async def _hang(_doc_id):
+        await asyncio.sleep(30)  # far longer than the timeout below
+
+    # _form_and_consolidate imports run_formation lazily, so patching the module
+    # attribute is enough.
+    monkeypatch.setattr("app.domains.memory.formation.run_formation", _hang)
+    monkeypatch.setattr(config, "FORMATION_TASK_TIMEOUT_S", 0.2)
+
+    await asyncio.wait_for(worker._run_one(doc_id), timeout=5)  # must return, not hang
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT formation_status, formation_attempts, formation_error "
+            "FROM documents WHERE id=$1", doc_id)
+    assert row["formation_attempts"] == 1
+    assert "timed out" in row["formation_error"]
+    assert row["formation_status"] == "pending"  # first failure → backoff, not 'failed'
+
+
+async def test_formation_health_reports_queue(pool, workspace_id):
+    await ingest_document(_req(), workspace_id=workspace_id)
+    health = await worker.formation_health()
+    assert health["pending"] == 1
+    assert health["workers"] == 0           # worker loop isn't started in tests
+    assert health["stalled"] is False       # never "stalled" without live workers
+    assert health["oldest_pending_age_s"] is not None
+    assert health["last_success_age_s"] is None
+    worker._mark_success()
+    assert (await worker.formation_health())["last_success_age_s"] is not None
+
+
+async def test_formation_health_flags_stalled_queue(pool, workspace_id, monkeypatch):
+    """Pending work + a live worker + nothing completing for a long time = stalled."""
+    from datetime import datetime, timedelta, timezone
+
+    await ingest_document(_req(), workspace_id=workspace_id)
+
+    async def _idle():
+        await asyncio.sleep(30)
+
+    task = asyncio.ensure_future(_idle())  # a worker that exists but isn't finishing
+    monkeypatch.setattr(worker, "_tasks", [task])
+    monkeypatch.setattr(
+        worker, "_last_success_at",
+        datetime.now(timezone.utc) - timedelta(seconds=config.FORMATION_STALL_S + 100),
+    )
+    try:
+        health = await worker.formation_health()
+        assert health["workers"] == 1
+        assert health["stalled"] is True
+    finally:
+        task.cancel()
 
 
 async def test_record_failure_on_deleted_doc_is_safe(pool, workspace_id):

@@ -19,7 +19,7 @@ import asyncio  # noqa: E402
 import asyncpg  # noqa: E402
 import pytest  # noqa: E402
 
-from app.core import db  # noqa: E402
+from app.core import db, migrate  # noqa: E402
 import app.providers.embeddings as embeddings  # noqa: E402
 
 _ADMIN_URL = "postgresql://ybase:ybase@localhost:5433/postgres"
@@ -50,7 +50,7 @@ def _pin_local_embeddings():
 async def pool():
     """Fresh pool per test (avoids event-loop reuse pitfalls) on a clean DB."""
     p = await db.get_pool()
-    await db.init_schema()
+    await migrate.run()
     async with p.acquire() as conn:
         await conn.execute(
             "TRUNCATE answer_feedback, sync_jobs, source_streams, source_connections, "
@@ -64,7 +64,17 @@ async def pool():
 
 @pytest.fixture
 async def workspace_id(pool):
+    # Self-contained: create the default workspace if it isn't there yet. The
+    # pool fixture's TRUNCATE deliberately spares `workspaces`, so this persists
+    # across tests — but the suite must not depend on a row left over from a
+    # previous run (that made tests pass only on a reused database).
     async with pool.acquire() as conn:
-        return await conn.fetchval(
+        ws = await conn.fetchval(
             "SELECT id FROM workspaces WHERE lower(slug)='default'"
         )
+        if ws is None:
+            ws = await conn.fetchval(
+                "INSERT INTO workspaces(name, slug) VALUES('Default', 'default') "
+                "RETURNING id"
+            )
+        return ws

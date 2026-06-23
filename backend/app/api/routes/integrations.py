@@ -6,6 +6,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core import config
+from app.core.ratelimit import slack_events_limiter
 from app.domains.connectors.slack import events as slack
 
 router = APIRouter(prefix="/api", tags=["integrations"])
@@ -27,9 +28,15 @@ async def slack_events(request: Request) -> Dict[str, Any]:
     if payload.get("type") == "url_verification":
         return {"challenge": payload.get("challenge", "")}
     if payload.get("type") == "event_callback":
+        team_id = payload.get("team_id") or payload.get("team")
+        # Per-team budget: drop quietly (200) when a workspace floods us, so one
+        # noisy tenant can't exhaust the DB pool for everyone. Slack treats 200
+        # as delivered and won't retry; a 429 would.
+        if not slack_events_limiter.allow(team_id or "unknown"):
+            return {"ok": True, "throttled": True}
         stored = await slack.store_event(
             payload.get("event") or {},
-            team_id=payload.get("team_id") or payload.get("team"),
+            team_id=team_id,
         )
         return {"ok": True, "stored": stored}
     return {"ok": True}

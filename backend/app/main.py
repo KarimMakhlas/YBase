@@ -6,20 +6,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .api.router import api_router
-from .core import config, db
+from .core import config, db, migrate
 from .domains.memory import worker
 from .core.observability import (
     RequestContextMiddleware,
     SecurityHeadersMiddleware,
     setup_logging,
+    setup_sentry,
 )
 
 setup_logging()
+setup_sentry()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await db.init_schema()
+    await migrate.run()
     await worker.recover_stuck()
     worker.start()
     yield

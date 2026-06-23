@@ -43,3 +43,7 @@ query_limiter = SlidingWindowLimiter(config.QUERY_RATE_PER_MINUTE)
 ingest_limiter = SlidingWindowLimiter(config.INGEST_RATE_PER_MINUTE)
 # Keyed by client IP (not user) — these guard the unauthenticated auth routes.
 auth_limiter = SlidingWindowLimiter(config.AUTH_RATE_PER_MINUTE)
+# Keyed by Slack team id — guards the inbound Events webhook. Callers use
+# .allow() and drop over-budget events (HTTP 200), never 429: a 429 just makes
+# Slack retry and amplifies the flood.
+slack_events_limiter = SlidingWindowLimiter(config.SLACK_EVENTS_RATE_PER_MINUTE)

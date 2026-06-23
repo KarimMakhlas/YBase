@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import httpx
 
-from app.core import db
+from app.core import db, migrate
 from app.domains.auth import service as auth
 from app.main import app
 
@@ -56,7 +56,7 @@ async def test_bootstrap_login_logout_cookie_flow(pool):
             "TRUNCATE answer_feedback, auth_sessions, workspace_memberships, users, "
             "workspaces, audit_events, auth_login_attempts RESTART IDENTITY CASCADE"
         )
-    await db.init_schema()
+    await migrate.run()
 
     async with await _client() as client:
         status = await client.get("/api/auth/bootstrap-status")

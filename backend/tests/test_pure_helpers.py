@@ -305,3 +305,33 @@ def test_locate_quote_empty_inputs_return_none():
     assert locate_quote("some text", None) is None
     assert locate_quote("some text", "   ") is None
     assert locate_quote("", "text") is None
+
+
+# ---- rate limiting / structured logging ----
+
+def test_sliding_window_limiter_drops_over_budget_per_key():
+    from app.core.ratelimit import SlidingWindowLimiter
+    lim = SlidingWindowLimiter(max_events=3, window_s=60)
+    assert [lim.allow("team-a") for _ in range(3)] == [True, True, True]
+    assert lim.allow("team-a") is False        # 4th within the window is dropped
+    assert lim.allow("team-b") is True         # a different key is unaffected
+
+
+def test_sliding_window_limiter_zero_disables():
+    from app.core.ratelimit import SlidingWindowLimiter
+    lim = SlidingWindowLimiter(max_events=0)
+    assert all(lim.allow("k") for _ in range(1000))
+
+
+def test_json_log_formatter_emits_valid_json_with_request_id():
+    import json
+    import logging
+    from app.core.observability import _JsonFormatter
+    rec = logging.LogRecord("whybase.test", logging.INFO, __file__, 1,
+                            "hello %s", ("world",), None)
+    rec.request_id = "rid-123"
+    out = json.loads(_JsonFormatter().format(rec))
+    assert out["msg"] == "hello world"
+    assert out["request_id"] == "rid-123"
+    assert out["level"] == "INFO"
+    assert out["logger"] == "whybase.test"
