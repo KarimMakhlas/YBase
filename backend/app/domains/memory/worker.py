@@ -13,6 +13,7 @@ re-queues the in-flight document before propagating).
 import asyncio
 import logging
 import traceback
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.core import config, db
@@ -24,6 +25,15 @@ _wake: Optional[asyncio.Event] = None
 _claim_lock: Optional[asyncio.Lock] = None
 _claim_lock_loop: Optional[asyncio.AbstractEventLoop] = None
 _tasks: List[asyncio.Task] = []
+# Timestamp of the most recent successful formation. The health endpoint uses it
+# to tell a stalled queue (work pending + workers alive, nothing completing)
+# apart from a healthy busy one.
+_last_success_at: Optional[datetime] = None
+
+
+def _mark_success() -> None:
+    global _last_success_at
+    _last_success_at = datetime.now(timezone.utc)
 
 
 def _event() -> asyncio.Event:
@@ -108,6 +118,51 @@ async def queue_stats(workspace_id: Optional[int] = None) -> Dict[str, Any]:
     }
 
 
+async def formation_health() -> Dict[str, Any]:
+    """Instance-wide formation health for uptime monitors: queue depth, how long
+    the oldest pending document has waited, worker liveness, and seconds since
+    the last success. `stalled` is true when there is pending work and live
+    workers but nothing has completed recently — the signature of a wedged queue
+    (vs. a healthy busy one, which keeps completing jobs)."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        counts = await conn.fetch(
+            "SELECT formation_status, count(*) AS n FROM documents GROUP BY formation_status"
+        )
+        oldest_pending = await conn.fetchval(
+            "SELECT min(ingested_at) FROM documents WHERE formation_status='pending'"
+        )
+    by = {r["formation_status"]: r["n"] for r in counts}
+    pending = by.get("pending", 0)
+    now = datetime.now(timezone.utc)
+    oldest_age = (now - oldest_pending).total_seconds() if oldest_pending else None
+    last_success_age = (
+        (now - _last_success_at).total_seconds() if _last_success_at else None
+    )
+    workers = len([t for t in _tasks if not t.done()])
+    # Nothing has completed recently: either we've succeeded before and it was a
+    # while ago, or we've never succeeded and work has been waiting too long
+    # (avoids a false alarm on a freshly started instance mid-first-job).
+    nothing_completing = (
+        last_success_age is not None and last_success_age > config.FORMATION_STALL_S
+    ) or (
+        last_success_age is None
+        and oldest_age is not None
+        and oldest_age > config.FORMATION_STALL_S
+    )
+    stalled = bool(pending > 0 and workers > 0 and nothing_completing)
+    return {
+        "pending": pending,
+        "processing": by.get("processing", 0),
+        "complete": by.get("complete", 0),
+        "failed": by.get("failed", 0),
+        "oldest_pending_age_s": round(oldest_age) if oldest_age is not None else None,
+        "last_success_age_s": round(last_success_age) if last_success_age is not None else None,
+        "workers": workers,
+        "stalled": stalled,
+    }
+
+
 async def _claim() -> Optional[int]:
     """Claim the next due document whose workspace has nothing in flight.
     The in-process lock keeps two loops from racing past the NOT EXISTS check
@@ -167,24 +222,44 @@ async def _record_failure(doc_id: int, err: str) -> None:
             log.warning("doc %d attempt %d failed, retrying in %ds", doc_id, attempts, backoff)
 
 
-async def _run_one(doc_id: int) -> None:
+async def _form_and_consolidate(doc_id: int, timer: StageTimer) -> None:
+    """The actual formation work for one document: extract memory, then
+    consolidate near-duplicate decisions in its workspace. Split out from
+    _run_one so it can be wrapped in a single timeout."""
     from . import consolidate
     from .formation import run_formation
 
+    await run_formation(doc_id)
+    timer.lap("formation")
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        workspace_id = await conn.fetchval(
+            "SELECT workspace_id FROM documents WHERE id=$1", doc_id
+        )
+    merged = await consolidate.merge_similar_decisions(workspace_id) if workspace_id else []
+    timer.lap("consolidation")
+    if merged:
+        log.info("consolidation merged %d duplicate decisions", len(merged))
+
+
+async def _run_one(doc_id: int) -> None:
     timer = StageTimer()
     try:
-        await run_formation(doc_id)
-        timer.lap("formation")
-        pool = await db.get_pool()
-        async with pool.acquire() as conn:
-            workspace_id = await conn.fetchval(
-                "SELECT workspace_id FROM documents WHERE id=$1", doc_id
-            )
-        merged = await consolidate.merge_similar_decisions(workspace_id) if workspace_id else []
-        timer.lap("consolidation")
-        if merged:
-            log.info("consolidation merged %d duplicate decisions", len(merged))
+        await asyncio.wait_for(
+            _form_and_consolidate(doc_id, timer),
+            timeout=config.FORMATION_TASK_TIMEOUT_S,
+        )
+        _mark_success()
         log.info("doc %d formation complete timings %s", doc_id, timer.line())
+    except asyncio.TimeoutError:
+        # A hung LLM/DB call would otherwise pin this worker slot indefinitely;
+        # with only a few slots shared across the whole instance, a handful of
+        # hangs freeze the queue. Bound the job and record a failure so it backs
+        # off and eventually lands in 'failed' rather than retrying hot forever.
+        log.error("doc %d formation timed out after %ss",
+                  doc_id, config.FORMATION_TASK_TIMEOUT_S)
+        await _record_failure(
+            doc_id, f"formation timed out after {config.FORMATION_TASK_TIMEOUT_S}s")
     except asyncio.CancelledError:
         await _release(doc_id)  # shutdown mid-formation: back to pending
         raise

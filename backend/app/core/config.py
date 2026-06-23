@@ -80,6 +80,21 @@ INGEST_RATE_PER_MINUTE = int(os.getenv("INGEST_RATE_PER_MINUTE", "120"))
 # forgot / reset), events per minute. 0 disables.
 AUTH_RATE_PER_MINUTE = int(os.getenv("AUTH_RATE_PER_MINUTE", "10"))
 
+# ── Observability & ops ─────────────────────────────────────────────────────
+# Error tracking (Sentry). Empty DSN disables it entirely (local / dev /
+# self-host installs are unaffected).
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "production")
+# Performance-trace sample rate. 0.0 = capture errors only (no tracing
+# overhead or extra event volume); raise toward 1.0 to sample request traces.
+SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0"))
+# Log output: "text" (human-readable, default) or "json" (one JSON object per
+# line, for log aggregators / queryable production logs).
+LOG_FORMAT = os.getenv("LOG_FORMAT", "text")
+# Optional shared secret guarding /api/health/formation for external uptime
+# monitors. Empty = open, like /api/health.
+HEALTH_TOKEN = os.getenv("HEALTH_TOKEN", "")
+
 # Claude — memory formation, query reasoning, answer synthesis.
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-fable-5")
 
@@ -123,7 +138,22 @@ FORMATION_CONCURRENCY = int(os.getenv("FORMATION_CONCURRENCY", "0"))
 # Bounded attempts with exponential backoff instead of blind in-call retries.
 FORMATION_MAX_ATTEMPTS = int(os.getenv("FORMATION_MAX_ATTEMPTS", "3"))
 FORMATION_BACKOFF_S = int(os.getenv("FORMATION_BACKOFF_S", "60"))
-FORMATION_READ_TIMEOUT_S = float(os.getenv("FORMATION_READ_TIMEOUT_S", "900"))
+# Read timeout on a single LLM call during formation. 5 min is generous for a
+# hosted model; a call slower than this is almost always a hang, not real work.
+# Self-hosters on slow local Ollama hardware may need to raise this (and the
+# task timeout below).
+FORMATION_READ_TIMEOUT_S = float(os.getenv("FORMATION_READ_TIMEOUT_S", "300"))
+# Hard ceiling on the whole per-document formation job (extraction +
+# consolidation), enforced by the worker. Without it a hung call pins a worker
+# slot indefinitely and, since all formation for the instance shares a small
+# pool of slots, a few hangs freeze the queue. Must exceed FORMATION_READ_TIMEOUT_S
+# so a legitimately slow LLM read finishes before the job is killed.
+FORMATION_TASK_TIMEOUT_S = float(os.getenv("FORMATION_TASK_TIMEOUT_S", "420"))
+# /api/health/formation reports the queue "stalled" when documents are pending
+# and workers are alive but nothing has completed in this many seconds. Set
+# above FORMATION_TASK_TIMEOUT_S so a healthy-but-busy queue still completes a
+# job within the window and never trips the alarm.
+FORMATION_STALL_S = int(os.getenv("FORMATION_STALL_S", "600"))
 
 # Post-formation consolidation: decisions whose label+summary embed this close
 # are treated as the same decision and merged.
@@ -164,6 +194,11 @@ SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
 SLACK_REDIRECT_BASE_URL = os.getenv("SLACK_REDIRECT_BASE_URL", "http://localhost:8100")
 SLACK_THREAD_QUIET_S = int(os.getenv("SLACK_THREAD_QUIET_S", "600"))
 SLACK_MIN_THREAD_CHARS = int(os.getenv("SLACK_MIN_THREAD_CHARS", "200"))
+# Per-team budget on the inbound Events webhook so one busy or abusive workspace
+# can't flood the endpoint and exhaust the DB pool for every tenant. Over budget
+# the event is dropped (HTTP 200) — returning 429 would only trigger Slack's
+# aggressive retries. 0 disables.
+SLACK_EVENTS_RATE_PER_MINUTE = int(os.getenv("SLACK_EVENTS_RATE_PER_MINUTE", "600"))
 
 # Jira (Atlassian) OAuth 3LO. Register an app at developer.atlassian.com with
 # the read:jira-work, read:jira-user, and offline_access scopes. Empty client

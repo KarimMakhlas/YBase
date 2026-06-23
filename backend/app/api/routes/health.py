@@ -1,6 +1,6 @@
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.core import config, db
 from app.domains.auth import service as auth
@@ -21,6 +21,18 @@ async def health() -> Dict[str, Any]:
         "db": ok == 1,
         "needs_bootstrap": await auth.bootstrap_needed(),
     }
+
+
+@router.get("/health/formation")
+async def health_formation(request: Request) -> Dict[str, Any]:
+    """Formation-queue health for external uptime monitors. Open by default
+    (like /api/health); set HEALTH_TOKEN to require a matching token via the
+    x-health-token header or ?token= query param."""
+    if config.HEALTH_TOKEN:
+        token = request.headers.get("x-health-token") or request.query_params.get("token")
+        if token != config.HEALTH_TOKEN:
+            raise HTTPException(401, "bad health token")
+    return await worker.formation_health()
 
 
 @router.get("/health/details")

@@ -6,3 +6,4 @@ httpx>=0.27
 pydantic>=2.6
 argon2-cffi>=23.1
 cryptography>=42
+sentry-sdk>=2.0

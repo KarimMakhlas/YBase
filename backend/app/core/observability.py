@@ -3,9 +3,12 @@ logs method/path/status/duration, and pipeline stages (query, formation) log
 their timings. Pure-ASGI middleware so SSE streaming stays unbuffered."""
 
 import contextvars
+import json
 import logging
 import time
 import uuid
+
+from . import config
 
 log = logging.getLogger("whybase.http")
 
@@ -18,15 +21,57 @@ class _RequestIdFilter(logging.Filter):
         return True
 
 
+class _JsonFormatter(logging.Formatter):
+    """One JSON object per log line. Dependency-free (no python-json-logger) to
+    keep with the project's minimal-deps style. request_id is attached by
+    _RequestIdFilter before formatting."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "request_id": getattr(record, "request_id", "-"),
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        return json.dumps(payload, default=str)
+
+
 def setup_logging(level: int = logging.INFO) -> None:
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s"
-    ))
+    if config.LOG_FORMAT == "json":
+        handler.setFormatter(_JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s"
+        ))
     handler.addFilter(_RequestIdFilter())
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level)
+
+
+def setup_sentry() -> None:
+    """Initialise Sentry error tracking when SENTRY_DSN is set; a no-op
+    otherwise, so dev and self-hosted installs without a DSN are unaffected.
+    Sentry auto-instruments FastAPI and captures logging errors as events, so
+    the worker's log.exception calls reach it too."""
+    if not config.SENTRY_DSN:
+        return
+    try:
+        import sentry_sdk
+    except ImportError:
+        log.warning("SENTRY_DSN is set but sentry-sdk is not installed; skipping")
+        return
+    sentry_sdk.init(
+        dsn=config.SENTRY_DSN,
+        environment=config.SENTRY_ENVIRONMENT,
+        traces_sample_rate=config.SENTRY_TRACES_SAMPLE_RATE,
+        send_default_pii=False,  # don't ship user emails / IPs by default
+    )
+    log.info("Sentry error tracking enabled (environment=%s)", config.SENTRY_ENVIRONMENT)
 
 
 class StageTimer:
