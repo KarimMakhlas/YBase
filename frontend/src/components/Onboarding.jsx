@@ -152,7 +152,7 @@ export default function Onboarding({ user, onWorkspaceCreated, onFinish, onLogou
     <div className="auth-page">
       <div className="auth-card onb-card">
         <div className="onb-head">
-          <div className="auth-mark">WhyBase</div>
+          <div className="auth-mark">YBase</div>
           <button type="button" className="linkbtn" onClick={onLogout}>
             Log out
           </button>
@@ -196,7 +196,7 @@ export default function Onboarding({ user, onWorkspaceCreated, onFinish, onLogou
           <div className="onb-body">
             <h1>Invite your teammates</h1>
             <p>
-              WhyBase gets better with your team. Add emails (commas or new lines), or share an
+              YBase gets better with your team. Add emails (commas or new lines), or share an
               invite link. You can do this later, too.
             </p>
             <label className="field">
@@ -240,7 +240,7 @@ export default function Onboarding({ user, onWorkspaceCreated, onFinish, onLogou
           <div className="onb-body">
             <h1>Bring in your context</h1>
             <p>
-              Connect a tool so WhyBase remembers the decisions inside it — or load sample data to
+              Connect a tool so YBase remembers the decisions inside it — or load sample data to
               explore first.
             </p>
             <div className="onb-tiles">

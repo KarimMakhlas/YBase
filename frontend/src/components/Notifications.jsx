@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Bell } from 'lucide-react'
 import { getLatestDigest, listDigests, runDigest } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { StatusBadge } from '../whybase/ui.jsx'
+import { StatusBadge } from '../ybase/ui.jsx'
 
 const SEEN_KEY = 'sb:digestSeen'
 

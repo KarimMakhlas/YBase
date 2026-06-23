@@ -8,7 +8,7 @@
 # DATABASE_URL must point at a Postgres with the pgvector extension available
 # (recent Fly Postgres, Supabase, or Neon all qualify) — see DEPLOY.md.
 
-app = "whybase"
+app = "ybase"
 primary_region = "iad"
 
 [build]

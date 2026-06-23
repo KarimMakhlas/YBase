@@ -11,19 +11,19 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg16
         env:
-          POSTGRES_USER: whybase
-          POSTGRES_PASSWORD: whybase
-          POSTGRES_DB: whybase
+          POSTGRES_USER: ybase
+          POSTGRES_PASSWORD: ybase
+          POSTGRES_DB: ybase
         ports:
           - 5433:5432
         options: >-
-          --health-cmd "pg_isready -U whybase -d whybase"
+          --health-cmd "pg_isready -U ybase -d ybase"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
 
     env:
-      DATABASE_URL: postgresql://whybase:whybase@localhost:5433/whybase_test
+      DATABASE_URL: postgresql://ybase:ybase@localhost:5433/ybase_test
       EMBED_PROVIDER: local
       LLM_PROVIDER: ollama
 

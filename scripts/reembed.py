@@ -6,7 +6,7 @@ queries are embedded with the active provider, so stored chunk vectors must
 live in the same embedding space or retrieval silently degrades.
 
 Usage:
-    cd whybase
+    cd ybase
     backend/.venv/bin/python scripts/reembed.py
 """
 

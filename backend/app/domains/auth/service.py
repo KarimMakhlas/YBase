@@ -804,9 +804,9 @@ async def forgot_password(
             link = f"{config.APP_BASE_URL.rstrip('/')}{_reset_path(token)}"
             await mailer.send(
                 [email],
-                "Reset your Whybase password",
+                "Reset your YBase password",
                 f"Hi {user['display_name']},\n\n"
-                f"Use this link to reset your Whybase password (valid for "
+                f"Use this link to reset your YBase password (valid for "
                 f"{config.PASSWORD_RESET_TTL_MINUTES} minutes):\n\n{link}\n\n"
                 "If you didn't request this, you can safely ignore this email.",
             )

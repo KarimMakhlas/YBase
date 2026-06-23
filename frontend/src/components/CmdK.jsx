@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { searchMemory } from '../api.js'
-import { Badge, StatusBadge } from '../whybase/ui.jsx'
+import { Badge, StatusBadge } from '../ybase/ui.jsx'
 
 const TYPE_BADGE = {
   decision: 'decision', question: 'question', entity: 'entity',

@@ -6,14 +6,14 @@ import {
 import { motion, MotionConfig } from 'framer-motion'
 import { getStats } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { Badge, StatusBadge, SrcBadge } from '../whybase/ui.jsx'
+import { Badge, StatusBadge, SrcBadge } from '../ybase/ui.jsx'
 import { buildStarters } from '../lib/starters.js'
-import { useThemeColors, SOURCE_VARS } from '../whybase/charts.js'
-import { staggerContainer, fadeUp } from '../whybase/motionPresets.js'
-import CountUp from '../whybase/CountUp.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
+import { useThemeColors, SOURCE_VARS } from '../ybase/charts.js'
+import { staggerContainer, fadeUp } from '../ybase/motionPresets.js'
+import CountUp from '../ybase/CountUp.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
 import SetupChecklist from './SetupChecklist.jsx'
-import '../whybase/home.css'
+import '../ybase/home.css'
 
 const LAST_VISIT_KEY = 'sb:lastVisit'
 const SOURCE_LABEL = { slack: 'Slack', notion: 'Notion', github: 'GitHub', jira: 'Jira', meeting: 'Meeting' }
@@ -83,7 +83,7 @@ export default function Home({ onAsk, onNavigate, canAdmin = false, workspace, u
           align="center"
           kicker="Workspace memory"
           title={<>Never lose a <em>decision</em> again.</>}
-          lede="Ask in plain English. WhyBase answers from your team's Slack, Notion, GitHub and Jira — every claim cited to the source that settled it."
+          lede="Ask in plain English. YBase answers from your team's Slack, Notion, GitHub and Jira — every claim cited to the source that settled it."
         >
           <form className="home-ask" onSubmit={submit}>
             <div className="wb-input-wrap">

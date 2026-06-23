@@ -23,7 +23,7 @@ _load_dotenv()
 # Postgres (pgvector). Default matches docker-compose.yml (host port 5433).
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://whybase:whybase@localhost:5433/whybase",
+    "postgresql://ybase:ybase@localhost:5433/ybase",
 )
 # Connection pool sizing. The formation worker holds one connection per
 # concurrent slot (FORMATION_CONCURRENCY, up to 3) and every in-flight HTTP

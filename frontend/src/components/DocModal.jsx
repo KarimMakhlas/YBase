@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { getDocument } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { SrcBadge } from '../whybase/ui.jsx'
+import { SrcBadge } from '../ybase/ui.jsx'
 
 // Find the span of `highlight` within `text`, returning [start, end] or null.
 // Tries an exact match first, then a whitespace-tolerant match so a near-verbatim

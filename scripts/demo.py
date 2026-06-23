@@ -22,9 +22,9 @@ import httpx
 sys.path.insert(0, __import__("os").path.dirname(__file__))
 from sample_docs import SAMPLE_DOCS  # noqa: E402
 
-BASE = os.environ.get("WHYBASE_API", "http://localhost:8100")
-AUTH_EMAIL = os.environ.get("WHYBASE_EMAIL")
-AUTH_PASSWORD = os.environ.get("WHYBASE_PASSWORD")
+BASE = os.environ.get("YBASE_API", "http://localhost:8100")
+AUTH_EMAIL = os.environ.get("YBASE_EMAIL")
+AUTH_PASSWORD = os.environ.get("YBASE_PASSWORD")
 
 QUERIES = [
     "Why did we choose Postgres over MongoDB?",
@@ -49,14 +49,14 @@ def wait_for_backend(cx: httpx.Client) -> dict:
             pass
         time.sleep(1)
     print(f"{RED}Backend not reachable at {BASE}. Start it first:{RESET}")
-    print("  cd whybase/backend && .venv/bin/uvicorn app.main:app --port 8100")
+    print("  cd ybase/backend && .venv/bin/uvicorn app.main:app --port 8100")
     sys.exit(1)
 
 
 def login(cx: httpx.Client) -> dict:
     if not AUTH_EMAIL or not AUTH_PASSWORD:
         print(f"{RED}Authenticated API required.{RESET}")
-        print("Set WHYBASE_EMAIL and WHYBASE_PASSWORD for an owner/admin user.")
+        print("Set YBASE_EMAIL and YBASE_PASSWORD for an owner/admin user.")
         sys.exit(1)
     r = cx.post(f"{BASE}/api/auth/login", json={
         "email": AUTH_EMAIL,

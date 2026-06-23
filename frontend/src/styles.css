@@ -1,17 +1,17 @@
 /* ============================================================
-   WhyBase Design System — foundation imports
+   YBase Design System — foundation imports
    The token layer, fonts, component primitives, and the legacy
-   alias bridge all live in ./whybase/. Imported first so every
-   rule below resolves against the WhyBase tokens (light + dark).
+   alias bridge all live in ./ybase/. Imported first so every
+   rule below resolves against the YBase tokens (light + dark).
    ============================================================ */
-@import "./whybase/fonts.css";
-@import "./whybase/colors.css";
-@import "./whybase/typography.css";
-@import "./whybase/spacing.css";
-@import "./whybase/elevation.css";
-@import "./whybase/motion.css";
-@import "./whybase/components.css";
-@import "./whybase/bridge.css";
+@import "./ybase/fonts.css";
+@import "./ybase/colors.css";
+@import "./ybase/typography.css";
+@import "./ybase/spacing.css";
+@import "./ybase/elevation.css";
+@import "./ybase/motion.css";
+@import "./ybase/components.css";
+@import "./ybase/bridge.css";
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
@@ -1399,7 +1399,7 @@ html { scroll-behavior: smooth; }
 }
 
 /* ============================================================
-   WhyBase motion primitives (from the design system's base layer)
+   YBase motion primitives (from the design system's base layer)
    Namespaced wb-* so they never collide with existing app rules.
    Set --i on a parent's children for staggered entrances.
    ============================================================ */

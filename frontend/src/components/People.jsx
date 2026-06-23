@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { Search, GitCommitHorizontal, CircleHelp } from 'lucide-react'
 import { listPeople, getPerson } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { Avatar, Badge, StatusBadge } from '../whybase/ui.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
+import { Avatar, Badge, StatusBadge } from '../ybase/ui.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
 
 // Person pages: everything someone advocated, decided, or raised — built from
 // the involves / raised_by edges memory formation already extracts.

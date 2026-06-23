@@ -1,4 +1,4 @@
-# Deploying Whybase
+# Deploying YBase
 
 The `Dockerfile` builds the React UI and serves it from the FastAPI backend, so
 the whole app is one container on port `8100`. You bring a Postgres database and

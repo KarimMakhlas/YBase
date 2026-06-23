@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Upload, Sparkles, ChevronRight, TriangleAlert } from 'lucide-react'
 import { deleteJSON, getJSON, postJSON } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { SrcBadge, StatusBadge } from '../whybase/ui.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
+import { SrcBadge, StatusBadge } from '../ybase/ui.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
 
 const SOURCES = ['slack', 'notion', 'github', 'jira', 'meeting', 'other']
 const EMPTY_FORM = { source: 'slack', title: '', author: '', date: '', tags: '', text: '' }
@@ -147,7 +147,7 @@ export default function AddMemory() {
       <PageHeader
         kicker="Add to memory"
         title={<>Feed the <em>memory</em>.</>}
-        lede="Drop in a Slack thread, meeting notes, a spec or a ticket — WhyBase extracts the decisions, people and open questions."
+        lede="Drop in a Slack thread, meeting notes, a spec or a ticket — YBase extracts the decisions, people and open questions."
       />
 
       <form className="add-form wb-reveal" style={{ '--i': 1 }} onSubmit={submit}>

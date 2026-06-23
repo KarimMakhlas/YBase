@@ -3,8 +3,8 @@ import { RotateCw, CircleCheckBig, TriangleAlert, Check, Minus } from 'lucide-re
 import { getOpsOverview, retryFailedDocuments, retrySourceJob, seedDemoData } from '../api.js'
 import { formatDateTime as fmtDate } from '../format.js'
 import { useToast } from './Toast.jsx'
-import { Badge, StatusBadge, SrcBadge } from '../whybase/ui.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
+import { Badge, StatusBadge, SrcBadge } from '../ybase/ui.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
 
 export default function Ops({ onNavigate, onAsk }) {
   const [data, setData] = useState(null)

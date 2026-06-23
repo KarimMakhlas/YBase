@@ -1,4 +1,4 @@
-// Motion presets — the bridge between the CSS design tokens (whybase/motion.css)
+// Motion presets — the bridge between the CSS design tokens (ybase/motion.css)
 // and Framer Motion in JS. Defining the curves once here keeps animated
 // components on-brand: the same easing the rest of the app uses in CSS, now
 // available as the cubic-bezier arrays Framer Motion expects.
@@ -6,7 +6,7 @@
 // Framer Motion takes easing as a [x1, y1, x2, y2] array, mirroring the
 // cubic-bezier() values in motion.css.
 
-// Easing curves — mirror of --ease-* in whybase/motion.css
+// Easing curves — mirror of --ease-* in ybase/motion.css
 export const ease = {
   out: [0.16, 1, 0.3, 1],
   outSoft: [0.22, 1, 0.36, 1],
@@ -14,7 +14,7 @@ export const ease = {
   emphasis: [0.2, 0.9, 0.1, 1],
 }
 
-// Spring presets — for anything that moves through space (the whybase rule:
+// Spring presets — for anything that moves through space (the ybase rule:
 // springs for position, eased curves for colour & opacity).
 export const spring = {
   // Gentle, premium — for entrances and layout.

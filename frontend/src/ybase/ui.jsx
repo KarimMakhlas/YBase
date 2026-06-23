@@ -1,7 +1,7 @@
 import React from 'react'
 
 // ============================================================
-// WhyBase design-system primitives (React)
+// YBase design-system primitives (React)
 // Ported from the design-system component bundle so the real app
 // composes the same markup as the UI kit. Token-driven via
 // components.css — light/dark + motion come for free.

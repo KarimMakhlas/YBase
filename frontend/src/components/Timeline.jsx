@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { getJSON } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { Badge, StatusBadge, SrcBadge } from '../whybase/ui.jsx'
-import PageHeader from '../whybase/PageHeader.jsx'
+import { Badge, StatusBadge, SrcBadge } from '../ybase/ui.jsx'
+import PageHeader from '../ybase/PageHeader.jsx'
 
 const TYPE_LABEL = { document: 'doc', decision: 'decision', question: 'question' }
 const TYPE_TONE = { decision: 'accent', question: 'warning', document: 'neutral' }

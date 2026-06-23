@@ -1,17 +1,17 @@
 services:
   db:
     image: pgvector/pgvector:pg16
-    container_name: whybase-db
+    container_name: ybase-db
     environment:
-      POSTGRES_USER: whybase
-      POSTGRES_PASSWORD: whybase
-      POSTGRES_DB: whybase
+      POSTGRES_USER: ybase
+      POSTGRES_PASSWORD: ybase
+      POSTGRES_DB: ybase
     ports:
       - "5433:5432"
     volumes:
-      - whybase_pgdata:/var/lib/postgresql/data
+      - ybase_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U whybase -d whybase"]
+      test: ["CMD-SHELL", "pg_isready -U ybase -d ybase"]
       interval: 2s
       timeout: 2s
       retries: 30
@@ -21,7 +21,7 @@ services:
   # Plain `docker compose up -d` still starts only the database for local dev.
   app:
     build: .
-    container_name: whybase-app
+    container_name: ybase-app
     profiles: ["app"]
     depends_on:
       db:
@@ -29,7 +29,7 @@ services:
     ports:
       - "8100:8100"
     environment:
-      DATABASE_URL: postgresql://whybase:whybase@db:5432/whybase
+      DATABASE_URL: postgresql://ybase:ybase@db:5432/ybase
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
@@ -50,4 +50,4 @@ services:
       - "host.docker.internal:host-gateway"
 
 volumes:
-  whybase_pgdata:
+  ybase_pgdata:
