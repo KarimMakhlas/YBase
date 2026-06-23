@@ -136,3 +136,89 @@ async def test_disconnected_connection_skipped(pool, workspace_id, captured_disp
 
     async with pool.acquire() as conn:
         assert len(await _jobs(conn, cid)) == 0
+
+
+# ---- onboarding fast-slice -> full backfill chaining ----
+
+async def _complete_backfill(conn, workspace_id, cid, state):
+    return await conn.fetchval(
+        "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, state, stats) "
+        "VALUES($1, $2, 'slack', 'complete', 'backfill', $3, '{}'::jsonb) RETURNING id",
+        workspace_id, cid, state,
+    )
+
+
+async def test_fast_slice_chains_full_backfill(pool, workspace_id, captured_dispatch):
+    async with pool.acquire() as conn:
+        cid = await _make_connection(conn, workspace_id, "slack")
+        slice_id = await _complete_backfill(conn, workspace_id, cid, {"days": 7, "then_full_days": 90})
+
+    await service._chain_full_backfill(slice_id)
+
+    async with pool.acquire() as conn:
+        new = [j for j in await _jobs(conn, cid) if j["status"] == "pending"]
+    assert len(new) == 1
+    assert dict(new[0]["state"]) == {"days": 90}        # full window, no further chain flag
+    assert ("slack", new[0]["id"]) in captured_dispatch  # dispatched (real runner stubbed)
+
+
+async def test_no_chain_without_then_full_flag(pool, workspace_id, captured_dispatch):
+    async with pool.acquire() as conn:
+        cid = await _make_connection(conn, workspace_id, "slack")
+        await _complete_backfill(conn, workspace_id, cid, {"days": 90})  # ordinary manual sync
+
+    await service._chain_full_backfill(
+        (await _latest_job_id(pool, cid)))
+
+    async with pool.acquire() as conn:
+        assert len(await _jobs(conn, cid)) == 1          # nothing chained
+    assert captured_dispatch == []
+
+
+async def test_no_chain_when_slice_failed(pool, workspace_id, captured_dispatch):
+    async with pool.acquire() as conn:
+        cid = await _make_connection(conn, workspace_id, "slack")
+        failed = await conn.fetchval(
+            "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, state, stats) "
+            "VALUES($1, $2, 'slack', 'failed', 'backfill', $3, '{}'::jsonb) RETURNING id",
+            workspace_id, cid, {"days": 7, "then_full_days": 90})
+
+    await service._chain_full_backfill(failed)
+
+    async with pool.acquire() as conn:
+        pending = [j for j in await _jobs(conn, cid) if j["status"] == "pending"]
+    assert pending == []                                 # a failed slice is retried, not deepened
+
+
+async def _latest_job_id(pool, cid):
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT id FROM sync_jobs WHERE connection_id=$1 ORDER BY id DESC LIMIT 1", cid)
+
+
+# ---- workspace status gate fields ----
+
+async def test_workspace_status_gate_fields(pool, workspace_id):
+    from app.domains.auth.service import AuthContext
+    from app.domains.workspace import service as ws
+
+    ctx = AuthContext(
+        user_id=1, email="o@x.co", display_name="O",
+        workspace_id=workspace_id, workspace_name="WS", role="owner",
+        session_id=1, workspaces=[],
+    )
+
+    s = await ws.workspace_status(ctx)
+    assert s["has_workspace"] is True
+    assert s["has_source"] is False and s["memory_ready"] is False
+
+    async with pool.acquire() as conn:                   # connected source + selected stream
+        cid = await _make_connection(conn, workspace_id, "slack")
+        await _make_stream(conn, workspace_id, cid, "slack", selected=True)
+    assert (await ws.workspace_status(ctx))["has_source"] is True
+
+    async with pool.acquire() as conn:                   # a formed memory node
+        await conn.execute(
+            "INSERT INTO memory_nodes(workspace_id, kind, label) VALUES($1, 'decision', 'X')",
+            workspace_id)
+    assert (await ws.workspace_status(ctx))["memory_ready"] is True

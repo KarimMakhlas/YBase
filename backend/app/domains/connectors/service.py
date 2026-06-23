@@ -1,6 +1,7 @@
 """Source connector APIs and Slack sync jobs."""
 
 import asyncio
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -22,6 +23,8 @@ from app.domains.documents.ingestion import IngestRequest, ingest_document
 
 router = APIRouter(prefix="/api", tags=["sources"])
 
+log = logging.getLogger("ybase.connectors")
+
 SLACK_SCOPES = "channels:read,channels:history"
 SLACK_API = "https://slack.com/api"
 
@@ -32,6 +35,10 @@ class StreamPatch(BaseModel):
 
 class SyncRequest(BaseModel):
     days: int = 90
+    # When set, after this (fast-slice) backfill completes, chain a second
+    # backfill of `then_full_days` in the background. Used by onboarding to show
+    # recent memory fast, then deepen history. Ignored on ordinary manual syncs.
+    then_full_days: Optional[int] = None
 
 
 class SlackRateLimit(Exception):
@@ -101,13 +108,56 @@ async def _connection(conn, workspace_id: int, connection_id: int):
 
 
 def _dispatch_sync(provider: str, job_id: int) -> None:
-    """Run a sync job on the right connector's background coroutine."""
-    if provider == "jira":
-        asyncio.create_task(jira.run_sync_job(job_id))
-    elif provider == "github":
-        asyncio.create_task(github.run_sync_job(job_id))
-    else:
-        asyncio.create_task(run_slack_sync_job(job_id))
+    """Run a sync job on the right connector's background coroutine, then chain a
+    follow-up full backfill if this job requested one (the onboarding fast-slice)."""
+    runner = {"jira": jira.run_sync_job, "github": github.run_sync_job}.get(
+        provider, run_slack_sync_job
+    )
+    asyncio.create_task(_run_then_chain(runner, provider, job_id))
+
+
+async def _run_then_chain(runner, provider: str, job_id: int) -> None:
+    await runner(job_id)
+    try:
+        await _chain_full_backfill(job_id)
+    except Exception:
+        log.exception("failed to chain full backfill after sync job %d", job_id)
+
+
+async def _chain_full_backfill(job_id: int) -> None:
+    """If a just-completed fast-slice backfill asked for a follow-up, enqueue the
+    full-history backfill now. Connectors ingest oldest-first, so the slice
+    already surfaced recent memory; this deepens history in the background.
+    Dedup (content hash) absorbs the overlap. The chained job carries no
+    then_full_days, so it never chains again."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow(
+            "SELECT id, workspace_id, connection_id, provider, status, state "
+            "FROM sync_jobs WHERE id=$1",
+            job_id,
+        )
+        if job is None or job["status"] != "complete":
+            return  # only deepen after a clean slice; a failed slice is retried instead
+        full_days = (job["state"] or {}).get("then_full_days")
+        if not full_days:
+            return
+        active = await conn.fetchval(
+            "SELECT 1 FROM sync_jobs WHERE connection_id=$1 "
+            "AND status IN ('pending','running','paused') LIMIT 1",
+            job["connection_id"],
+        )
+        if active:
+            return
+        new_id = await conn.fetchval(
+            "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, state, stats) "
+            "VALUES($1, $2, $3, 'pending', 'backfill', $4, $5) RETURNING id",
+            job["workspace_id"], job["connection_id"], job["provider"],
+            {"days": int(full_days)}, {"documents": 0, "duplicates": 0, "streams": 0},
+        )
+    log.info("chained full backfill job %d (%d days) after fast-slice %d",
+             new_id, int(full_days), job_id)
+    _dispatch_sync(job["provider"], new_id)
 
 
 async def _enqueue_connect_resync(conn, connection) -> Optional[int]:
@@ -550,12 +600,15 @@ async def start_sync(
             )
             if not selected:
                 raise HTTPException(400, "select at least one channel or project before syncing")
+            state: Dict[str, Any] = {"days": days}
+            if req.then_full_days:
+                state["then_full_days"] = max(1, min(req.then_full_days, 180))
             job = await conn.fetchrow(
                 "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, state, stats, created_by) "
                 "VALUES($1, $2, $3, 'pending', 'backfill', $4, $5, $6) "
                 "RETURNING id, status, kind, state, stats, error, next_retry_at, created_at",
                 current.workspace_id, connection_id, connection["provider"],
-                {"days": days}, {"documents": 0, "duplicates": 0, "streams": 0},
+                state, {"documents": 0, "duplicates": 0, "streams": 0},
                 current.user_id,
             )
             await auth.audit(conn, "sync_start", current.workspace_id, current.user_id,

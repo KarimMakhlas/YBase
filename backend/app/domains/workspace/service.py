@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.core import config, db, mailer as email
 from app.domains.auth import service as auth
+from app.domains.memory import worker
 
 router = APIRouter(prefix="/api", tags=["workspace"])
 
@@ -97,6 +98,46 @@ async def workspace_onboarding(
         "role": current.role,
         "steps": steps,
         "complete": all(steps.values()),
+    }
+
+
+@router.get("/workspace/status")
+async def workspace_status(
+    current: auth.AuthContext = Depends(auth.get_current_user),
+) -> Dict[str, Any]:
+    """Gate + progress signal for the chat-first experience. `has_source` gates
+    the owner's connect screen, `memory_ready` unlocks the app, `importing`
+    drives the 'still learning your history' banner. `queue` feeds the loading
+    screen's progress. Safe to poll. Workspace-less callers get all-false."""
+    if current.workspace_id is None:
+        return {
+            "has_workspace": False, "role": None,
+            "has_source": False, "memory_ready": False, "importing": False,
+            "queue": {"pending": 0, "processing": 0, "complete": 0, "failed": 0},
+        }
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT "
+            "  EXISTS(SELECT 1 FROM source_connections c WHERE c.workspace_id=$1 "
+            "         AND c.status='connected' AND EXISTS("
+            "           SELECT 1 FROM source_streams s WHERE s.connection_id=c.id AND s.selected"
+            "         )) AS has_source, "
+            "  EXISTS(SELECT 1 FROM memory_nodes WHERE workspace_id=$1) AS memory_ready, "
+            "  (EXISTS(SELECT 1 FROM sync_jobs WHERE workspace_id=$1 "
+            "          AND status IN ('pending','running')) "
+            "   OR EXISTS(SELECT 1 FROM documents WHERE workspace_id=$1 "
+            "             AND formation_status IN ('pending','processing'))) AS importing",
+            current.workspace_id,
+        )
+    stats = await worker.queue_stats(current.workspace_id)
+    return {
+        "has_workspace": True,
+        "role": current.role,
+        "has_source": row["has_source"],
+        "memory_ready": row["memory_ready"],
+        "importing": row["importing"],
+        "queue": {k: stats.get(k, 0) for k in ("pending", "processing", "complete", "failed")},
     }
 
 

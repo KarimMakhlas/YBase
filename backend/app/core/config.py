@@ -193,6 +193,12 @@ SLACK_RECONCILE_WINDOW_DAYS = int(os.getenv("SLACK_RECONCILE_WINDOW_DAYS", "1"))
 CONNECTOR_RESYNC_INTERVAL_S = int(os.getenv("CONNECTOR_RESYNC_INTERVAL_S", "21600"))  # 6h
 CONNECTOR_RESYNC_WINDOW_DAYS = int(os.getenv("CONNECTOR_RESYNC_WINDOW_DAYS", "2"))
 CONNECTOR_BACKFILL_DAYS = int(os.getenv("CONNECTOR_BACKFILL_DAYS", "90"))
+# Onboarding fast slice: the first backfill pulls only this many recent days so
+# memory forms in minutes (connectors ingest oldest-first, so a full 90-day
+# backfill would surface recent decisions last). Once the slice completes, the
+# full CONNECTOR_BACKFILL_DAYS backfill is chained in the background; dedup
+# absorbs the overlap.
+FAST_SLICE_DAYS = int(os.getenv("FAST_SLICE_DAYS", "7"))
 
 # Live Slack ingestion (Events API). Empty secret disables the endpoint.
 SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")
