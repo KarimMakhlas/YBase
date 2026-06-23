@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { motion, MotionConfig } from 'framer-motion'
 import {
   House, Sparkles, Clock, GitCommitHorizontal, Users, Share2, FilePlus2,
   ListChecks, Flag, Plug, BarChart3, Gauge, Settings as SettingsIcon,
@@ -15,6 +14,7 @@ import People from './components/People.jsx'
 import AddMemory from './components/AddMemory.jsx'
 import Auth from './components/Auth.jsx'
 import Onboarding from './components/Onboarding.jsx'
+import AccountMenu from './components/AccountMenu.jsx'
 import InviteModal from './components/InviteModal.jsx'
 import Join from './components/Join.jsx'
 import SharedDecision from './components/SharedDecision.jsx'
@@ -75,11 +75,11 @@ function withViewTransition(fn) {
 
 function parseHashRoute() {
   const raw = window.location.hash.replace(/^#\/?/, '')
-  if (!raw) return { tab: 'home', payload: {} }
+  if (!raw) return { tab: 'chat', payload: {} }
   const [path, query = ''] = raw.split('?')
   const parts = path.split('/').filter(Boolean).map(decodeURIComponent)
   const params = new URLSearchParams(query)
-  const tab = parts[0] || 'home'
+  const tab = parts[0] || 'chat'
 
   if (tab === 'join' && parts[1]) {
     return { tab: null, payload: {}, joinToken: parts[1] }
@@ -104,7 +104,7 @@ function parseHashRoute() {
     }
   }
 
-  if (!TAB_IDS.has(tab)) return { tab: 'home', payload: {} }
+  if (!TAB_IDS.has(tab)) return { tab: 'chat', payload: {} }
   const payload = {}
   if (tab === 'decisions') {
     if (parts[1]) payload.decisionId = Number(parts[1])
@@ -128,38 +128,12 @@ function routeHash(toTab, payload = {}) {
   if (toTab === 'graph' && payload.nodeId) return `#/graph/${payload.nodeId}`
   if (toTab === 'review' && payload.nodeId) return `#/review/${payload.nodeId}`
   if (toTab === 'timeline' && payload.focusKey) return `#/timeline?focus=${encodeURIComponent(payload.focusKey)}`
-  return `#/${TAB_IDS.has(toTab) ? toTab : 'home'}`
+  return `#/${TAB_IDS.has(toTab) ? toTab : 'chat'}`
 }
 
 function documentHash(docId, highlight = null) {
   const extra = highlight ? `?highlight=${encodeURIComponent(highlight)}` : ''
   return `#/documents/${docId}${extra}`
-}
-
-// Deterministic avatar color from a name (workspace switcher).
-function avatarHue(name = '') {
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360
-  return h
-}
-
-function WorkspaceAvatar({ name }) {
-  const initials = (name || '?')
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase()
-  const hue = avatarHue(name)
-  return (
-    <span
-      className="wb-avatar wb-avatar--sm"
-      aria-hidden="true"
-      style={{ background: `linear-gradient(150deg, hsl(${hue} 52% 56%), hsl(${(hue + 38) % 360} 54% 42%))` }}
-    >
-      {initials}
-    </span>
-  )
 }
 
 const THEME_KEY = 'sb:theme'
@@ -216,16 +190,13 @@ function ThemeToggle() {
 }
 
 export default function App() {
-  const [tab, setTab] = useState('home')
+  const [tab, setTab] = useState('chat')
   const [authState, setAuthState] = useState({ loading: true, needsBootstrap: false, user: null })
   // bumping `ask.n` lets Home re-send even the same question text
   const [ask, setAsk] = useState({ question: null, n: 0 })
   // cross-view navigation payload: views read it when focus.tab matches
   const [focus, setFocus] = useState({ tab: null, n: 0 })
   const [cmdkOpen, setCmdkOpen] = useState(false)
-  const [navCollapsed, setNavCollapsed] = useState(
-    () => localStorage.getItem('wb:nav') === 'collapsed',
-  )
   const [docModal, setDocModal] = useState(null) // { docId, highlight }
   const [joinToken, setJoinToken] = useState(null) // invite link: #/join/<token>
   const [shareToken, setShareToken] = useState(null) // public decision: #/shared/<token>
@@ -284,7 +255,7 @@ export default function App() {
         setDocModal(route.docModal)
         return
       }
-      const nextTab = route.tab || 'home'
+      const nextTab = route.tab || 'chat'
       lastNonDocHash.current = routeHash(nextTab, route.payload)
       const tabChanged = currentTabRef.current !== nextTab
       currentTabRef.current = nextTab
@@ -351,13 +322,6 @@ export default function App() {
       window.location.hash = next
     }
   }
-
-  const toggleNav = () =>
-    setNavCollapsed((c) => {
-      const next = !c
-      try { localStorage.setItem('wb:nav', next ? 'collapsed' : 'expanded') } catch { /* ignore */ }
-      return next
-    })
 
   const openDoc = (docId, highlight = null) => {
     const next = documentHash(docId, highlight)
@@ -497,117 +461,30 @@ export default function App() {
   const isAdmin = ROLE_RANK[role] >= ROLE_RANK.admin
   const visibleNav = NAV.filter((n) => !n.minRole || ROLE_RANK[role] >= ROLE_RANK[n.minRole])
   const activeTab =
-    visibleNav.some((n) => n.id === tab) || EXTRA_TABS.has(tab) ? tab : 'home'
-
-  // Group visible items by section (preserving order); items without a section
-  // render first, headerless.
-  const sections = []
-  for (const n of visibleNav) {
-    const label = n.section || ''
-    let s = sections.find((x) => x.label === label)
-    if (!s) { s = { label, items: [] }; sections.push(s) }
-    s.items.push(n)
-  }
+    visibleNav.some((n) => n.id === tab) || EXTRA_TABS.has(tab) ? tab : 'chat'
 
   return (
     <ToastProvider>
-      <div className={`wb-app ${navCollapsed ? 'nav-collapsed' : ''}`}>
-        <aside className="app-sidebar">
-          <div className="sidebar-top">
-            <div className="app-brand">
-              <img src={ybaseMark} alt="" width="24" height="24" />
-              <span>YBase</span>
-            </div>
-            <button
-              className="nav-toggle"
-              onClick={toggleNav}
-              aria-label="Toggle sidebar"
-              title={navCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            >
-              {navCollapsed ? <PanelLeftOpen size={17} strokeWidth={1.8} /> : <PanelLeftClose size={17} strokeWidth={1.8} />}
-            </button>
-          </div>
-
-          <button className="sidebar-search" onClick={() => setCmdkOpen(true)} title="Search memory (⌘K)">
-            <Search size={16} strokeWidth={1.8} />
-            <span className="search-txt">Search memory</span>
-            <span className="kbd">⌘K</span>
-          </button>
-
-          <MotionConfig reducedMotion="user">
-            <nav className="sidebar-nav">
-              {sections.map((s, si) => (
-                <div className="nav-group" key={s.label || `top-${si}`}>
-                  {s.label && <div className="nav-group-label">{s.label}</div>}
-                  {s.items.map((n) => {
-                    const Icon = n.icon
-                    const isActive = activeTab === n.id
-                    return (
-                      <button
-                        key={n.id}
-                        className={isActive ? 'nav-item active' : 'nav-item'}
-                        onClick={() => navigate(n.id)}
-                        title={n.label}
-                      >
-                        {isActive && (
-                          <motion.span
-                            layoutId="nav-active"
-                            className="nav-active-bg"
-                            transition={{ type: 'spring', stiffness: 520, damping: 42 }}
-                          />
-                        )}
-                        <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
-                        <span>{n.label}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              ))}
-            </nav>
-          </MotionConfig>
-
-          <div className="sidebar-foot">
-            {isAdmin && setup && !setup.complete && (
-              <button className="setup-nudge" onClick={() => navigate('home')} title="Finish workspace setup">
-                <ListChecks size={15} strokeWidth={1.8} />
-                <span>Finish setup</span>
-                <span className="setup-nudge-count tnum">
-                  {Object.values(setup.steps).filter(Boolean).length}/{Object.keys(setup.steps).length}
-                </span>
-              </button>
-            )}
-            <button className="ws-switch" title="Account & workspaces" onClick={() => navigate('account')}>
-              <WorkspaceAvatar name={workspace.name} />
-              <span className="ws-meta">
-                <b>{workspace.name}</b>
-                <small>{authState.user.display_name} · {role}</small>
-              </span>
-              <ChevronsUpDown size={15} strokeWidth={1.8} className="ws-switch-chev" aria-hidden="true" />
-            </button>
-            <button className="logout-btn" onClick={onLogout} title="Log out">
-              <LogOut size={16} strokeWidth={1.8} />
-              <span>Log out</span>
-            </button>
-          </div>
-        </aside>
-
+      <div className="wb-app wb-app--chatfirst">
         <div className="app-main">
-          <header className="app-topbar">
-            <div className="topbar-crumb">
-              <span className="eyebrow">Workspace · {workspace.name}</span>
-              <span className="crumb-view">{LABELS[activeTab] || 'Home'}</span>
+          <header className="app-topbar app-topbar--minimal">
+            <div className="topbar-brand">
+              <img src={ybaseMark} alt="YBase" width="22" height="22" />
+              <span className="topbar-ws">{workspace.name}</span>
             </div>
             <div className="app-top-right">
               <ThemeToggle />
               <Notifications isAdmin={isAdmin} />
-              {isAdmin && (
-                <button className="wb-btn wb-btn--secondary" onClick={() => setInviteOpen(true)}>
-                  <UserPlus size={15} strokeWidth={1.8} /> Invite
-                </button>
-              )}
-              <button className="wb-btn wb-btn--primary" onClick={() => navigate('chat')}>
-                <Sparkles size={15} strokeWidth={1.8} /> Ask memory
-              </button>
+              <AccountMenu
+                workspace={workspace}
+                user={authState.user}
+                role={role}
+                isAdmin={isAdmin}
+                onNavigate={navigate}
+                onInvite={() => setInviteOpen(true)}
+                onSearch={() => setCmdkOpen(true)}
+                onLogout={onLogout}
+              />
             </div>
           </header>
 

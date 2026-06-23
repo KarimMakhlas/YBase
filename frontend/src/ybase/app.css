@@ -587,3 +587,42 @@
 @media (max-width: 860px) {
   .chat-sidebar { position: absolute; z-index: 10; height: 100%; box-shadow: var(--shadow-lg); }
 }
+
+/* ============================================================
+   Chat-first shell — the simplified front door. Chat fills the
+   screen; the only chrome is the workspace name (left) and a
+   circle menu (right) to the few other places.
+   ============================================================ */
+.wb-app--chatfirst .app-main { width: 100%; }
+.app-topbar--minimal { gap: var(--sp-3); }
+.topbar-brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.topbar-brand img { width: 22px; height: 22px; flex-shrink: 0; }
+.topbar-ws { font-size: var(--fs-sm); font-weight: var(--fw-semibold); letter-spacing: var(--ls-snug); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Circle menu (workspace avatar → minimal nav dropdown) */
+.acct { position: relative; }
+.acct-trigger { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; cursor: pointer; padding: 2px 4px 2px 2px; border-radius: var(--radius-pill); transition: var(--t-colors); }
+.acct-trigger:hover { background: var(--surface-hover); }
+.acct-chev { color: var(--text-tertiary); flex-shrink: 0; }
+.acct-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 40;
+  min-width: 234px; background: var(--surface-raised); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-lg); padding: var(--sp-2);
+  display: flex; flex-direction: column; gap: 1px;
+}
+.acct-head { padding: 8px 10px 6px; display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
+.acct-head b { font-size: var(--fs-sm); font-weight: var(--fw-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-head small { font-size: 11px; color: var(--text-tertiary); }
+.acct-sep { height: 1px; background: var(--border); margin: var(--sp-2) 0; }
+.acct-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: none; border: none; color: var(--text-secondary);
+  font-size: var(--fs-sm); font-weight: var(--fw-medium); padding: 8px 10px;
+  border-radius: var(--radius-sm); cursor: pointer; transition: var(--t-colors);
+}
+.acct-item:hover { background: var(--surface-hover); color: var(--text); }
+.acct-item svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-tertiary); }
+.acct-item:hover svg { color: var(--text); }
+.acct-kbd { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-tertiary); background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+.acct-item--danger:hover { color: var(--danger); background: var(--danger-soft); }
+.acct-item--danger:hover svg { color: var(--danger); }
