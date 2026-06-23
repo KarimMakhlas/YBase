@@ -25,6 +25,20 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://ybase:ybase@localhost:5433/ybase",
 )
+# Connection pool sizing. The formation worker holds one connection per
+# concurrent slot (FORMATION_CONCURRENCY, up to 3) and every in-flight HTTP
+# request (including long-lived SSE query streams) holds one for its duration,
+# so the old max_size=8 exhausted under a handful of concurrent users. max
+# must stay comfortably below Postgres' own max_connections (managed Postgres
+# tiers often allow only ~100-200, shared across all app instances).
+DB_POOL_MIN_SIZE = int(os.getenv("DB_POOL_MIN_SIZE", "2"))
+DB_POOL_MAX_SIZE = int(os.getenv("DB_POOL_MAX_SIZE", "20"))
+# Per-statement timeout (seconds). Caps any single query so one slow/stuck
+# statement can't hold a pooled connection indefinitely and starve the pool.
+# 0 disables. Applies to individual statements, not whole requests, so it is
+# safe for streaming endpoints (each fetch is short) and for formation (the
+# long wait is the LLM call, not the surrounding DB statements).
+DB_COMMAND_TIMEOUT_S = float(os.getenv("DB_COMMAND_TIMEOUT_S", "30"))
 
 # Browser/API security. In production, set CORS_ORIGINS to the exact frontend
 # origins and SESSION_COOKIE_SECURE=true behind HTTPS.
