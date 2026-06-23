@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from app.core import config, db
 from app.core.crypto import decrypt_secret as _decrypt_secret, encrypt_secret as _encrypt_secret
+from app.domains.connectors import slack_reconcile_days
 from app.domains.auth import service as auth
 from app.domains.connectors.github import client as github
 from app.domains.connectors.jira import client as jira
@@ -802,7 +803,7 @@ async def resync_tick() -> int:
     async with pool.acquire() as conn:
         for provider, interval_s, base_state, backfill_first in specs:
             due = await conn.fetch(
-                "SELECT c.id, c.workspace_id, (c.last_sync_at IS NULL) AS never "
+                "SELECT c.id, c.workspace_id, c.last_sync_at, (c.last_sync_at IS NULL) AS never "
                 "FROM source_connections c "
                 "WHERE c.provider=$1 AND c.status='connected' "
                 "AND c.access_token_enc IS NOT NULL "
@@ -816,10 +817,16 @@ async def resync_tick() -> int:
             )
             for c in due:
                 kind = "backfill" if (backfill_first and c["never"]) else "reconcile"
+                state = base_state
+                if provider == "slack":
+                    # Widen the reconcile window to span the actual gap since the
+                    # last sync, so an outage longer than SLACK_RECONCILE_WINDOW_DAYS
+                    # doesn't drop messages permanently (dedup absorbs the overlap).
+                    state = {"days": slack_reconcile_days(c["last_sync_at"])}
                 job_id = await conn.fetchval(
                     "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, "
                     "state, stats) VALUES($1, $2, $3, 'pending', $4, $5, $6) RETURNING id",
-                    c["workspace_id"], c["id"], provider, kind, base_state,
+                    c["workspace_id"], c["id"], provider, kind, state,
                     {"documents": 0, "duplicates": 0, "streams": 0},
                 )
                 await auth.audit(conn, "resync_start", c["workspace_id"], None,

@@ -335,3 +335,72 @@ def test_json_log_formatter_emits_valid_json_with_request_id():
     assert out["request_id"] == "rid-123"
     assert out["level"] == "INFO"
     assert out["logger"] == "whybase.test"
+
+
+# ---- trusted client IP (Item 11) ----
+
+class _FakeRequest:
+    def __init__(self, headers, host="10.0.0.1"):
+        self.headers = headers  # lowercase keys; matches how _client_ip looks up
+        self.client = type("C", (), {"host": host})()
+
+
+def test_client_ip_uses_rightmost_xff_not_spoofable_first():
+    from app.domains.auth.service import _client_ip
+    from app.core import config
+    # leftmost entry is client-supplied; the rightmost is what the trusted proxy saw
+    r = _FakeRequest({"x-forwarded-for": "1.1.1.1, 2.2.2.2, 3.3.3.3"})
+    saved = config.REAL_IP_HEADER
+    try:
+        config.REAL_IP_HEADER = ""
+        assert _client_ip(r) == "3.3.3.3"
+        assert _client_ip(_FakeRequest({})) == "10.0.0.1"  # falls back to socket peer
+        # a configured platform header (set by the proxy) wins outright
+        config.REAL_IP_HEADER = "fly-client-ip"
+        r2 = _FakeRequest({"fly-client-ip": "8.8.8.8", "x-forwarded-for": "1.1.1.1"})
+        assert _client_ip(r2) == "8.8.8.8"
+    finally:
+        config.REAL_IP_HEADER = saved
+
+
+# ---- connector secret encryption + key rotation (Item 13) ----
+
+def test_connector_secret_roundtrip_and_rotation(monkeypatch):
+    from app.core import config, crypto
+    monkeypatch.setattr(config, "CONNECTOR_SECRET_KEY", "key-one")
+    monkeypatch.setattr(config, "CONNECTOR_SECRET_KEYS_OLD", [])
+    token = crypto.encrypt_secret("xoxb-secret")
+    assert ":" in token  # tagged with the key id
+    assert crypto.decrypt_secret(token) == "xoxb-secret"
+    # rotate: new key primary, old key retained -> old ciphertext still decrypts
+    monkeypatch.setattr(config, "CONNECTOR_SECRET_KEY", "key-two")
+    monkeypatch.setattr(config, "CONNECTOR_SECRET_KEYS_OLD", ["key-one"])
+    assert crypto.decrypt_secret(token) == "xoxb-secret"      # via retained old key
+    new_token = crypto.encrypt_secret("xoxb-secret")          # tagged with key-two
+    assert new_token != token
+    assert crypto.decrypt_secret(new_token) == "xoxb-secret"
+
+
+def test_connector_secret_decrypts_legacy_untagged(monkeypatch):
+    from cryptography.fernet import Fernet
+    from app.core import config, crypto
+    monkeypatch.setattr(config, "CONNECTOR_SECRET_KEY", "legacy-key")
+    monkeypatch.setattr(config, "CONNECTOR_SECRET_KEYS_OLD", [])
+    legacy = Fernet(crypto._fernet_key("legacy-key")).encrypt(b"old-token").decode()
+    assert ":" not in legacy  # the old format had no key tag
+    assert crypto.decrypt_secret(legacy) == "old-token"
+
+
+# ---- Slack reconcile gap (Item 14) ----
+
+def test_slack_reconcile_days_spans_outage_gap(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from app.core import config
+    from app.domains.connectors import slack_reconcile_days
+    monkeypatch.setattr(config, "SLACK_RECONCILE_WINDOW_DAYS", 1)
+    monkeypatch.setattr(config, "CONNECTOR_BACKFILL_DAYS", 90)
+    now = datetime(2026, 6, 23, tzinfo=timezone.utc)
+    assert slack_reconcile_days(None, now=now) == 1                       # never synced
+    assert slack_reconcile_days(now - timedelta(hours=2), now=now) == 1   # recent
+    assert slack_reconcile_days(now - timedelta(days=10), now=now) == 11  # outage widens
+    assert slack_reconcile_days(now - timedelta(days=500), now=now) == 90 # capped
