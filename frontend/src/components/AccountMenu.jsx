@@ -1,12 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  GitCommitHorizontal, Plug, Settings as SettingsIcon, UserCircle2,
-  UserPlus, Search, LogOut, ChevronsUpDown,
+  UserCircle2, CreditCard, UserPlus, Search, LogOut, ChevronDown,
 } from 'lucide-react'
 
-// The single navigation surface for the chat-first shell: a circle (workspace
-// avatar) in the top-right that opens a minimal menu to the few other places.
-// Members see Decisions + Account; admins also get Sources/Settings/Invite.
+// The workspace identity + menu, merged into one control at the top of the
+// left panel: the avatar and name ARE the trigger. The menu holds only what
+// isn't a page — search, account, billing, invites, log out.
 
 function initials(name = '') {
   return (name || '?').split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase()
@@ -33,17 +32,18 @@ export default function AccountMenu({ workspace, user, role, isAdmin, onNavigate
     }
   }, [open])
 
-  const go = (tab) => { setOpen(false); onNavigate(tab) }
+  const run = (fn) => { setOpen(false); fn() }
+  const go = (tab) => run(() => onNavigate(tab))
   const h = hue(workspace?.name)
 
   return (
     <div className="acct" ref={ref}>
       <button
-        className="acct-trigger"
+        className="ws-trigger"
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        title="Menu"
+        title="Workspace menu"
       >
         <span
           className="wb-avatar wb-avatar--sm"
@@ -52,7 +52,8 @@ export default function AccountMenu({ workspace, user, role, isAdmin, onNavigate
         >
           {initials(workspace?.name)}
         </span>
-        <ChevronsUpDown size={14} strokeWidth={1.8} className="acct-chev" aria-hidden="true" />
+        <span className="ws-trigger-name">{workspace?.name}</span>
+        <ChevronDown size={15} strokeWidth={1.9} className="ws-trigger-chev" aria-hidden="true" />
       </button>
 
       {open && (
@@ -62,32 +63,23 @@ export default function AccountMenu({ workspace, user, role, isAdmin, onNavigate
             <small>{user?.display_name} · {role}</small>
           </div>
           <div className="acct-sep" />
-          <button className="acct-item" role="menuitem" onClick={() => { setOpen(false); onSearch() }}>
+          <button className="acct-item" role="menuitem" onClick={() => run(onSearch)}>
             <Search size={16} strokeWidth={1.8} /> Search memory <span className="acct-kbd">⌘K</span>
           </button>
-          <button className="acct-item" role="menuitem" onClick={() => go('decisions')}>
-            <GitCommitHorizontal size={16} strokeWidth={1.8} /> Decisions
-          </button>
-          {isAdmin && (
-            <button className="acct-item" role="menuitem" onClick={() => go('sources')}>
-              <Plug size={16} strokeWidth={1.8} /> Sources
-            </button>
-          )}
-          {isAdmin && (
-            <button className="acct-item" role="menuitem" onClick={() => go('settings')}>
-              <SettingsIcon size={16} strokeWidth={1.8} /> Settings
-            </button>
-          )}
+          <div className="acct-sep" />
           <button className="acct-item" role="menuitem" onClick={() => go('account')}>
             <UserCircle2 size={16} strokeWidth={1.8} /> Account
           </button>
+          <button className="acct-item" role="menuitem" onClick={() => go('plans')}>
+            <CreditCard size={16} strokeWidth={1.8} /> Billing &amp; plans
+          </button>
           {isAdmin && (
-            <button className="acct-item" role="menuitem" onClick={() => { setOpen(false); onInvite() }}>
+            <button className="acct-item" role="menuitem" onClick={() => run(onInvite)}>
               <UserPlus size={16} strokeWidth={1.8} /> Invite teammates
             </button>
           )}
           <div className="acct-sep" />
-          <button className="acct-item acct-item--danger" role="menuitem" onClick={() => { setOpen(false); onLogout() }}>
+          <button className="acct-item acct-item--danger" role="menuitem" onClick={() => run(onLogout)}>
             <LogOut size={16} strokeWidth={1.8} /> Log out
           </button>
         </div>

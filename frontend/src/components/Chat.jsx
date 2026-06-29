@@ -348,13 +348,15 @@ function FlagIssueForm({ draft, citations, onCancel, onSubmitted }) {
   )
 }
 
-export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNavigate }) {
+export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNavigate, onToggleFull, fullChat }) {
   const [sessions, setSessions] = useState([])
   const [activeId, setActiveId] = useState(null)
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 900)
+  // Clean by default: history is a slide-over, opened from the toolbar or the
+  // circle menu (which dispatches `ybase:chat-history`).
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [feedbackDraft, setFeedbackDraft] = useState(null)
   const [feedbackRefresh, setFeedbackRefresh] = useState(0)
   // null = unknown (loading); decides whether the empty state shows starters or
@@ -366,12 +368,27 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNaviga
   const scrollRef = useRef(null)
   const textareaRef = useRef(null)
   const activeIdRef = useRef(null)
+  const histRef = useRef(null)
   const toast = useToast()
   activeIdRef.current = activeId
 
   useEffect(() => {
     listSessions().then(setSessions).catch((e) => toast(`Failed to load history: ${e.message}`))
   }, [toast])
+
+  // History is a click-to-toggle popup: clicking the button again, clicking
+  // outside, or Escape dismisses it.
+  useEffect(() => {
+    if (!sidebarOpen) return undefined
+    const onDoc = (e) => { if (histRef.current && !histRef.current.contains(e.target)) setSidebarOpen(false) }
+    const onKey = (e) => { if (e.key === 'Escape') setSidebarOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [sidebarOpen])
 
   const checkMemory = React.useCallback(() => {
     getStats()
@@ -566,42 +583,62 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNaviga
 
   return (
     <div className="chat-wrap">
-      <aside className={`chat-sidebar ${sidebarOpen ? '' : 'closed'}`}>
-        <div className="chat-sidebar-head">
-          <button className="wb-btn wb-btn--secondary wb-btn--block" onClick={newChat}>
-            <Plus size={15} strokeWidth={1.8} /> New conversation
-          </button>
-        </div>
-        <div className="session-list">
-          {sessions.length === 0 && <div className="session-empty">No conversations yet.</div>}
-          {sessions.map((s) => (
-            <div
-              key={s.id}
-              role="button"
-              tabIndex={0}
-              className={`session-item ${s.id === activeId ? 'active' : ''}`}
-              onClick={() => openSession(s.id)}
-              onKeyDown={(e) => e.key === 'Enter' && openSession(s.id)}
-            >
-              <MessageSquare size={15} strokeWidth={1.8} />
-              <span className="session-title">{s.title}</span>
-              <button className="session-del" title="Delete conversation" onClick={(e) => removeSession(s.id, e)}>
-                <Trash2 size={14} strokeWidth={1.8} />
-              </button>
-            </div>
-          ))}
-        </div>
-      </aside>
-
       <div className="chat-main">
-        <div className="chat-toolbar">
-          <button
-            className="wb-iconbtn wb-iconbtn--sm"
-            title={sidebarOpen ? 'Hide history' : 'Show history'}
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-          >
-            {sidebarOpen ? <PanelLeftClose size={16} strokeWidth={1.8} /> : <PanelLeftOpen size={16} strokeWidth={1.8} />}
-          </button>
+        <div className="chat-head">
+          <div className="chat-head-hist" ref={histRef}>
+            <button
+              className={`chat-head-btn${sidebarOpen ? ' is-open' : ''}`}
+              title="Conversation history"
+              aria-expanded={sidebarOpen}
+              onClick={() => setSidebarOpen((o) => !o)}
+            >
+              <MessageSquare size={15} strokeWidth={1.8} /> History
+            </button>
+            {sidebarOpen && (
+              <div className="chat-history-pop" role="menu">
+                <div className="chat-history-pop-head">
+                  <span>Conversations</span>
+                  <button className="chat-history-new" onClick={() => { newChat(); setSidebarOpen(false) }}>
+                    <Plus size={14} strokeWidth={1.9} /> New
+                  </button>
+                </div>
+                <div className="session-list">
+                  {sessions.length === 0 && <div className="session-empty">No conversations yet.</div>}
+                  {sessions.map((s) => (
+                    <div
+                      key={s.id}
+                      role="button"
+                      tabIndex={0}
+                      className={`session-item ${s.id === activeId ? 'active' : ''}`}
+                      onClick={() => { openSession(s.id); setSidebarOpen(false) }}
+                      onKeyDown={(e) => e.key === 'Enter' && (openSession(s.id), setSidebarOpen(false))}
+                    >
+                      <MessageSquare size={15} strokeWidth={1.8} />
+                      <span className="session-title">{s.title}</span>
+                      <button className="session-del" title="Delete conversation" onClick={(e) => removeSession(s.id, e)}>
+                        <Trash2 size={14} strokeWidth={1.8} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="chat-head-right">
+            <button className="wb-iconbtn wb-iconbtn--sm" title="New conversation" aria-label="New conversation" onClick={newChat}>
+              <Plus size={16} strokeWidth={1.8} />
+            </button>
+            {onToggleFull && (
+              <button
+                className="wb-iconbtn wb-iconbtn--sm chat-fs"
+                title={fullChat ? 'Show side panel' : 'Expand chat'}
+                aria-label={fullChat ? 'Show side panel' : 'Expand chat'}
+                onClick={onToggleFull}
+              >
+                {fullChat ? <PanelLeftOpen size={16} strokeWidth={1.8} /> : <PanelLeftClose size={16} strokeWidth={1.8} />}
+              </button>
+            )}
+          </div>
         </div>
         <div className="chat-scroll" ref={scrollRef}>
           <div className="chat-col">

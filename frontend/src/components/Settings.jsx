@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Mail, Link2, UserPlus, Crown } from 'lucide-react'
 import {
-  createWorkspaceInvite, createWorkspaceUser, listWorkspaceInvites,
+  createWorkspaceInvite, createWorkspaceUser, getHealthDetails, listWorkspaceInvites,
   listWorkspaceUsers, patchWorkspaceUser, revokeWorkspaceInvite, transferOwnership,
 } from '../api.js'
 import { useToast } from './Toast.jsx'
@@ -9,6 +9,59 @@ import { Avatar, Badge } from '../ybase/ui.jsx'
 import PageHeader from '../ybase/PageHeader.jsx'
 
 const EMPTY = { email: '', display_name: '', password: '', role: 'member' }
+
+// Which models are live and how memory formation is keeping up — the glance the
+// old footer strip used to give, now a calm section instead of a lonely band.
+function SystemStatus() {
+  const [health, setHealth] = useState(null)
+  const [err, setErr] = useState(false)
+
+  useEffect(() => {
+    let timer
+    const load = () =>
+      getHealthDetails()
+        .then((h) => { setHealth(h); setErr(false) })
+        .catch(() => setErr(true))
+        .finally(() => { timer = setTimeout(load, 30000) })
+    load()
+    return () => clearTimeout(timer)
+  }, [])
+
+  const f = health?.formation || {}
+  const busy = (f.pending || 0) + (f.processing || 0)
+  const lastWrite = f.last_memory_write
+    ? new Date(f.last_memory_write).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '—'
+
+  return (
+    <section className="settings-section wb-reveal" style={{ '--i': 4 }}>
+      <h3>System status</h3>
+      <p className="settings-sub">Which models are live and how memory formation is keeping up.</p>
+      {err && <div className="md-empty">Backend unreachable.</div>}
+      {!health && !err && <div className="wb-skeleton" style={{ height: 48 }} />}
+      {health && (
+        <div className="ops-kv">
+          <div className="kv">
+            <span>Database</span>
+            <Badge tone={health.db ? 'success' : 'danger'} variant="soft" mono dot>{health.db ? 'connected' : 'down'}</Badge>
+          </div>
+          <div className="kv"><span>Language model</span><b>{health.llm_provider} · {health.llm_model}</b></div>
+          <div className="kv"><span>Embeddings</span><b>{health.embeddings}</b></div>
+          <div className="kv">
+            <span>Memory queue</span>
+            <Badge tone={busy > 0 ? 'warning' : 'success'} variant="soft" mono dot>
+              {busy > 0 ? `${f.processing} active · ${f.pending} queued` : 'idle'}{f.failed ? ` · ${f.failed} failed` : ''}
+            </Badge>
+          </div>
+          <div className="kv"><span>Last memory write</span><b className="tnum">{lastWrite}</b></div>
+          {health.slack_events && (
+            <div className="kv"><span>Slack events</span><Badge tone="success" variant="soft" mono dot>live</Badge></div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
 
 // Plain-English description of what each workspace role can do.
 const ROLE_BLURB = {
@@ -224,6 +277,8 @@ export default function Settings({ auth, onAuthChanged }) {
           ))}
         </div>
       </section>
+
+      <SystemStatus />
     </div>
   )
 }

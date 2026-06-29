@@ -1,17 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
-  House, Sparkles, Clock, GitCommitHorizontal, Users, Share2, FilePlus2,
-  ListChecks, Flag, Plug, BarChart3, Gauge, Settings as SettingsIcon,
-  Search, LogOut, Sun, Moon, PanelLeftClose, PanelLeftOpen, ChevronsUpDown, UserPlus,
+  Activity, GitCommitHorizontal, Users, Plug, Settings as SettingsIcon,
+  PanelLeftClose, PanelLeftOpen, Sun, Moon,
 } from 'lucide-react'
-import Home from './components/Home.jsx'
+import LeftPanel from './components/LeftPanel.jsx'
 import Chat from './components/Chat.jsx'
-import Timeline from './components/Timeline.jsx'
 import Decisions from './components/Decisions.jsx'
-import Graph from './components/Graph.jsx'
 import People from './components/People.jsx'
-import AddMemory from './components/AddMemory.jsx'
 import Auth from './components/Auth.jsx'
 import Onboarding from './components/Onboarding.jsx'
 import AccountMenu from './components/AccountMenu.jsx'
@@ -22,48 +18,54 @@ import Notifications from './components/Notifications.jsx'
 import Marketing from './components/Marketing.jsx'
 import Settings from './components/Settings.jsx'
 import Sources from './components/Sources.jsx'
-import Review from './components/Review.jsx'
-import Feedback from './components/Feedback.jsx'
-import Ops from './components/Ops.jsx'
-import Analytics from './components/Analytics.jsx'
 import CmdK from './components/CmdK.jsx'
 import DocModal from './components/DocModal.jsx'
-import StatusFooter from './components/StatusFooter.jsx'
 import Plans from './components/Plans.jsx'
-import BillingBanner from './components/BillingBanner.jsx'
 import Account from './components/Account.jsx'
 import { ToastProvider } from './components/Toast.jsx'
 import { getBootstrapStatus, getMe, getOnboarding, getBillingStatus, logout } from './api.js'
-import ybaseMark from './assets/ybase-mark.svg'
 
-// The product surface, as a grouped left-sidebar nav (Linear-style). `section`
-// places an item under a heading; the first two items sit above all sections.
-// `minRole` keeps the existing role gating.
-const NAV = [
-  { id: 'home', label: 'Home', icon: House },
-  { id: 'chat', label: 'Ask memory', icon: Sparkles },
-  { id: 'timeline', label: 'Timeline', icon: Clock, section: 'Memory' },
-  { id: 'decisions', label: 'Decision log', icon: GitCommitHorizontal, section: 'Memory' },
-  { id: 'people', label: 'People', icon: Users, section: 'Memory' },
-  { id: 'graph', label: 'Graph', icon: Share2, section: 'Memory' },
-  { id: 'add', label: 'Add to memory', icon: FilePlus2, section: 'Curate', minRole: 'admin' },
-  { id: 'review', label: 'Review', icon: ListChecks, section: 'Curate', minRole: 'admin' },
-  { id: 'feedback', label: 'Feedback', icon: Flag, section: 'Curate', minRole: 'admin' },
-  { id: 'sources', label: 'Sources', icon: Plug, section: 'Workspace', minRole: 'admin' },
-  { id: 'analytics', label: 'Analytics', icon: BarChart3, section: 'Workspace', minRole: 'admin' },
-  { id: 'ops', label: 'Ops', icon: Gauge, section: 'Workspace', minRole: 'admin' },
-  { id: 'settings', label: 'Settings', icon: SettingsIcon, section: 'Workspace', minRole: 'admin' },
-]
+// Two self-contained panels, no surrounding chrome bands. Right half = Chat
+// (open by default, expandable). Left half = a tiny set of workspace pages —
+// just the few that matter: members get Pulse + Decisions; admins also get
+// People, Sources and Settings. Everything else (account, billing, invites,
+// theme) lives in the workspace menu so the surface stays calm.
+const PAGE_DEFS = {
+  pulse: { label: 'Pulse', Icon: Activity },
+  decisions: { label: 'Decisions', Icon: GitCommitHorizontal },
+  people: { label: 'People', Icon: Users },
+  sources: { label: 'Sources', Icon: Plug },
+  settings: { label: 'Settings', Icon: SettingsIcon },
+}
+const MEMBER_PAGES = ['pulse', 'decisions']
+const ADMIN_PAGES = ['pulse', 'decisions', 'people', 'sources', 'settings']
+// Reachable from the menu but never shown as a nav pill.
+const EXTRA_PAGES = new Set(['account', 'plans'])
+const ADMIN_ONLY = new Set(['people', 'sources', 'settings'])
+const ALL_RENDERABLE = new Set([...ADMIN_PAGES, ...EXTRA_PAGES])
 
-// Routable but not sidebar items: plans/billing (from the billing banner or
-// account page) and account (from the workspace switcher in the sidebar footer).
-const EXTRA_TABS = new Set(['plans', 'account'])
-const LABELS = { ...Object.fromEntries(NAV.map((n) => [n.id, n.label])), plans: 'Billing', account: 'Account' }
-const TAB_IDS = new Set([...NAV.map((t) => t.id), ...EXTRA_TABS])
+// Hash tabs we still parse (some are legacy and get rerouted to a surviving page).
+const TAB_IDS = new Set([
+  'pulse', 'chat', 'home', 'decisions', 'people', 'sources', 'settings',
+  'account', 'plans', 'timeline', 'graph', 'add',
+])
 const ROLE_RANK = { member: 1, admin: 2, owner: 3 }
 
-// Smoothly cross-fade between views using the View Transitions API when available.
-// flushSync forces React to apply the DOM update inside the transition snapshot.
+const SPLIT_KEY = 'sb:splitRatio'
+const COLLAPSE_KEY = 'sb:leftCollapsed'
+const SPLIT_MIN = 0.26
+const SPLIT_MAX = 0.62
+
+// Map any incoming tab onto a page we actually render. Cut surfaces fold into
+// the nearest survivor (graph/timeline → decisions, add → sources).
+function mapTab(tab) {
+  let t = tab === 'home' || tab === 'chat' ? 'pulse' : tab
+  if (t === 'add') t = 'sources'
+  if (t === 'timeline' || t === 'graph') t = 'decisions'
+  if (!ALL_RENDERABLE.has(t)) t = 'pulse'
+  return t
+}
+
 function withViewTransition(fn) {
   const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
   if (document.startViewTransition && !reduce) {
@@ -81,27 +83,11 @@ function parseHashRoute() {
   const params = new URLSearchParams(query)
   const tab = parts[0] || 'chat'
 
-  if (tab === 'join' && parts[1]) {
-    return { tab: null, payload: {}, joinToken: parts[1] }
-  }
-
-  if (tab === 'shared' && parts[1]) {
-    return { tab: null, payload: {}, shareToken: parts[1] }
-  }
-
-  if (tab === 'reset' && parts[1]) {
-    return { tab: null, payload: {}, resetToken: parts[1] }
-  }
-
+  if (tab === 'join' && parts[1]) return { tab: null, payload: {}, joinToken: parts[1] }
+  if (tab === 'shared' && parts[1]) return { tab: null, payload: {}, shareToken: parts[1] }
+  if (tab === 'reset' && parts[1]) return { tab: null, payload: {}, resetToken: parts[1] }
   if (tab === 'documents' && parts[1]) {
-    return {
-      tab: null,
-      payload: {},
-      docModal: {
-        docId: Number(parts[1]),
-        highlight: params.get('highlight') || null,
-      },
-    }
+    return { tab: null, payload: {}, docModal: { docId: Number(parts[1]), highlight: params.get('highlight') || null } }
   }
 
   if (!TAB_IDS.has(tab)) return { tab: 'chat', payload: {} }
@@ -111,12 +97,6 @@ function parseHashRoute() {
     if (params.get('topic')) payload.topic = params.get('topic')
   } else if (tab === 'people' && parts[1]) {
     payload.personId = Number(parts[1])
-  } else if (tab === 'graph' && parts[1]) {
-    payload.nodeId = Number(parts[1])
-  } else if (tab === 'review' && parts[1]) {
-    payload.nodeId = Number(parts[1])
-  } else if (tab === 'timeline' && params.get('focus')) {
-    payload.focusKey = params.get('focus')
   }
   return { tab, payload }
 }
@@ -125,9 +105,6 @@ function routeHash(toTab, payload = {}) {
   if (toTab === 'decisions' && payload.decisionId) return `#/decisions/${payload.decisionId}`
   if (toTab === 'decisions' && payload.topic) return `#/decisions?topic=${encodeURIComponent(payload.topic)}`
   if (toTab === 'people' && payload.personId) return `#/people/${payload.personId}`
-  if (toTab === 'graph' && payload.nodeId) return `#/graph/${payload.nodeId}`
-  if (toTab === 'review' && payload.nodeId) return `#/review/${payload.nodeId}`
-  if (toTab === 'timeline' && payload.focusKey) return `#/timeline?focus=${encodeURIComponent(payload.focusKey)}`
   return `#/${TAB_IDS.has(toTab) ? toTab : 'chat'}`
 }
 
@@ -152,9 +129,6 @@ function applyTheme(theme) {
 function ThemeToggle() {
   const [theme, setTheme] = useState(resolveTheme)
 
-  // Track OS changes only while the user hasn't set an explicit preference.
-  // We must set the attribute ourselves now that the OS-dark CSS media query
-  // is gone (theme tokens live only under :root and :root[data-theme="dark"]).
   useEffect(() => {
     const mq = window.matchMedia?.('(prefers-color-scheme: dark)')
     if (!mq) return
@@ -179,36 +153,40 @@ function ThemeToggle() {
   const isDark = theme === 'dark'
   return (
     <button
-      className="wb-iconbtn"
+      className="wb-iconbtn wb-iconbtn--sm"
       onClick={toggle}
       title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
       aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
     >
-      {isDark ? <Sun size={17} strokeWidth={1.8} /> : <Moon size={17} strokeWidth={1.8} />}
+      {isDark ? <Sun size={16} strokeWidth={1.8} /> : <Moon size={16} strokeWidth={1.8} />}
     </button>
   )
 }
 
 export default function App() {
-  const [tab, setTab] = useState('chat')
+  const [page, setPage] = useState('pulse')
   const [authState, setAuthState] = useState({ loading: true, needsBootstrap: false, user: null })
-  // bumping `ask.n` lets Home re-send even the same question text
   const [ask, setAsk] = useState({ question: null, n: 0 })
-  // cross-view navigation payload: views read it when focus.tab matches
   const [focus, setFocus] = useState({ tab: null, n: 0 })
   const [cmdkOpen, setCmdkOpen] = useState(false)
-  const [docModal, setDocModal] = useState(null) // { docId, highlight }
-  const [joinToken, setJoinToken] = useState(null) // invite link: #/join/<token>
-  const [shareToken, setShareToken] = useState(null) // public decision: #/shared/<token>
-  const [resetToken, setResetToken] = useState(null) // password reset: #/reset/<token>
-  // Keeps the setup wizard mounted across workspace creation (once a user enters
-  // onboarding, their workspace becomes non-null mid-flow — this flag prevents an
-  // early jump into the main app until they finish or skip).
+  const [docModal, setDocModal] = useState(null)
+  const [joinToken, setJoinToken] = useState(null)
+  const [shareToken, setShareToken] = useState(null)
+  const [resetToken, setResetToken] = useState(null)
   const [onboarding, setOnboarding] = useState(false)
   const [inviteOpen, setInviteOpen] = useState(false)
-  const [setup, setSetup] = useState(null) // GET /api/workspace/onboarding: checklist state
-  const [billing, setBilling] = useState(null) // GET /api/billing/status: trial/plan state
-  const lastNonDocHash = React.useRef('#/home')
+  const [setup, setSetup] = useState(null)
+  const [billing, setBilling] = useState(null)
+
+  const [splitRatio, setSplitRatio] = useState(() => {
+    const v = parseFloat(localStorage.getItem(SPLIT_KEY))
+    return v >= SPLIT_MIN && v <= SPLIT_MAX ? v : 0.4
+  })
+  const [leftCollapsed, setLeftCollapsed] = useState(() => localStorage.getItem(COLLAPSE_KEY) === '1')
+  const [dragging, setDragging] = useState(false)
+  const [isNarrow, setIsNarrow] = useState(() => window.matchMedia?.('(max-width: 820px)').matches || false)
+  const splitRef = React.useRef(null)
+  const lastNonDocHash = React.useRef('#/chat')
 
   const loadSetup = React.useCallback(() => {
     getOnboarding().then(setSetup).catch(() => setSetup(null))
@@ -216,7 +194,6 @@ export default function App() {
   const loadBilling = React.useCallback(() => {
     getBillingStatus().then(setBilling).catch(() => setBilling(null))
   }, [])
-  const currentTabRef = React.useRef('home')
 
   const loadAuth = async () => {
     try {
@@ -232,40 +209,29 @@ export default function App() {
     }
   }
 
+  const applyTab = React.useCallback((tab, payload = {}) => {
+    const next = mapTab(tab)
+    withViewTransition(() => {
+      setPage(next)
+      setFocus((f) => ({ tab: next, n: f.n + 1, ...payload }))
+    })
+  }, [])
+
   useEffect(() => {
     loadAuth()
     const applyRoute = () => {
       const route = parseHashRoute()
-      if (route.joinToken) {
-        setJoinToken(route.joinToken)
-        return
-      }
+      if (route.joinToken) { setJoinToken(route.joinToken); return }
       setJoinToken(null)
-      if (route.shareToken) {
-        setShareToken(route.shareToken)
-        return
-      }
+      if (route.shareToken) { setShareToken(route.shareToken); return }
       setShareToken(null)
-      if (route.resetToken) {
-        setResetToken(route.resetToken)
-        return
-      }
+      if (route.resetToken) { setResetToken(route.resetToken); return }
       setResetToken(null)
-      if (route.docModal?.docId) {
-        setDocModal(route.docModal)
-        return
-      }
+      if (route.docModal?.docId) { setDocModal(route.docModal); return }
       const nextTab = route.tab || 'chat'
       lastNonDocHash.current = routeHash(nextTab, route.payload)
-      const tabChanged = currentTabRef.current !== nextTab
-      currentTabRef.current = nextTab
-      const apply = () => {
-        setDocModal(null)
-        setFocus((f) => ({ tab: nextTab, n: f.n + 1, ...route.payload }))
-        setTab(nextTab)
-      }
-      if (tabChanged) withViewTransition(apply)
-      else apply()
+      setDocModal(null)
+      applyTab(nextTab, route.payload)
     }
     applyRoute()
     window.addEventListener('hashchange', applyRoute)
@@ -276,21 +242,29 @@ export default function App() {
       window.removeEventListener('hashchange', applyRoute)
       window.removeEventListener('auth:required', onRequired)
     }
-  }, [])
+  }, [applyTab])
 
   useEffect(() => {
-    document.title = LABELS[tab] ? `YBase — ${LABELS[tab]}` : 'YBase'
-  }, [tab])
+    document.title = PAGE_DEFS[page] ? `YBase — ${PAGE_DEFS[page].label}` : 'YBase'
+  }, [page])
 
-  // Setup-checklist + billing state, refetched whenever the active workspace changes.
+  useEffect(() => { try { localStorage.setItem(SPLIT_KEY, String(splitRatio)) } catch { /* ignore */ } }, [splitRatio])
+  useEffect(() => { try { localStorage.setItem(COLLAPSE_KEY, leftCollapsed ? '1' : '0') } catch { /* ignore */ } }, [leftCollapsed])
+
+  useEffect(() => {
+    const mq = window.matchMedia?.('(max-width: 820px)')
+    if (!mq) return
+    const fn = () => setIsNarrow(mq.matches)
+    mq.addEventListener?.('change', fn)
+    return () => mq.removeEventListener?.('change', fn)
+  }, [])
+
   const workspaceId = authState.user?.workspace?.id
   useEffect(() => {
     if (workspaceId) { loadSetup(); loadBilling() }
     else { setSetup(null); setBilling(null) }
   }, [workspaceId, loadSetup, loadBilling])
 
-  // A write blocked by the server (402) re-checks billing so the banner flips
-  // to read-only without a manual refresh.
   useEffect(() => {
     const onReadonly = () => loadBilling()
     window.addEventListener('billing:readonly', onReadonly)
@@ -308,20 +282,13 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const askFromHome = (question) => {
-    setAsk((a) => ({ question, n: a.n + 1 }))
-    navigate('chat')
-  }
-
   const navigate = (toTab, payload = {}) => {
     const next = routeHash(toTab, payload)
-    if (window.location.hash === next) {
-      setFocus((f) => ({ tab: toTab, n: f.n + 1, ...payload }))
-      setTab(toTab)
-    } else {
-      window.location.hash = next
-    }
+    if (window.location.hash === next) applyTab(toTab, payload)
+    else window.location.hash = next
   }
+
+  const askFromHome = (question) => setAsk((a) => ({ question, n: a.n + 1 }))
 
   const openDoc = (docId, highlight = null) => {
     const next = documentHash(docId, highlight)
@@ -332,22 +299,34 @@ export default function App() {
   const closeDoc = () => {
     setDocModal(null)
     if (window.location.hash.startsWith('#/documents/')) {
-      window.history.replaceState(null, '', lastNonDocHash.current || '#/home')
+      window.history.replaceState(null, '', lastNonDocHash.current || '#/chat')
     }
-  }
-
-  const onPick = (item) => {
-    if (item.type === 'decision') navigate('decisions', { decisionId: item.id })
-    else if (item.type === 'question') navigate('timeline', { focusKey: `question-${item.id}` })
-    else if (item.type === 'entity') navigate('people', { personId: item.id })
-    else if (item.type === 'topic') navigate('decisions', { topic: item.title })
-    else if (item.type === 'document') openDoc(item.id)
   }
 
   const onLogout = async () => {
     try { await logout() } catch { /* already gone */ }
     setAuthState({ loading: false, needsBootstrap: false, user: null })
     navigate('home')
+  }
+
+  const startDrag = (e) => {
+    e.preventDefault()
+    setDragging(true)
+    document.body.classList.add('is-col-resizing')
+    const onMove = (ev) => {
+      const rect = splitRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const r = (ev.clientX - rect.left) / rect.width
+      setSplitRatio(Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, r)))
+    }
+    const onUp = () => {
+      setDragging(false)
+      document.body.classList.remove('is-col-resizing')
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
   }
 
   if (shareToken) {
@@ -404,8 +383,6 @@ export default function App() {
   }
 
   if (authState.needsBootstrap || !authState.user) {
-    // Logged-out surface. First run → locked bootstrap. Otherwise the marketing
-    // landing page is the public entry; #/login and #/signup open the auth card.
     const hash = window.location.hash
     const wantsAuth = /^#\/(login|signup)/.test(hash)
     const onAuthed = (user) => {
@@ -416,7 +393,7 @@ export default function App() {
       return (
         <ToastProvider>
           <Marketing onEnter={(intent) => {
-            window.location.hash = intent === 'signup' ? '#/signup' : intent === 'login' ? '#/login' : '#/login'
+            window.location.hash = intent === 'signup' ? '#/signup' : '#/login'
           }} />
         </ToastProvider>
       )
@@ -434,9 +411,6 @@ export default function App() {
     )
   }
 
-  // Onboarding: an authenticated user with no workspace yet (fresh signup) must
-  // run the setup wizard before reaching the app. `onboarding` keeps them there
-  // through workspace creation until they finish or skip.
   if (!authState.user.workspace || onboarding) {
     return (
       <ToastProvider>
@@ -459,96 +433,137 @@ export default function App() {
   const workspace = authState.user.workspace
   const role = workspace.role
   const isAdmin = ROLE_RANK[role] >= ROLE_RANK.admin
-  const visibleNav = NAV.filter((n) => !n.minRole || ROLE_RANK[role] >= ROLE_RANK[n.minRole])
-  const activeTab =
-    visibleNav.some((n) => n.id === tab) || EXTRA_TABS.has(tab) ? tab : 'chat'
+  const navPages = isAdmin ? ADMIN_PAGES : MEMBER_PAGES
+  // Gate admin-only pages reached via a stale hash; keep account/plans for all.
+  const activePage = ADMIN_ONLY.has(page) && !isAdmin ? 'pulse' : page
+  const collapsed = leftCollapsed && !isNarrow
+
+  const onPick = (item) => {
+    if (item.type === 'decision') navigate('decisions', { decisionId: item.id })
+    else if (item.type === 'topic') navigate('decisions', { topic: item.title })
+    else if (item.type === 'entity') navigate(isAdmin ? 'people' : 'decisions', isAdmin ? { personId: item.id } : {})
+    else if (item.type === 'question') askFromHome(`What's the latest on “${item.title}”?`)
+    else if (item.type === 'document') openDoc(item.id)
+  }
+
+  const renderPage = () => {
+    switch (activePage) {
+      case 'decisions':
+        return <Decisions focus={focus.tab === 'decisions' ? focus : null} onOpenDoc={openDoc} onNavigate={navigate} />
+      case 'people':
+        return <People focus={focus.tab === 'people' ? focus : null} onNavigate={navigate} onOpenDoc={openDoc} />
+      case 'sources':
+        return <Sources />
+      case 'settings':
+        return <Settings auth={authState.user} onAuthChanged={() => { loadAuth(); loadSetup() }} />
+      case 'account':
+        return <Account user={authState.user} onAuthChanged={() => { loadAuth(); loadSetup(); loadBilling() }} onNavigate={navigate} onBack={() => navigate('pulse')} />
+      case 'plans':
+        return <Plans billing={billing} canPay={role === 'owner'} onUpgraded={() => { loadBilling(); loadAuth() }} onBack={() => navigate('pulse')} />
+      default:
+        return (
+          <LeftPanel
+            canAdmin={isAdmin}
+            workspace={workspace}
+            user={authState.user}
+            setup={setup}
+            onAsk={askFromHome}
+            onNavigate={navigate}
+            onSelectView={navigate}
+            onInvite={() => setInviteOpen(true)}
+          />
+        )
+    }
+  }
 
   return (
     <ToastProvider>
-      <div className="wb-app wb-app--chatfirst">
-        <div className="app-main">
-          <header className="app-topbar app-topbar--minimal">
-            <div className="topbar-brand">
-              <img src={ybaseMark} alt="YBase" width="22" height="22" />
-              <span className="topbar-ws">{workspace.name}</span>
+      <div className={`wb-app wb-app--split${collapsed ? ' is-left-collapsed' : ''}`}>
+        <div className="split" ref={splitRef}>
+          {collapsed ? (
+            <div className="left-rail">
+              <button className="left-rail-btn" title="Expand panel" aria-label="Expand panel" onClick={() => setLeftCollapsed(false)}>
+                <PanelLeftOpen size={18} strokeWidth={1.8} />
+              </button>
+              <div className="rail-pages">
+                {navPages.map((id) => {
+                  const { label, Icon } = PAGE_DEFS[id]
+                  return (
+                    <button
+                      key={id}
+                      className={`left-rail-btn${activePage === id ? ' is-active' : ''}`}
+                      title={label}
+                      aria-label={label}
+                      onClick={() => { setLeftCollapsed(false); navigate(id) }}
+                    >
+                      <Icon size={18} strokeWidth={1.8} />
+                    </button>
+                  )
+                })}
+              </div>
             </div>
-            <div className="app-top-right">
-              <ThemeToggle />
-              <Notifications isAdmin={isAdmin} />
-              <AccountMenu
-                workspace={workspace}
-                user={authState.user}
-                role={role}
-                isAdmin={isAdmin}
-                onNavigate={navigate}
-                onInvite={() => setInviteOpen(true)}
-                onSearch={() => setCmdkOpen(true)}
-                onLogout={onLogout}
-              />
-            </div>
-          </header>
+          ) : (
+            <section className="split-left" style={isNarrow ? undefined : { width: `${splitRatio * 100}%` }}>
+              <div className="panel-head">
+                <AccountMenu
+                  workspace={workspace}
+                  user={authState.user}
+                  role={role}
+                  isAdmin={isAdmin}
+                  onNavigate={navigate}
+                  onInvite={() => setInviteOpen(true)}
+                  onSearch={() => setCmdkOpen(true)}
+                  onLogout={onLogout}
+                />
+                <div className="panel-head-actions">
+                  <ThemeToggle />
+                  <Notifications isAdmin={isAdmin} />
+                  {!isNarrow && (
+                    <button className="wb-iconbtn wb-iconbtn--sm" title="Collapse panel" aria-label="Collapse panel" onClick={() => setLeftCollapsed(true)}>
+                      <PanelLeftClose size={16} strokeWidth={1.8} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <nav className="leftnav" aria-label="Workspace pages">
+                {navPages.map((id) => {
+                  const { label, Icon } = PAGE_DEFS[id]
+                  return (
+                    <button
+                      key={id}
+                      className={`leftnav-btn${activePage === id ? ' is-active' : ''}`}
+                      onClick={() => navigate(id)}
+                    >
+                      <Icon size={15} strokeWidth={1.9} /> {label}
+                    </button>
+                  )
+                })}
+              </nav>
+              <div className="left-scroll">{renderPage()}</div>
+            </section>
+          )}
 
-          <BillingBanner billing={billing} activeTab={activeTab} onUpgrade={() => navigate('plans')} />
+          {!collapsed && !isNarrow && (
+            <div
+              className={`split-divider${dragging ? ' is-dragging' : ''}`}
+              onPointerDown={startDrag}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize panels"
+            />
+          )}
 
-          <main className="app-content content">
-            {activeTab === 'plans' && (
-              <Plans
-                billing={billing}
-                canPay={role === 'owner'}
-                onUpgraded={() => { loadBilling(); loadAuth() }}
-                onBack={() => navigate('home')}
-              />
-            )}
-            {activeTab === 'account' && (
-              <Account
-                user={authState.user}
-                onAuthChanged={() => { loadAuth(); loadSetup(); loadBilling() }}
-                onNavigate={navigate}
-                onBack={() => navigate('home')}
-              />
-            )}
-            {activeTab === 'home' && (
-              <Home
-                onAsk={askFromHome}
-                onNavigate={navigate}
-                canAdmin={isAdmin}
-                workspace={workspace}
-                user={authState.user}
-                setup={setup}
-                onInvite={() => setInviteOpen(true)}
-              />
-            )}
-            <div style={{ display: activeTab === 'chat' ? 'block' : 'none', height: '100%' }}>
-              <Chat pendingAsk={ask} canAdd={isAdmin} onAddDoc={() => navigate('add')} onOpenDoc={openDoc} onNavigate={navigate} />
-            </div>
-            {activeTab === 'timeline' && (
-              <Timeline focus={focus.tab === 'timeline' ? focus : null} onOpenDoc={openDoc} />
-            )}
-            {activeTab === 'decisions' && (
-              <Decisions focus={focus.tab === 'decisions' ? focus : null} onOpenDoc={openDoc} />
-            )}
-            {activeTab === 'people' && (
-              <People
-                focus={focus.tab === 'people' ? focus : null}
-                onNavigate={navigate}
-                onOpenDoc={openDoc}
-              />
-            )}
-            {activeTab === 'graph' && (
-              <Graph focus={focus.tab === 'graph' ? focus : null} onOpenDoc={openDoc} />
-            )}
-            {activeTab === 'analytics' && <Analytics />}
-            {activeTab === 'ops' && <Ops onNavigate={navigate} onAsk={askFromHome} />}
-            {activeTab === 'review' && <Review focus={focus.tab === 'review' ? focus : null} />}
-            {activeTab === 'feedback' && <Feedback onOpenDoc={openDoc} onNavigate={navigate} />}
-            {activeTab === 'sources' && <Sources />}
-            {activeTab === 'add' && <AddMemory />}
-            {activeTab === 'settings' && (
-              <Settings auth={authState.user} onAuthChanged={() => { loadAuth(); loadSetup() }} />
-            )}
-          </main>
-
-          {isAdmin && <StatusFooter />}
+          <section className="split-right">
+            <Chat
+              pendingAsk={ask}
+              canAdd={isAdmin}
+              onAddDoc={() => navigate('sources')}
+              onOpenDoc={openDoc}
+              onNavigate={navigate}
+              onToggleFull={() => setLeftCollapsed((c) => !c)}
+              fullChat={collapsed}
+            />
+          </section>
         </div>
 
         {inviteOpen && (
@@ -561,11 +576,7 @@ export default function App() {
 
         <CmdK open={cmdkOpen} onClose={() => setCmdkOpen(false)} onPick={onPick} />
         {docModal && (
-          <DocModal
-            docId={docModal.docId}
-            highlight={docModal.highlight}
-            onClose={closeDoc}
-          />
+          <DocModal docId={docModal.docId} highlight={docModal.highlight} onClose={closeDoc} />
         )}
       </div>
     </ToastProvider>
