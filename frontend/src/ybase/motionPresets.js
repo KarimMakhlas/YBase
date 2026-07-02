@@ -26,7 +26,7 @@ export const spring = {
 }
 
 // Durations (seconds) — mirror of --dur-* (which are in ms).
-export const dur = {
+const dur = {
   fast: 0.15,
   base: 0.22,
   slow: 0.34,
@@ -55,15 +55,6 @@ export const fadeUp = {
 }
 
 // Scale-in for cards / nodes that should "pop" into place.
-export const scaleIn = {
-  hidden: { opacity: 0, scale: 0.92, y: 14 },
-  show: {
-    opacity: 1,
-    scale: 1,
-    y: 0,
-    transition: spring.soft,
-  },
-}
 
 // Shared viewport config for whileInView — trigger once, a bit before fully on screen.
 export const inView = { once: true, amount: 0.3, margin: '0px 0px -8% 0px' }

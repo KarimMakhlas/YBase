@@ -27,23 +27,23 @@
   --fs-xs:  12px;   /* @kind font */
   --fs-2xs: 11px;   /* @kind font */
 
-  /* Weights */
+  /* Weights — friendly medium register, never chunky */
   --fw-regular:  400; /* @kind font */
   --fw-medium:   500; /* @kind font */
-  --fw-semibold: 600; /* @kind font */
-  --fw-bold:     680; /* @kind font */
+  --fw-semibold: 570; /* @kind font */
+  --fw-bold:     650; /* @kind font */
 
-  /* Line heights */
+  /* Line heights — airy */
   --lh-none:  1;    /* @kind font */
-  --lh-tight: 1.16; /* @kind font */
-  --lh-snug:  1.32; /* @kind font */
-  --lh-base:  1.55; /* @kind font */
-  --lh-relaxed: 1.7;/* @kind font */
+  --lh-tight: 1.18; /* @kind font */
+  --lh-snug:  1.35; /* @kind font */
+  --lh-base:  1.6;  /* @kind font */
+  --lh-relaxed: 1.72;/* @kind font */
 
-  /* Letter-spacing — tighten as size grows (optical) */
-  --ls-display: -0.03em;  /* @kind font */
-  --ls-tight:   -0.02em;  /* @kind font */
-  --ls-snug:    -0.011em; /* @kind font */
+  /* Letter-spacing — relaxed; soft look breathes, no hard tracking */
+  --ls-display: -0.022em; /* @kind font */
+  --ls-tight:   -0.014em; /* @kind font */
+  --ls-snug:    -0.008em; /* @kind font */
   --ls-normal:  0;        /* @kind font */
   --ls-wide:    0.02em;   /* @kind font */
   --ls-label:   0.06em;   /* @kind font */

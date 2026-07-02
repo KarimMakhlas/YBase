@@ -464,7 +464,6 @@ export default function App() {
         return (
           <LeftPanel
             canAdmin={isAdmin}
-            workspace={workspace}
             user={authState.user}
             setup={setup}
             onAsk={askFromHome}
@@ -478,7 +477,7 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <div className={`wb-app wb-app--split${collapsed ? ' is-left-collapsed' : ''}`}>
+      <div className="wb-app">
         <div className="split" ref={splitRef}>
           {collapsed ? (
             <div className="left-rail">

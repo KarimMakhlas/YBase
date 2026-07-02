@@ -8,7 +8,7 @@ inbox is a config change away.
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from app.core import config, db, mailer as email
 from app.core.dates import iso_date

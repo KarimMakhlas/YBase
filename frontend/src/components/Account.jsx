@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { ArrowLeft, Check, LogOut, ArrowRightLeft, DoorOpen, CreditCard } from 'lucide-react'
+import { ArrowLeft, LogOut, ArrowRightLeft, DoorOpen, CreditCard } from 'lucide-react'
 import { updateMe, logoutAll, leaveWorkspace, switchWorkspace } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Avatar, Badge } from '../ybase/ui.jsx'

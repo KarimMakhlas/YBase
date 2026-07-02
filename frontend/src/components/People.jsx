@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { Search, GitCommitHorizontal, CircleHelp } from 'lucide-react'
 import { listPeople, getPerson } from '../api.js'
 import { useToast } from './Toast.jsx'
-import { Avatar, Badge, StatusBadge } from '../ybase/ui.jsx'
+import { Avatar, StatusBadge } from '../ybase/ui.jsx'
 import PageHeader from '../ybase/PageHeader.jsx'
 
 // Person pages: everything someone advocated, decided, or raised — built from

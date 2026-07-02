@@ -3,7 +3,7 @@ import { Search, ChevronRight, ArrowRight, Link2, Download } from 'lucide-react'
 import { createDecisionShare, getJSON, revokeDecisionShare } from '../api.js'
 import { decisionsToCSV, decisionsToMarkdown, downloadFile } from '../export.js'
 import { useToast } from './Toast.jsx'
-import { Badge, StatusBadge, SrcBadge } from '../ybase/ui.jsx'
+import { StatusBadge } from '../ybase/ui.jsx'
 import PageHeader from '../ybase/PageHeader.jsx'
 
 const REL_LABEL = {

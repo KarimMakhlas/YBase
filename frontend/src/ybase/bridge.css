@@ -13,23 +13,17 @@
   /* Surfaces */
   --panel:    var(--surface);
   --panel-2:  var(--surface-sunken);
-  --panel-3:  var(--surface-hover);
 
   /* Text */
   --muted:    var(--text-secondary);
   --faint:    var(--text-tertiary);
 
   /* Accent ramp (legacy step names → semantic accent) */
-  --accent-50:   var(--accent-soft);
-  --accent-100:  var(--accent-soft-hover);
-  --accent-200:  var(--accent-border);
   --accent-500:  var(--accent);
-  --accent-600:  var(--accent-hover);
   --accent-700:  var(--accent-active);
 
   /* Status hues */
   --green:        var(--success);
-  --green-soft:   var(--success-soft);
   --green-border: var(--success-border);
   --amber:        var(--warning);
   --amber-soft:   var(--warning-soft);
@@ -39,6 +33,5 @@
   --red-border:   var(--danger-border);
 
   /* Elevation / motion legacy aliases */
-  --shadow-color: var(--shadow-rgb);
   --ease:         var(--dur-fast) var(--ease-out);
 }

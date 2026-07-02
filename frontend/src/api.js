@@ -5,7 +5,7 @@ export async function getJSON(path) {
   return res.json()
 }
 
-export async function postJSON(path, body) {
+async function postJSON(path, body) {
   const res = await fetch(path, {
     method: 'POST',
     credentials: 'include',
@@ -18,7 +18,7 @@ export async function postJSON(path, body) {
   return res.json()
 }
 
-export async function deleteJSON(path) {
+async function deleteJSON(path) {
   const res = await fetch(path, { method: 'DELETE', credentials: 'include' })
   if (res.status === 401) window.dispatchEvent(new Event('auth:required'))
   if (res.status === 402) window.dispatchEvent(new Event('billing:readonly'))
@@ -26,7 +26,7 @@ export async function deleteJSON(path) {
   return res.json()
 }
 
-export async function patchJSON(path, body) {
+async function patchJSON(path, body) {
   const res = await fetch(path, {
     method: 'PATCH',
     credentials: 'include',
@@ -46,27 +46,19 @@ export const saveMessage = (sessionId, role, content, meta = null) =>
   postJSON(`/api/sessions/${sessionId}/messages`, { role, content, meta })
 export const deleteSession = (id) => deleteJSON(`/api/sessions/${id}`)
 
-export const getDecisionShare = (nodeId) => getJSON(`/api/decisions/${nodeId}/share`)
 export const createDecisionShare = (nodeId) => postJSON(`/api/decisions/${nodeId}/share`, {})
 export const revokeDecisionShare = (nodeId) => deleteJSON(`/api/decisions/${nodeId}/share`)
 export const getSharedDecision = (token) =>
   getJSON(`/api/shared/decisions/${encodeURIComponent(token)}`)
 
 export const searchMemory = (q) => getJSON(`/api/search?q=${encodeURIComponent(q)}`)
-export const getNode = (id) => getJSON(`/api/nodes/${id}`)
 export const getDocument = (id, full = false) =>
   getJSON(`/api/documents/${id}${full ? '?full=true' : ''}`)
 export const listPeople = () => getJSON('/api/people')
 export const getPerson = (id) => getJSON(`/api/people/${id}`)
 export const getStats = (since = null) =>
   getJSON(`/api/stats${since ? `?since=${encodeURIComponent(since)}` : ''}`)
-export const getHealth = () => getJSON('/api/health')
 export const getHealthDetails = () => getJSON('/api/health/details')
-export const getOpsOverview = () => getJSON('/api/ops/overview')
-export const getAnalyticsOverview = (days = 30) =>
-  getJSON(`/api/analytics/overview?days=${days}`)
-export const getMemoryQuality = () => getJSON('/api/analytics/quality')
-export const retryFailedDocuments = () => postJSON('/api/ops/failed-documents/retry', {})
 export const seedDemoData = () => postJSON('/api/ops/demo-seed', {})
 
 export const listDigests = () => getJSON('/api/digests')
@@ -120,30 +112,9 @@ export const retrySourceJob = (connectionId, jobId) =>
   postJSON(`/api/sources/${connectionId}/jobs/${jobId}/retry`, {})
 export const deleteSource = (connectionId) => deleteJSON(`/api/sources/${connectionId}`)
 
-export const listReviewNodes = ({ state = 'needs_review', kind = '', q = '' } = {}) => {
-  const params = new URLSearchParams()
-  if (state) params.set('state', state)
-  if (kind) params.set('kind', kind)
-  if (q) params.set('q', q)
-  return getJSON(`/api/memory-review?${params.toString()}`)
-}
-export const getReviewNode = (id) => getJSON(`/api/memory-review/${id}`)
-export const patchReviewNode = (id, body) => patchJSON(`/api/memory-review/${id}`, body)
-export const archiveReviewNode = (id, reason = '') =>
-  postJSON(`/api/memory-review/${id}/archive`, { reason })
-export const unarchiveReviewNode = (id) => postJSON(`/api/memory-review/${id}/unarchive`, {})
-
 export const submitAnswerFeedback = (body) => postJSON('/api/answer-feedback', body)
 export const getMyAnswerFeedback = (chatMessageId) =>
   getJSON(`/api/answer-feedback/mine?chat_message_id=${encodeURIComponent(chatMessageId)}`)
-export const listAnswerFeedback = ({ status = 'open', issue_type = '' } = {}) => {
-  const params = new URLSearchParams()
-  if (status) params.set('status', status)
-  if (issue_type) params.set('issue_type', issue_type)
-  return getJSON(`/api/answer-feedback?${params.toString()}`)
-}
-export const getAnswerFeedback = (id) => getJSON(`/api/answer-feedback/${id}`)
-export const patchAnswerFeedback = (id, body) => patchJSON(`/api/answer-feedback/${id}`, body)
 
 // POST /api/query and dispatch SSE events to handlers:
 // { status, delta, metadata, error, done }

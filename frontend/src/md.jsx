@@ -1,4 +1,3 @@
-import React from 'react'
 
 // Minimal markdown renderer (headings, lists, fenced code, bold, inline code)
 // plus [C12]-style citation chips. Dependency-free on purpose.

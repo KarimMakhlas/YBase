@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import httpx
 
-from app.core import db, migrate
+from app.core import migrate
 from app.domains.auth import service as auth
 from app.main import app
 

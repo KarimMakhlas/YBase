@@ -70,7 +70,7 @@ export function StatusBadge({ status, children, ...rest }) {
 }
 
 // Deterministic, calm avatar colours derived from the name.
-const PALETTE = ['#5e6ad2', '#1a9d63', '#c0820a', '#d24545', '#2b7fd4', '#7c5ce0', '#0f766e', '#b8508a']
+const PALETTE = ['#7c5cff', '#1cae74', '#c98d18', '#e05577', '#4a80e8', '#b153c9', '#0f9d9d', '#d6538b']
 
 function hashName(str) {
   let h = 0

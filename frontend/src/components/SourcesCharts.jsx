@@ -1,6 +1,5 @@
 // Sources health ring, split out so Recharts stays a lazily-loaded chunk
 // (shared with HomeCharts).
-import React from 'react'
 import { ResponsiveContainer, RadialBarChart, RadialBar, PolarAngleAxis } from 'recharts'
 
 // Radial gauge of sync success rate.

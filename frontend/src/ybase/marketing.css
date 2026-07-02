@@ -42,7 +42,7 @@
 .wb-marketing .logos { display: flex; gap: var(--sp-8); align-items: center; flex-wrap: wrap; justify-content: center; color: var(--text-tertiary); font-weight: var(--fw-semibold); font-size: 16px; letter-spacing: -0.01em; opacity: 0.8; }
 
 /* product preview */
-.wb-marketing .preview { margin: var(--sp-10) auto 0; max-width: 880px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-xl), 0 0 70px rgba(94, 106, 210, 0.14); overflow: hidden; }
+.wb-marketing .preview { margin: var(--sp-10) auto 0; max-width: 880px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-xl), 0 0 70px rgba(124, 92, 255, 0.14); overflow: hidden; }
 .wb-marketing .preview-bar { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border-subtle); background: var(--surface-inset); }
 .wb-marketing .dot3 { width: 11px; height: 11px; border-radius: 50%; }
 .wb-marketing .preview-body { padding: 26px 30px 30px; text-align: left; }
@@ -65,7 +65,7 @@
 /* steps */
 .wb-marketing .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-5); margin-top: var(--sp-10); }
 .wb-marketing .step { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--sp-6); box-shadow: var(--shadow-sm); position: relative; overflow: hidden; }
-.wb-marketing .step::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--accent), rgba(94, 106, 210, 0.2), transparent); }
+.wb-marketing .step::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--accent), rgba(124, 92, 255, 0.2), transparent); }
 .wb-marketing .step:nth-child(2)::before { background: linear-gradient(90deg, var(--success), rgba(62, 201, 138, 0.2), transparent); }
 .wb-marketing .step:nth-child(3)::before { background: linear-gradient(90deg, var(--info), rgba(90, 162, 236, 0.2), transparent); }
 .wb-marketing .step-n { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--accent-text); }
@@ -101,7 +101,7 @@
 .wb-marketing .split code { font-family: var(--font-mono); font-size: 0.9em; color: var(--accent-text); }
 
 /* cta */
-.wb-marketing .cta { text-align: center; background: linear-gradient(155deg, var(--indigo-500) 0%, var(--indigo-700) 50%, var(--indigo-900) 100%); color: #fff; border-radius: var(--radius-xl); padding: 72px 32px; box-shadow: var(--shadow-xl), 0 0 80px rgba(94, 106, 210, 0.22); position: relative; overflow: hidden; }
+.wb-marketing .cta { text-align: center; background: linear-gradient(155deg, var(--indigo-500) 0%, var(--indigo-700) 50%, var(--indigo-900) 100%); color: #fff; border-radius: var(--radius-xl); padding: 72px 32px; box-shadow: var(--shadow-xl), 0 0 80px rgba(124, 92, 255, 0.22); position: relative; overflow: hidden; }
 .wb-marketing .cta::after { content: ""; position: absolute; inset: 0; background: radial-gradient(50% 65% at 50% 0%, rgba(255,255,255,0.22), transparent 68%), radial-gradient(30% 50% at 82% 100%, rgba(62, 201, 138, 0.20), transparent 60%), radial-gradient(30% 50% at 18% 90%, rgba(90, 162, 236, 0.16), transparent 60%); }
 .wb-marketing .cta > * { position: relative; }
 .wb-marketing .cta h2 { font-size: var(--fs-display-lg); font-weight: var(--fw-bold); letter-spacing: var(--ls-tight); margin: 0 0 14px; }

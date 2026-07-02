@@ -1,16 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
-  RotateCcw, GitCommitHorizontal, CircleHelp, CheckCircle2, FileText, Plug,
-  ArrowRight, ArrowUpRight, AlertTriangle, Sparkles,
+  RotateCcw, GitCommitHorizontal, CircleHelp, CheckCircle2, FileText,
+  ArrowRight, ArrowUpRight, AlertTriangle,
 } from 'lucide-react'
-import { motion, MotionConfig } from 'framer-motion'
 import { getStats } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { useThemeColors, SOURCE_VARS } from '../ybase/charts.js'
-import { staggerContainer, fadeUp } from '../ybase/motionPresets.js'
 import CountUp from '../ybase/CountUp.jsx'
 import SetupChecklist from './SetupChecklist.jsx'
-import '../ybase/home.css'
 
 const SOURCE_LABEL = { slack: 'Slack', notion: 'Notion', github: 'GitHub', jira: 'Jira', meeting: 'Meeting' }
 
@@ -25,7 +22,7 @@ function greeting() {
 // A calm, glanceable left panel. Idle "Pulse": one health line, a few counters,
 // where memory comes from, the relitigation hook, and a weekly change feed. The
 // anti-overwhelm surface — everything deeper is one tap away in chat or the menu.
-export default function LeftPanel({ canAdmin = false, workspace, user, setup, onAsk, onNavigate, onSelectView, onInvite }) {
+export default function LeftPanel({ canAdmin = false, user, setup, onAsk, onNavigate, onSelectView, onInvite }) {
   const [stats, setStats] = useState(null)
   const toast = useToast()
   const srcColors = useThemeColors(SOURCE_VARS)
@@ -56,7 +53,6 @@ export default function LeftPanel({ canAdmin = false, workspace, user, setup, on
   const sources = stats?.sources || []
   const revisit = stats?.revisits?.[0]
   const digest = stats?.digest
-  const role = workspace?.role || 'member'
   const firstName = (user?.display_name || '').split(/\s+/)[0] || 'there'
   const totalDocs = sources.reduce((a, s) => a + (s.n || 0), 0)
 
@@ -70,9 +66,9 @@ export default function LeftPanel({ canAdmin = false, workspace, user, setup, on
 
   const kpis = c
     ? [
-        { num: c.documents, lab: 'Documents', go: () => (canAdmin ? onNavigate('sources') : onAsk('What documents are in our memory?')) },
-        { num: c.decisions, lab: 'Decisions', go: () => onSelectView('decisions') },
-        { num: c.open_questions, lab: 'Open', go: () => onAsk('What are the most important open questions right now?') },
+        { num: c.documents, lab: 'Documents', Ico: FileText, tone: 'accent', go: () => (canAdmin ? onNavigate('sources') : onAsk('What documents are in our memory?')) },
+        { num: c.decisions, lab: 'Decisions', Ico: GitCommitHorizontal, tone: 'success', go: () => onSelectView('decisions') },
+        { num: c.open_questions, lab: 'Open', Ico: CircleHelp, tone: 'warning', go: () => onAsk('What are the most important open questions right now?') },
       ]
     : []
 
@@ -108,7 +104,7 @@ export default function LeftPanel({ canAdmin = false, workspace, user, setup, on
           <div className="wb-skeleton" style={{ height: 22, width: '80%' }} />
         </div>
         <div className="pulse-kpis">
-          {[0, 1, 2].map((i) => <div key={i} className="wb-skeleton" style={{ height: 74, borderRadius: 'var(--radius-md)' }} />)}
+          {[0, 1, 2].map((i) => <div key={i} className="wb-skeleton" style={{ height: 104, borderRadius: 'var(--radius-md)' }} />)}
         </div>
         <div className="wb-skeleton" style={{ height: 56, borderRadius: 'var(--radius-md)', marginTop: 'var(--sp-4)' }} />
         <div className="wb-skeleton" style={{ height: 180, borderRadius: 'var(--radius-md)', marginTop: 'var(--sp-4)' }} />
@@ -117,125 +113,119 @@ export default function LeftPanel({ canAdmin = false, workspace, user, setup, on
   }
 
   return (
-    <MotionConfig reducedMotion="user">
-      <motion.div className="pulse" variants={staggerContainer(0.06)} initial="hidden" animate="show">
-        {/* ---- Greeting + one health line ---- */}
-        <motion.div className="pulse-greet" variants={fadeUp}>
-          <p className="pulse-hello">{greeting()}, {firstName}</p>
-          <h2 className="pulse-health">{healthLine}</h2>
-        </motion.div>
+    <div className="pulse">
+      {/* ---- Greeting + one health line ---- */}
+      <div className="pulse-greet">
+        <p className="pulse-hello">{greeting()}, {firstName}</p>
+        <h2 className="pulse-health">{healthLine}</h2>
+      </div>
 
-        {/* ---- Three counters ---- */}
-        <motion.div className="pulse-kpis" variants={fadeUp}>
-          {kpis.map((k) => (
-            <button key={k.lab} className="pulse-kpi" onClick={k.go}>
-              <span className="pulse-kpi-num tnum"><CountUp value={k.num} /></span>
-              <span className="pulse-kpi-lab">{k.lab}</span>
-              <ArrowUpRight className="pulse-kpi-go" size={14} strokeWidth={1.8} />
-            </button>
-          ))}
-        </motion.div>
+      {/* ---- Three counters ---- */}
+      <div className="pulse-kpis">
+        {kpis.map((k) => (
+          <button key={k.lab} className="pulse-kpi" onClick={k.go}>
+            <span className={`pulse-kpi-ico tone-${k.tone}`}><k.Ico size={13} strokeWidth={2} /></span>
+            <span className="pulse-kpi-num tnum"><CountUp value={k.num} /></span>
+            <span className="pulse-kpi-lab">{k.lab}</span>
+            <ArrowUpRight className="pulse-kpi-go" size={14} strokeWidth={1.8} />
+          </button>
+        ))}
+      </div>
 
-        {/* ---- Where memory comes from (slim stacked bar) ---- */}
-        {totalDocs > 0 && (
-          <motion.section className="pulse-sources" variants={fadeUp}>
-            <div className="pulse-sources-bar" role="img" aria-label="Documents by source">
-              {sources.filter((s) => s.n > 0).map((s) => (
-                <span
-                  key={s.source}
-                  className="pulse-sources-seg"
-                  title={`${SOURCE_LABEL[s.source] || s.source}: ${s.n}`}
-                  style={{ width: `${(s.n / totalDocs) * 100}%`, background: srcColors[s.source] || tc.muted }}
-                />
-              ))}
-            </div>
-            <div className="pulse-sources-legend">
-              {sources.filter((s) => s.n > 0).map((s) => (
-                <button key={s.source} className="pulse-legend" onClick={() => onNavigate(canAdmin ? 'sources' : 'decisions')}>
-                  <i style={{ background: srcColors[s.source] || tc.muted }} />
-                  {SOURCE_LABEL[s.source] || s.source}
-                  <b className="tnum">{s.n}</b>
-                </button>
-              ))}
-            </div>
-          </motion.section>
-        )}
-
-        {/* ---- Relitigation: the sharpest hook, kept prominent ---- */}
-        {revisit && (
-          <motion.button className="pulse-relit" variants={fadeUp} onClick={() => onNavigate('decisions', { decisionId: revisit.old_id })}>
-            <span className="pulse-relit-ico"><RotateCcw size={16} strokeWidth={1.9} /></span>
-            <span>
-              <b>A settled decision is being relitigated.</b>{' '}
-              “{revisit.old_title}” is revisited by “{revisit.new_title}” ({revisit.when}).
-            </span>
-            <ArrowRight className="pulse-relit-go" size={15} strokeWidth={1.9} />
-          </motion.button>
-        )}
-
-        {/* ---- What changed this week ---- */}
-        <motion.section className="pulse-card" variants={fadeUp}>
-          <div className="pulse-card-head">
-            <h3>What changed this week</h3>
-            {digest?.new_documents > 0 && (
-              <span className="pulse-pill"><FileText size={12} strokeWidth={1.9} /> {digest.new_documents} new</span>
-            )}
+      {/* ---- Where memory comes from (slim stacked bar) ---- */}
+      {totalDocs > 0 && (
+        <section className="pulse-sources">
+          <div className="pulse-sources-bar" role="img" aria-label="Documents by source">
+            {sources.filter((s) => s.n > 0).map((s) => (
+              <span
+                key={s.source}
+                className="pulse-sources-seg"
+                title={`${SOURCE_LABEL[s.source] || s.source}: ${s.n}`}
+                style={{ width: `${(s.n / totalDocs) * 100}%`, background: srcColors[s.source] || tc.muted }}
+              />
+            ))}
           </div>
-          {feed.length > 0 ? (
-            <div className="pulse-feed">
-              {feed.map((r) => {
-                const Icon = r.icon
-                return (
-                  <button key={r.key} className="pulse-feed-row" onClick={r.go}>
-                    <span className={`pulse-feed-ico tone-${r.tone}`}><Icon size={14} strokeWidth={1.9} /></span>
-                    <span className="pulse-feed-text"><b>{r.lead}</b> {r.text}</span>
-                  </button>
-                )
-              })}
-            </div>
-          ) : (
-            <p className="pulse-empty">
-              {totalDocs === 0
-                ? 'Nothing yet — memory forms as your sources sync.'
-                : 'Quiet week. Ask a question to dig into what’s already remembered.'}
-            </p>
+          <div className="pulse-sources-legend">
+            {sources.filter((s) => s.n > 0).map((s) => (
+              <button key={s.source} className="pulse-legend" onClick={() => onNavigate(canAdmin ? 'sources' : 'decisions')}>
+                <i style={{ background: srcColors[s.source] || tc.muted }} />
+                {SOURCE_LABEL[s.source] || s.source}
+                <b className="tnum">{s.n}</b>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ---- Relitigation: the sharpest hook, kept prominent ---- */}
+      {revisit && (
+        <button className="pulse-relit" onClick={() => onNavigate('decisions', { decisionId: revisit.old_id })}>
+          <span className="pulse-relit-ico"><RotateCcw size={16} strokeWidth={1.9} /></span>
+          <span>
+            <b>A settled decision is being relitigated.</b>{' '}
+            “{revisit.old_title}” is revisited by “{revisit.new_title}” ({revisit.when}).
+          </span>
+          <ArrowRight className="pulse-relit-go" size={15} strokeWidth={1.9} />
+        </button>
+      )}
+
+      {/* ---- What changed this week ---- */}
+      <section className="pulse-card">
+        <div className="pulse-card-head">
+          <h3>What changed this week</h3>
+          {digest?.new_documents > 0 && (
+            <span className="pulse-pill"><FileText size={12} strokeWidth={1.9} /> {digest.new_documents} new</span>
           )}
-        </motion.section>
-
-        {/* ---- Memory gaps (admins) ---- */}
-        {gaps.length > 0 && (
-          <motion.section className="pulse-card pulse-card--gaps" variants={fadeUp}>
-            <div className="pulse-card-head">
-              <h3><AlertTriangle size={14} strokeWidth={1.9} /> Needs attention</h3>
-            </div>
-            <div className="pulse-feed">
-              {gaps.map((g) => (
-                <button key={g.key} className="pulse-feed-row" onClick={g.run}>
-                  <span className="pulse-feed-text">{g.text}</span>
-                  {g.badge && <span className="pulse-gap-badge tnum">{g.badge}</span>}
-                  {g.action && <span className="pulse-gap-action">{g.action} <ArrowRight size={12} strokeWidth={2} /></span>}
+        </div>
+        {feed.length > 0 ? (
+          <div className="pulse-feed">
+            {feed.map((r) => {
+              const Icon = r.icon
+              return (
+                <button key={r.key} className="pulse-feed-row" onClick={r.go}>
+                  <span className={`pulse-feed-ico tone-${r.tone}`}><Icon size={14} strokeWidth={1.9} /></span>
+                  <span className="pulse-feed-text"><b>{r.lead}</b> {r.text}</span>
                 </button>
-              ))}
-            </div>
-          </motion.section>
+              )
+            })}
+          </div>
+        ) : (
+          <p className="pulse-empty">
+            {totalDocs === 0
+              ? 'Nothing yet — memory forms as your sources sync.'
+              : 'Quiet week. Ask a question to dig into what’s already remembered.'}
+          </p>
         )}
+      </section>
 
-        {/* ---- First-run setup checklist (admins, until complete) ---- */}
-        <motion.div variants={fadeUp}>
-          <SetupChecklist
-            setup={setup}
-            canAdmin={canAdmin}
-            onNavigate={onNavigate}
-            onInvite={onInvite}
-            onAsk={onAsk}
-          />
-        </motion.div>
+      {/* ---- Memory gaps (admins) ---- */}
+      {gaps.length > 0 && (
+        <section className="pulse-card pulse-card--gaps">
+          <div className="pulse-card-head">
+            <h3><AlertTriangle size={14} strokeWidth={1.9} /> Needs attention</h3>
+          </div>
+          <div className="pulse-feed">
+            {gaps.map((g) => (
+              <button key={g.key} className="pulse-feed-row" onClick={g.run}>
+                <span className="pulse-feed-text">{g.text}</span>
+                {g.badge && <span className="pulse-gap-badge tnum">{g.badge}</span>}
+                {g.action && <span className="pulse-gap-action">{g.action} <ArrowRight size={12} strokeWidth={2} /></span>}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
-        {/* ---- Nudge to the conversation ---- */}
-        <motion.button className="pulse-ask" variants={fadeUp} onClick={() => onAsk('What are our most recent decisions, and why?')}>
-          <Sparkles size={15} strokeWidth={1.8} /> Ask your memory anything
-        </motion.button>
-      </motion.div>
-    </MotionConfig>
+      {/* ---- First-run setup checklist (admins, until complete) ---- */}
+      <div>
+        <SetupChecklist
+          setup={setup}
+          canAdmin={canAdmin}
+          onNavigate={onNavigate}
+          onInvite={onInvite}
+          onAsk={onAsk}
+        />
+      </div>
+    </div>
   )
 }

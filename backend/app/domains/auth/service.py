@@ -415,16 +415,6 @@ def require_writable_workspace(min_role: str = "member"):
     return dep
 
 
-async def require_workspace(
-    user: AuthContext = Depends(get_current_user),
-) -> AuthContext:
-    """Authenticated AND has an active workspace. Use on routes that read or
-    write workspace-scoped data but don't need a minimum role (e.g. chat/query),
-    so an onboarding (workspace-less) session can't reach them."""
-    if user.workspace_id is None:
-        raise HTTPException(409, "create a workspace first")
-    return user
-
 
 async def _login_throttled(conn: asyncpg.Connection, email: str, ip: str) -> bool:
     failures = await conn.fetchval(

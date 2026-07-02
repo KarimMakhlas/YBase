@@ -1,37 +1,27 @@
-import React from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
-import { staggerContainer, fadeUp } from './motionPresets.js'
 import ybaseMark from '../assets/ybase-mark.svg'
 import './pageheader.css'
 
-// The YBase branded page header — a band with the node mark, a mono kicker,
-// a display title, a lede, and an actions slot, over a soft indigo wash.
-// Shared by every page so headers read as one brand. Self-contained for
-// reduced motion, so it's a drop-in on any view (no MotionConfig required).
+// The YBase page header — a mono kicker, a display title, a lede, and an
+// actions slot. Shared by every page so headers read as one brand. Static by
+// design: headers are chrome, not content, so they never animate in.
 export default function PageHeader({ kicker, title, lede, actions, align = 'left', children }) {
-  const reduce = useReducedMotion()
   return (
-    <motion.header
-      className={`wb-pageheader wb-pageheader--${align}`}
-      variants={staggerContainer(0.08)}
-      initial={reduce ? false : 'hidden'}
-      animate="show"
-    >
+    <header className={`wb-pageheader wb-pageheader--${align}`}>
       <span className="ph-wash" aria-hidden="true" />
       <div className="ph-inner">
         <div className="ph-lead">
           {kicker && (
-            <motion.div className="ph-kicker" variants={fadeUp}>
+            <div className="ph-kicker">
               <img src={ybaseMark} alt="" className="ph-mark" width="22" height="22" />
               <span>{kicker}</span>
-            </motion.div>
+            </div>
           )}
-          <motion.h1 className="ph-title" variants={fadeUp}>{title}</motion.h1>
-          {lede && <motion.p className="ph-lede" variants={fadeUp}>{lede}</motion.p>}
-          {children && <motion.div className="ph-children" variants={fadeUp}>{children}</motion.div>}
+          <h1 className="ph-title">{title}</h1>
+          {lede && <p className="ph-lede">{lede}</p>}
+          {children && <div className="ph-children">{children}</div>}
         </div>
-        {actions && <motion.div className="ph-actions" variants={fadeUp}>{actions}</motion.div>}
+        {actions && <div className="ph-actions">{actions}</div>}
       </div>
-    </motion.header>
+    </header>
   )
 }

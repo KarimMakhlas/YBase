@@ -26,7 +26,3 @@ export function startersFromStats(stats) {
 }
 
 // Merge derived prompts with generic fallbacks, capped at `n`.
-export function buildStarters(stats, n = 4) {
-  const dyn = startersFromStats(stats)
-  return (dyn.length ? [...dyn, ...STARTERS] : STARTERS).slice(0, n)
-}

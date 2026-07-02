@@ -6,14 +6,14 @@
 import { useEffect, useState } from 'react'
 
 // Read a single CSS custom property (e.g. cssVar('--accent')) from :root.
-export function cssVar(name, fallback = '') {
+function cssVar(name, fallback = '') {
   if (typeof window === 'undefined') return fallback
   const v = getComputedStyle(document.documentElement).getPropertyValue(name)
   return v ? v.trim() : fallback
 }
 
 // Read a map of { key: '--token' } into { key: 'resolvedColor' }.
-export function cssVars(map) {
+function cssVars(map) {
   const out = {}
   for (const k in map) out[k] = cssVar(map[k])
   return out

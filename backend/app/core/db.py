@@ -1,6 +1,5 @@
 import asyncio
 import json
-from pathlib import Path
 from typing import Optional
 
 import asyncpg
@@ -46,11 +45,6 @@ async def get_pool() -> asyncpg.Pool:
     return _pool
 
 
-async def init_schema() -> None:
-    pool = await get_pool()
-    sql = (Path(__file__).parent / "schema.sql").read_text()
-    async with pool.acquire() as conn:
-        await conn.execute(sql)
 
 
 async def close_pool() -> None:
