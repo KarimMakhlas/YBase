@@ -143,6 +143,19 @@ async def merge_nodes(conn: asyncpg.Connection, keep_id: int, drop_id: int) -> N
     await conn.execute("DELETE FROM memory_nodes WHERE id=$1", drop_id)
 
 
+# When the max_nodes budget bites, spend it on the relations that make this
+# memory rather than search: decision history (revisits/resolves) and explicit
+# tensions (relates_to) before people, and people before topics. Topic edges
+# additionally get a per-node fan-out cap — a popular topic ("database") links
+# to every decision in its area, and expanding through such a hub would flood
+# the budget with weakly related nodes.
+_RELATION_PRIORITY = {
+    "revisits": 0, "resolves": 1, "relates_to": 2, "raised_by": 3,
+    "involves": 4, "about": 5,
+}
+_ABOUT_FANOUT_CAP = 5
+
+
 async def expand(
     conn: asyncpg.Connection,
     workspace_id: int,
@@ -150,7 +163,8 @@ async def expand(
     hops: int = 2,
     max_nodes: int = 40,
 ) -> Tuple[Set[int], List[Dict]]:
-    """Breadth-first expansion over memory_edges from seed nodes."""
+    """Breadth-first expansion over memory_edges from seed nodes, admitting
+    high-value relations first (see _RELATION_PRIORITY)."""
     nodes: Set[int] = set(seed_ids)
     frontier: Set[int] = set(nodes)
     edges: List[Dict] = []
@@ -166,12 +180,21 @@ async def expand(
             "AND (e.src = ANY($2::int[]) OR e.dst = ANY($2::int[]))",
             workspace_id, list(frontier),
         )
+        rows = sorted(rows, key=lambda r: (_RELATION_PRIORITY.get(r["relation"], 9), r["id"]))
         next_frontier: Set[int] = set()
+        about_fanout: Dict[int, int] = {}
         for r in rows:
             if r["id"] in seen_edges:
                 continue
+            origin = r["src"] if r["src"] in frontier else r["dst"]
+            other = r["dst"] if origin == r["src"] else r["src"]
+            new_via_topic = r["relation"] == "about" and other not in nodes
+            if new_via_topic and about_fanout.get(origin, 0) >= _ABOUT_FANOUT_CAP:
+                continue  # topic hub: leave budget for other relations/nodes
             seen_edges.add(r["id"])
             edges.append({"src": r["src"], "dst": r["dst"], "relation": r["relation"]})
+            if new_via_topic:
+                about_fanout[origin] = about_fanout.get(origin, 0) + 1
             for nid in (r["src"], r["dst"]):
                 if nid not in nodes and len(nodes) < max_nodes:
                     nodes.add(nid)

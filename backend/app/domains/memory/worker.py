@@ -229,14 +229,17 @@ async def _form_and_consolidate(doc_id: int, timer: StageTimer) -> None:
     from . import consolidate
     from .formation import run_formation
 
-    await run_formation(doc_id)
+    touched = await run_formation(doc_id)
     timer.lap("formation")
-    pool = await db.get_pool()
-    async with pool.acquire() as conn:
-        workspace_id = await conn.fetchval(
-            "SELECT workspace_id FROM documents WHERE id=$1", doc_id
-        )
-    merged = await consolidate.merge_similar_decisions(workspace_id) if workspace_id else []
+    merged = []
+    if touched:  # no new/updated decisions → nothing to consolidate
+        pool = await db.get_pool()
+        async with pool.acquire() as conn:
+            workspace_id = await conn.fetchval(
+                "SELECT workspace_id FROM documents WHERE id=$1", doc_id
+            )
+        if workspace_id:
+            merged = await consolidate.merge_similar_decisions(workspace_id, touched)
     timer.lap("consolidation")
     if merged:
         log.info("consolidation merged %d duplicate decisions", len(merged))

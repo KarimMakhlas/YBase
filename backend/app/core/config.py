@@ -135,6 +135,13 @@ EMBED_DIM = 512
 # Retrieval knobs
 TOP_K = int(os.getenv("TOP_K", "8"))                       # vector-search seeds
 CONTEXT_CHUNK_CAP = int(os.getenv("CONTEXT_CHUNK_CAP", "22"))  # max chunks sent to Claude
+# Total character budget across all context chunks. CONTEXT_CHUNK_CAP bounds
+# the count; this bounds the size so a worst case (22 chunks × 1500 chars +
+# graph nodes + history) still fits small local context windows
+# (OLLAMA_NUM_CTX=16384 tokens ≈ 50k chars for system+context+answer, which
+# Ollama otherwise truncates silently). Seed chunks are always kept; graph
+# evidence stops being appended once the budget is hit.
+CONTEXT_CHAR_BUDGET = int(os.getenv("CONTEXT_CHAR_BUDGET", "45000"))
 GRAPH_HOPS = int(os.getenv("GRAPH_HOPS", "2"))             # graph expansion depth
 GRAPH_MAX_NODES = int(os.getenv("GRAPH_MAX_NODES", "40"))
 

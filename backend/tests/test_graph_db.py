@@ -79,3 +79,35 @@ async def test_merge_nodes_moves_evidence_and_edges(pool, workspace_id):
             keep, topic) == 1
         summary = await conn.fetchval("SELECT summary FROM memory_nodes WHERE id=$1", keep)
         assert summary == "a longer duplicate summary"
+
+
+async def test_consolidation_merges_incrementally_and_stores_embeddings(pool, workspace_id):
+    """merge_similar_decisions embeds only the touched decisions (plus
+    never-embedded legacy rows), stores the vectors on the nodes, merges the
+    near-duplicate, and refreshes the kept node's signature after the merge."""
+    from app.domains.memory import consolidate
+
+    async with pool.acquire() as conn:
+        a = await graph.upsert_node(conn, workspace_id, "decision",
+                                    "Use PostgreSQL as the primary database for v1",
+                                    summary="relational fits the workload")
+        b = await graph.upsert_node(conn, workspace_id, "decision",
+                                    "Use PostgreSQL as primary database for v1",
+                                    summary="relational fits the workload")
+        c = await graph.upsert_node(conn, workspace_id, "decision",
+                                    "Adopt Redis cache for dashboard aggregates",
+                                    summary="precomputed aggregates are hot")
+
+    merged = await consolidate.merge_similar_decisions(workspace_id, touched_ids=[b])
+    assert [(m["kept"], m["dropped"]) for m in merged] == [(a, b)]
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, embedding IS NOT NULL AS has_vec FROM memory_nodes "
+            "WHERE kind='decision' ORDER BY id")
+    has_vec = {r["id"]: r["has_vec"] for r in rows}
+    assert b not in has_vec              # duplicate deleted
+    assert has_vec == {a: True, c: True}  # survivor re-embedded, legacy row backfilled
+
+    # second run with nothing touched: everything already embedded → no merges
+    assert await consolidate.merge_similar_decisions(workspace_id, touched_ids=[]) == []

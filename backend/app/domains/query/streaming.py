@@ -17,7 +17,6 @@ from . import retrieval
 
 DELIM = "<<<MEMORY_METADATA>>>"
 _CITE_RE = re.compile(r"\[C(\d+)\]")
-_ANSWER_TAIL_HOLDBACK_CHARS = 3000
 _INSIGHT_CARD_TYPES = {
     "why_it_won", "tradeoffs", "alternatives", "open_questions", "decision_anatomy",
 }
@@ -35,6 +34,31 @@ _METADATA_BLEED_PATTERNS = [
     re.compile(r"(?ims)\n\s*confidence\s*:\s*(?:high|medium|low|unknown)\b.*$"),
 ]
 log = logging.getLogger("ybase.query")
+
+
+def _tail_holdback_chars() -> int:
+    """How much answer tail to buffer before streaming it to the client.
+
+    The buffer lets card-shaped metadata leaks (_METADATA_BLEED_PATTERNS) be
+    stripped before the frontend sees them, and keeps the delimiter from ever
+    streaming partially — but every buffered char delays the first visible
+    token, and an answer shorter than the buffer doesn't stream at all. Claude
+    follows the no-cards instruction reliably, so it gets a small buffer;
+    the bleed patterns exist for smaller models, which keep a larger one."""
+    return 400 if llm.active_provider() == "anthropic" else 1500
+
+
+def _format_history(history: List[Dict[str, str]], max_chars: int,
+                    assistant_label: str = "Assistant") -> List[str]:
+    """Last 6 turns as 'Role: text' lines, one per turn, truncated per turn."""
+    lines = []
+    for turn in history[-6:]:
+        role = "User" if turn.get("role") == "user" else assistant_label
+        text = (turn.get("content") or "").strip().replace("\n", " ")
+        if len(text) > max_chars:
+            text = text[:max_chars] + "…"
+        lines.append(f"{role}: {text}")
+    return lines
 
 
 def locate_quote(chunk_text: str, quote: Optional[str]) -> Optional[str]:
@@ -79,17 +103,14 @@ async def rewrite_followup(
     """Resolve a conversation-dependent follow-up into a standalone question
     for retrieval. Returns None when the rewrite fails or looks degenerate —
     callers fall back to prior-turn concatenation."""
-    lines = []
-    for turn in history[-6:]:
-        role = "User" if turn.get("role") == "user" else "Assistant"
-        text = (turn.get("content") or "").strip().replace("\n", " ")
-        if len(text) > 400:
-            text = text[:400] + "…"
-        lines.append(f"{role}: {text}")
+    lines = _format_history(history, max_chars=400)
     lines.append(f"User (follow-up to rewrite): {question}")
     try:
-        out = await llm.structured_call(REWRITE_SYSTEM, "\n".join(lines), REWRITE_SCHEMA)
+        out = await llm.structured_call(REWRITE_SYSTEM, "\n".join(lines), REWRITE_SCHEMA,
+                                        max_tokens=300, effort="low")
     except Exception:
+        log.warning("follow-up rewrite failed; falling back to prior-turn concat",
+                    exc_info=True)
         return None
     rewritten = (out.get("standalone_question") or "").strip()
     if not rewritten or len(rewritten) > 500:
@@ -185,12 +206,7 @@ def build_context(
     lines = []
     if history:
         lines += ["# CONVERSATION SO FAR (for follow-up context)"]
-        for turn in history[-6:]:
-            role = "User" if turn.get("role") == "user" else "You"
-            text = (turn.get("content") or "").strip().replace("\n", " ")
-            if len(text) > 600:
-                text = text[:600] + "…"
-            lines.append(f"{role}: {text}")
+        lines += _format_history(history, max_chars=600, assistant_label="You")
         lines.append("")
     lines += ["# QUESTION", question, ""]
     lines.append("# MEMORY GRAPH (distilled memory)")
@@ -258,6 +274,27 @@ def _source_refs(chunk_ids: List[Any], by_id: Dict[int, Dict[str, Any]]) -> List
     return refs
 
 
+def _clean_timeline(raw: Any) -> List[Dict[str, str]]:
+    """Keep only well-shaped {date, event} entries so a malformed metadata
+    block can't push junk items into the frontend's timeline card."""
+    if not isinstance(raw, list):
+        return []
+    events = []
+    for item in raw[:12]:
+        if not isinstance(item, dict):
+            continue
+        date_s, event_s = item.get("date"), item.get("event")
+        if isinstance(date_s, str) and isinstance(event_s, str) and event_s.strip():
+            events.append({"date": date_s, "event": event_s.strip()})
+    return events
+
+
+def _clean_related_questions(raw: Any) -> List[str]:
+    if not isinstance(raw, list):
+        return []
+    return [q.strip() for q in raw if isinstance(q, str) and q.strip()][:6]
+
+
 def _enrich_insight_cards(
     raw_cards: Any, by_id: Dict[int, Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
@@ -311,7 +348,15 @@ async def stream_query(
                 embed_text = f"{prior[-1]}\n{question}"
         timer.lap("rewrite")
     yield _sse("status", {"stage": "retrieving", "message": "Searching memory…"})
-    ret = await retrieval.retrieve(search_q, workspace_id=workspace_id, embed_text=embed_text)
+    try:
+        ret = await retrieval.retrieve(search_q, workspace_id=workspace_id, embed_text=embed_text)
+    except Exception as e:
+        # An embeddings/DB failure here would otherwise kill the SSE stream
+        # with no event — the frontend would just see a dropped connection.
+        timer.lap("retrieval_error")
+        log.exception("retrieval failed workspace=%s timings %s", workspace_id, timer.line())
+        yield _sse("error", {"message": f"Memory search failed: {e}"})
+        return
     timer.lap("retrieval")
     if rewritten:
         ret["trace"]["rewritten_question"] = rewritten
@@ -342,7 +387,7 @@ async def stream_query(
     in_meta = False
     # Keep enough tail text to remove card-shaped metadata leaks before the
     # frontend sees them. The delimiter itself must also never stream partially.
-    holdback = max(len(DELIM) + 2, _ANSWER_TAIL_HOLDBACK_CHARS)
+    holdback = max(len(DELIM) + 2, _tail_holdback_chars())
 
     try:
         async with llm.stream_text(system, context) as stream:
@@ -428,8 +473,8 @@ async def stream_query(
         "takeaway": meta.get("takeaway"),
         "confidence": meta.get("confidence", "unknown"),
         "citations": citations,
-        "related_questions": meta.get("related_questions", []),
-        "timeline": meta.get("timeline", []),
+        "related_questions": _clean_related_questions(meta.get("related_questions")),
+        "timeline": _clean_timeline(meta.get("timeline")),
         "counter_evidence": counter_evidence,
         "insight_cards": _enrich_insight_cards(meta.get("insight_cards", []), by_id),
         "trace": ret.get("trace", {}),

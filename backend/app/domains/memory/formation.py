@@ -203,7 +203,9 @@ async def _persist(
     result: Dict[str, Any],
     valid_node_ids: Set[int],
     doc_tags: Optional[List[str]] = None,
-) -> None:
+) -> List[int]:
+    """Write the extraction into the graph. Returns the decision node ids this
+    document created or updated, for incremental consolidation."""
     index_to_id = {c["chunk_index"]: c["id"] for c in chunks}
     doc_chunk_ids = list(index_to_id.values())
 
@@ -215,6 +217,7 @@ async def _persist(
         return node_id if node_id in valid_node_ids else None
 
     entity_ids: Dict[str, int] = {}
+    touched_decisions: List[int] = []
 
     async def ensure_entity(name: str, kind: str = "person", description: str = "") -> int:
         key = name.strip().lower()
@@ -275,6 +278,7 @@ async def _persist(
             if rel_id and rel_id != node_id:
                 await graph.add_edge(conn, workspace_id, node_id, rel_id, "relates_to")
         valid_node_ids.add(node_id)
+        touched_decisions.append(node_id)
 
     for q in result.get("questions", []):
         resolves = safe_node(q.get("resolves_node_id"))
@@ -306,32 +310,73 @@ async def _persist(
         "formation_error=NULL, formation_attempts=0 WHERE id=$1",
         document_id, result.get("context_summary", ""),
     )
+    return touched_decisions
 
 
-async def run_formation(document_id: int) -> None:
+_EXISTING_CAP = 150       # total nodes shown to the extraction LLM
+_EXISTING_RECENT = 50     # slots reserved for the most recently updated nodes
+_EXISTING_RELEVANT = 100  # slots for nodes similar to the new document
+
+
+async def _fetch_existing(
+    conn: asyncpg.Connection, workspace_id: int, document_id: int
+) -> List[asyncpg.Record]:
+    """Pick the existing-memory digest the extraction LLM sees.
+
+    Recency alone starves large workspaces: an old decision this document
+    revisits may not be among the last 150 updated nodes, so the LLM can't
+    link to it and forms a duplicate instead. Blend recent nodes (which also
+    carry the entity/topic labels to reuse) with the decisions/questions most
+    similar to the document (stored signature embeddings — NULL until
+    consolidation first touches a node, so a fresh database falls back to
+    pure recency)."""
+    recent = await conn.fetch(
+        "SELECT id, kind, label, summary, status FROM memory_nodes "
+        "WHERE workspace_id=$1 AND kind IN ('decision', 'question', 'entity', 'topic') "
+        "AND archived_at IS NULL "
+        "ORDER BY updated_at DESC LIMIT $2",
+        workspace_id, _EXISTING_CAP,
+    )
+    centroid = await conn.fetchval(
+        "SELECT avg(embedding)::text FROM chunks WHERE document_id=$1", document_id
+    )
+    relevant: List[asyncpg.Record] = []
+    if centroid:
+        relevant = await conn.fetch(
+            "SELECT id, kind, label, summary, status FROM memory_nodes "
+            "WHERE workspace_id=$1 AND kind IN ('decision', 'question') "
+            "AND archived_at IS NULL AND embedding IS NOT NULL "
+            "ORDER BY embedding <=> $2::vector LIMIT $3",
+            workspace_id, centroid, _EXISTING_RELEVANT,
+        )
+    by_id: Dict[int, asyncpg.Record] = {}
+    for r in list(recent[:_EXISTING_RECENT]) + list(relevant) + list(recent[_EXISTING_RECENT:]):
+        if r["id"] not in by_id:
+            by_id[r["id"]] = r
+            if len(by_id) >= _EXISTING_CAP:
+                break
+    return list(by_id.values())
+
+
+async def run_formation(document_id: int) -> List[int]:
     """Extract memory from one document and persist it (status flips to
-    'complete' inside the persist transaction). Raises on failure — retry,
+    'complete' inside the persist transaction). Returns the decision node ids
+    created/updated, for incremental consolidation. Raises on failure — retry,
     backoff, and status bookkeeping live in memory.worker."""
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         doc = await conn.fetchrow("SELECT * FROM documents WHERE id=$1", document_id)
         if doc is None:
-            return
+            return []
         chunks = await conn.fetch(
             "SELECT id, chunk_index, text FROM chunks WHERE document_id=$1 ORDER BY chunk_index",
             document_id,
         )
-        existing = await conn.fetch(
-            "SELECT id, kind, label, summary, status FROM memory_nodes "
-            "WHERE workspace_id=$1 AND kind IN ('decision', 'question', 'entity', 'topic') "
-            "AND archived_at IS NULL "
-            "ORDER BY updated_at DESC LIMIT 150",
-            doc["workspace_id"],
-        )
+        existing = await _fetch_existing(conn, doc["workspace_id"], document_id)
     prompt = _build_user_prompt(doc, chunks, existing)
     result = await llm.structured_call(FORMATION_SYSTEM, prompt, FORMATION_SCHEMA)
     valid_ids = {r["id"] for r in existing}
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await _persist(conn, doc["workspace_id"], document_id, chunks, result, valid_ids,
-                           doc_tags=list(doc["tags"] or []))
+            return await _persist(conn, doc["workspace_id"], document_id, chunks, result,
+                                  valid_ids, doc_tags=list(doc["tags"] or []))

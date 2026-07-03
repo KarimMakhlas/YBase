@@ -76,9 +76,15 @@ def active_model() -> str:
 
 
 async def structured_call(
-    system: str, user_text: str, schema: Dict[str, Any], max_tokens: int = 16000
+    system: str, user_text: str, schema: Dict[str, Any], max_tokens: int = 16000,
+    effort: str = "high",
 ) -> Dict[str, Any]:
-    """Call constrained to a JSON schema; returns the parsed object."""
+    """Call constrained to a JSON schema; returns the parsed object.
+
+    `effort` maps to Anthropic's output_config effort. Formation keeps the
+    default "high"; light utility calls (the follow-up rewrite) pass "low" so
+    they don't pay reasoning latency for a one-line transformation. NVIDIA and
+    Ollama have no equivalent knob and ignore it."""
     provider = active_provider()
     if provider == "ollama":
         return await _ollama_structured(system, user_text, schema)
@@ -92,7 +98,7 @@ async def structured_call(
         thinking={"type": "adaptive"},
         extra_body={
             "output_config": {
-                "effort": "high",
+                "effort": effort,
                 "format": {"type": "json_schema", "schema": schema},
             }
         },

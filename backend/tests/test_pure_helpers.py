@@ -8,8 +8,8 @@ from app.domains.documents.ingestion import chunk_text, content_hash
 from app.providers import llm
 from app.providers.llm import parse_loose_json
 from app.domains.query.streaming import _strip_metadata_bleed
-from app.domains.query.retrieval import rrf_fuse
-from app.domains.memory.consolidate import similar_pairs
+from app.domains.query.retrieval import rank_graph_evidence, rrf_fuse
+from app.domains.memory.consolidate import similar_pairs, similar_pairs_against
 from app.domains.memory.formation import fallback_topics
 from app.domains.memory.scoring import node_score
 from app.providers.embeddings import _local_embed
@@ -65,6 +65,37 @@ def test_rrf_respects_limit_and_single_list_order():
 
 def test_rrf_empty_lists():
     assert rrf_fuse([[], []], limit=5) == []
+
+
+# ---- graph-evidence ranking ----
+
+def test_rank_graph_evidence_blends_trust_and_relevance():
+    score_by_node = {1: 1.0, 2: 0.25}  # e.g. a decided node vs a reversed one
+    rows = [
+        {"id": 100, "node_id": 2, "sim": 0.9},   # weak memory, relevant chunk
+        {"id": 101, "node_id": 1, "sim": 0.9},   # strong memory, relevant chunk
+        {"id": 102, "node_id": 1, "sim": 0.0},   # strong memory, unrelated chunk
+    ]
+    ranked = [r["id"] for r in rank_graph_evidence(rows, score_by_node)]
+    assert ranked == [101, 102, 100]
+    # the similarity floor keeps trusted-but-differently-worded memory in play
+    assert ranked.index(102) < ranked.index(100)
+
+
+def test_rank_graph_evidence_chunk_ranked_once_by_best_node():
+    score_by_node = {1: 1.0, 2: 0.25}
+    rows = [
+        {"id": 100, "node_id": 2, "sim": 0.5},   # same chunk, weak node first
+        {"id": 100, "node_id": 1, "sim": 0.5},   # …but its best node decides
+        {"id": 101, "node_id": 2, "sim": 1.0},
+    ]
+    ranked = rank_graph_evidence(rows, score_by_node)
+    assert [r["id"] for r in ranked] == [100, 101]
+
+
+def test_rank_graph_evidence_handles_null_similarity():
+    ranked = rank_graph_evidence([{"id": 7, "node_id": 9, "sim": None}], {})
+    assert [r["id"] for r in ranked] == [7]
 
 
 # ---- loose JSON salvage ----
@@ -158,6 +189,20 @@ def test_similar_pairs_below_threshold_empty():
     a = (1, _local_embed("completely unrelated topic about kubernetes"))
     b = (2, _local_embed("quarterly marketing budget review"))
     assert similar_pairs([a, b], threshold=0.8) == []
+
+
+def test_similar_pairs_against_compares_targets_only():
+    a = (10, _local_embed("Use PostgreSQL as the primary database for v1"))
+    b = (20, _local_embed("Use PostgreSQL as primary database for v1"))
+    c = (30, _local_embed("Adopt Redis cache for dashboard aggregates"))
+    d = (40, _local_embed("Adopt Redis cache for dashboard aggregates"))  # exact dup of c
+    # only b is a target: the a-b duplicate is found, the untouched c-d
+    # duplicate is not compared at all — that's what makes it incremental
+    pairs = similar_pairs_against([b], [a, b, c, d], threshold=0.8)
+    ids = [(k, drop) for k, drop, _ in pairs]
+    assert (10, 20) in ids
+    assert (30, 40) not in ids
+    assert all(k != drop for k, drop in ids)  # no self-pairs
 
 
 # ---- slack ----

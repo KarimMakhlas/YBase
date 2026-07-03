@@ -39,8 +39,35 @@ def _chunk_row(r) -> Dict[str, Any]:
         "title": r["title"],
         "author": r["author"],
         "date": iso_date(r["doc_created_at"]),
-        "score": float(r["score"]) if r["score"] is not None else None,
     }
+
+
+# Graph-evidence ranking blends how much the memory can be trusted
+# (node_score: status × recency) with how much the chunk bears on this
+# question (embedding similarity). The similarity floor keeps trusted memory
+# from vanishing entirely when its wording differs from the question — the
+# graph brought it in for a structural reason (revisits/resolves), not a
+# lexical one.
+_EVIDENCE_SIM_FLOOR = 0.5
+
+
+def rank_graph_evidence(rows: Iterable[Any], score_by_node: Dict[int, float]) -> List[Any]:
+    """Order candidate (chunk, node) link rows for the context cap.
+
+    `rows` may hold several rows per chunk (one per linked node); each chunk
+    is ranked once, by its best-scoring linked node — deterministically, unlike
+    the previous DISTINCT ON (id) which attributed the chunk to an arbitrary
+    node. Rows need `id`, `node_id`, and `sim` (query cosine similarity)."""
+    best: Dict[int, tuple] = {}
+    for r in rows:
+        node = score_by_node.get(r["node_id"], 0.5)
+        sim = max(0.0, float(r["sim"])) if r["sim"] is not None else 0.0
+        score = node * (_EVIDENCE_SIM_FLOOR + (1.0 - _EVIDENCE_SIM_FLOOR) * sim)
+        cur = best.get(r["id"])
+        if cur is None or score > cur[0]:
+            best[r["id"]] = (score, r)
+    ranked = sorted(best.items(), key=lambda kv: (-kv[1][0], kv[0]))
+    return [row for _, (_, row) in ranked]
 
 
 async def retrieve(
@@ -105,10 +132,12 @@ async def retrieve(
 
             # Pull evidence chunks for decision/question nodes found via the
             # graph — this is the "memory, not search" step. When the context
-            # cap bites, higher-confidence memory gets its evidence in first.
+            # cap bites, evidence backing high-confidence memory that also
+            # bears on the question gets in first.
             extra = await conn.fetch(
-                "SELECT DISTINCT ON (c.id) c.id, c.text, c.document_id, d.source, "
-                "       d.title, d.author, d.doc_created_at, NULL::float AS score, "
+                "SELECT c.id, c.text, c.document_id, d.source, "
+                "       d.title, d.author, d.doc_created_at, "
+                "       1 - (c.embedding <=> $3::vector) AS sim, "
                 "       cl.node_id "
                 "FROM chunk_links cl "
                 "JOIN chunks c ON c.id = cl.chunk_id "
@@ -116,18 +145,17 @@ async def retrieve(
                 "JOIN memory_nodes n ON n.id = cl.node_id "
                 "WHERE d.workspace_id=$1 AND n.workspace_id=$1 "
                 "AND cl.node_id = ANY($2::int[]) AND n.kind IN ('decision', 'question') "
-                "AND n.archived_at IS NULL "
-                "ORDER BY c.id",
-                workspace_id, list(node_ids),
+                "AND n.archived_at IS NULL",
+                workspace_id, list(node_ids), to_pgvector(qvec),
             )
-            ranked = sorted(
-                extra, key=lambda r: -score_by_node.get(r["node_id"], 0.5)
-            )
-            for r in ranked:
-                if len(chunks) >= config.CONTEXT_CHUNK_CAP:
+            total_chars = sum(len(c["text"]) for c in chunks.values())
+            for r in rank_graph_evidence(extra, score_by_node):
+                if (len(chunks) >= config.CONTEXT_CHUNK_CAP
+                        or total_chars >= config.CONTEXT_CHAR_BUDGET):
                     break
                 if r["id"] not in chunks:
                     chunks[r["id"]] = _chunk_row(r)
+                    total_chars += len(r["text"])
                     graph_chunks += 1
 
     ordered = sorted(chunks.values(), key=lambda c: (c["date"] or "9999", c["id"]))

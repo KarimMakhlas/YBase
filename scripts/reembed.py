@@ -17,6 +17,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 from app.core import db  # noqa: E402
+from app.domains.memory.consolidate import _signature  # noqa: E402
 from app.providers.embeddings import active_embedder, embed_texts, to_pgvector  # noqa: E402
 
 BATCH = 32
@@ -39,6 +40,30 @@ async def main() -> None:
                         r["id"], to_pgvector(v),
                     )
         print(f"  {min(start + BATCH, len(rows))}/{len(rows)}")
+
+    # Memory-node signature embeddings (consolidation + formation-context
+    # selection) live in the same space as chunk vectors and must move with
+    # them. Only rows that already have a vector are refreshed; the rest are
+    # lazily backfilled by consolidation.
+    async with pool.acquire() as conn:
+        nodes = await conn.fetch(
+            "SELECT id, label, summary FROM memory_nodes "
+            "WHERE embedding IS NOT NULL ORDER BY id"
+        )
+    print(f"Re-embedding {len(nodes)} memory-node signatures")
+    for start in range(0, len(nodes), BATCH):
+        batch = nodes[start : start + BATCH]
+        vecs = await embed_texts(
+            [_signature(r["label"], r["summary"] or "") for r in batch], kind="document"
+        )
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                for r, v in zip(batch, vecs):
+                    await conn.execute(
+                        "UPDATE memory_nodes SET embedding = $2::vector WHERE id = $1",
+                        r["id"], to_pgvector(v),
+                    )
+        print(f"  {min(start + BATCH, len(nodes))}/{len(nodes)}")
     await db.close_pool()
     print("Done.")
 
