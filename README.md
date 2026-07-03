@@ -1,260 +1,796 @@
-# YBase for Teams
+<div align="center">
+  <img src="frontend/public/ybase-mark.svg" alt="YBase logo" width="84" height="84">
 
-An AI **memory layer** over a company's knowledge sources (Slack, Notion, GitHub, Jira). Not search: it remembers *decisions and their reasoning*, links them across sources and time, and answers "why" questions with full provenance.
+  # YBase
 
-> "Why do we use Postgres?" → the original Slack debate, the reasoning at the time, who advocated what, the Jira ticket where it almost got reversed, and the benchmark that settled it — as one coherent, cited answer.
+  **The AI memory layer for teams that need to remember why.**
 
-Runs **fully local** (Ollama for both LLM and embeddings, zero API keys), on **NVIDIA-hosted LLMs**, or on **Claude + Voyage** when credentials are present — switching is automatic.
+  YBase turns scattered conversations, tickets, documents, and code discussions
+  into a connected, cited record of decisions.
 
-## How it works
+  [![CI](https://github.com/KarimMakhlas/YBase/actions/workflows/ci.yml/badge.svg)](https://github.com/KarimMakhlas/YBase/actions/workflows/ci.yml)
+  ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+  ![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi&logoColor=white)
+  ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=111827)
+  ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%20%2B%20pgvector-4169E1?logo=postgresql&logoColor=white)
+  ![License](https://img.shields.io/badge/license-proprietary-6D6FEA)
 
+  [Quick start](#quick-start) ·
+  [Architecture](#architecture) ·
+  [Data model](#data-model) ·
+  [Configuration](#configuration) ·
+  [Development](#development) ·
+  [Deployment](#deployment) ·
+  [All diagrams](docs/architecture.html)
+</div>
+
+---
+
+## Why YBase?
+
+Company knowledge is easy to find and hard to understand. Search can retrieve a
+message or ticket, but it rarely reconstructs the full story:
+
+> Why did we choose Postgres? Who argued for it? What alternatives were rejected?
+> Was that decision revisited later?
+
+YBase preserves that story. It extracts decisions, reasoning, people, topics,
+questions, and evidence; connects them over time; and answers with citations
+back to the original source material.
+
+| Traditional knowledge search | YBase |
+|---|---|
+| Finds matching words | Reconstructs decisions and reasoning |
+| Returns isolated documents | Expands through a typed memory graph |
+| Treats every result equally | Ranks by relevance, status, recency, and evidence |
+| Loses follow-up context | Carries conversation history across questions |
+| Produces opaque answers | Streams cited answers with confidence and provenance |
+
+### The memory graph, visually
+
+```mermaid
+flowchart LR
+  D["Decision<br/>status: decided / proposed /<br/>revisited / reversed / reaffirmed"]:::green
+  E["Entity<br/>person / project / system / feature / team"]:::blue
+  T["Topic"]:::amber
+  Q["Question<br/>status: open / resolved"]:::blue
+  Doc[("Document + Chunk<br/>(evidence)")]:::purple
+
+  D -->|involves| E
+  D -->|about| T
+  D -->|revisits| D
+  D -->|resolves| Q
+  D -->|relates_to| D
+  Q -->|about| T
+  Q -->|raised_by| E
+  Q -->|relates_to| Q
+  D -.evidence.-> Doc
+  Q -.evidence.-> Doc
+  E -.evidence.-> Doc
+
+  classDef blue   fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:1.4px;
+  classDef green  fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.4px;
+  classDef amber  fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:1.4px;
+  classDef purple fill:#f3e8ff,stroke:#9333ea,color:#581c87,stroke-width:1.4px;
 ```
-ingest (API/UI/Slack) ──► dedup (content hash) ──► chunk + embed ──► Postgres (pgvector + FTS)
-                       │
-                       └─► MEMORY FORMATION JOB QUEUE (one at a time per
-                             workspace, workspaces run in parallel, bounded
-                             retries + backoff, crash recovery)
-                             extracts: decisions (+reasoning, advocates, alternatives, status)
-                                       entities, open/resolved questions, conflicts
-                             links them into a typed graph:
-                             decision ─involves→ person     decision ─about→ topic
-                             decision ─revisits→ decision   decision ─resolves→ question
-                       └─► CONSOLIDATION: near-duplicate decisions merge by
-                             embedding similarity; topicless decisions get
-                             fallback topics so the graph never goes edgeless
 
-query (API, SSE) ──► short follow-ups get rewritten as standalone questions
-                  ──► hybrid retrieval: vector search + Postgres full-text,
-                      fused with reciprocal-rank fusion
-                  ──► GRAPH EXPANSION over typed edges (2 hops)
-                  ──► pull evidence chunks for discovered decisions/questions,
-                      highest-confidence memory first (status × recency × evidence)
-                  ──► LLM reasons over chunks + graph + conversation → streamed
-                      answer with [C<id>] citations, confidence, timeline,
-                      follow-ups, and a retrieval trace
+Four node kinds, connected by typed edges that carry meaning — a `revisits`
+edge is why a question that matches an old Slack debate can also surface a
+later Jira reversal, even when the two sources share almost no words in
+common. Every node traces back to the document and chunk that produced it.
+
+## Product at a glance
+
+| | Capability | What it gives the team |
+|---|---|---|
+| 🧠 | **Decision memory** | Decisions, rationale, alternatives, advocates, status, and revisit history |
+| 🔎 | **Hybrid retrieval** | pgvector similarity, PostgreSQL full-text search, reciprocal-rank fusion, and graph expansion |
+| 🔗 | **Connected context** | Typed links between decisions, people, topics, questions, and source evidence |
+| 💬 | **Cited conversations** | Streaming answers, follow-ups, timelines, confidence, and retrieval traces |
+| 🔌 | **Source integrations** | Slack, GitHub, Jira, direct upload, and offline Slack export |
+| 🛡️ | **Workspace controls** | Cookie sessions, roles, audit events, rate limits, encrypted connector tokens, and billing gates |
+| 🧰 | **Operational tooling** | Queue health, retries, demo seeding, memory review, feedback triage, and quality evaluation |
+| 🏠 | **Flexible inference** | Anthropic, NVIDIA NIM, or fully local Ollama; Voyage, Ollama, or local embeddings |
+
+## Architecture
+
+One container runs everything: FastAPI serves the built React SPA as static
+files and shares its PostgreSQL connection pool with an in-process asyncio
+formation worker. There's no separate queue service or graph database — a
+bounded worker loop and adjacency tables in Postgres carry the whole system at
+current scale.
+
+```mermaid
+flowchart LR
+  subgraph Client["Browser"]
+    SPA["React SPA (Vite, JSX)<br/>hash-based routing, SSE client"]:::blue
+  end
+  subgraph Server["Single container — Docker / Fly.io machine"]
+    API["FastAPI app<br/>app/main.py"]:::blue
+    Worker["Formation worker<br/>in-process asyncio loop<br/>domains/memory/worker.py"]:::blue
+    Static["Static file mount<br/>StaticFiles(html=True)"]:::gray
+  end
+  DB[(PostgreSQL 16 + pgvector<br/>Neon / Fly Postgres, pooled)]:::purple
+  LLMP{{"LLM providers"}}:::purple
+  EmbedP{{"Embedding providers"}}:::purple
+  Ext["Slack / GitHub / Jira APIs"]:::gray
+
+  SPA -->|fetch /api/*, credentials include| API
+  SPA -->|POST /api/query, SSE| API
+  API --> Static
+  API <-->|asyncpg pool, max 20, 30s stmt timeout| DB
+  Worker <-->|claim jobs: FOR UPDATE SKIP LOCKED| DB
+  API -->|schedule_formation call| Worker
+  Worker --> LLMP
+  Worker --> EmbedP
+  API --> EmbedP
+  Worker -->|sync jobs, token refresh| Ext
+
+  classDef blue   fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:1.4px;
+  classDef purple fill:#f3e8ff,stroke:#9333ea,color:#581c87,stroke-width:1.4px;
+  classDef gray   fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.4px;
 ```
 
-The graph expansion step is what makes this memory rather than search: a question that vector-matches the September Slack debate also surfaces the January Jira near-reversal, because the graph edge `revisits` connects them — even when the ticket shares few words with the question.
+For the domain-by-domain module map, request lifecycle, and job-queue state
+machine, see the [full architecture documentation](#full-architecture-documentation).
 
-## Providers
+## Quick start
 
-**LLM** (`LLM_PROVIDER`: `auto` | `anthropic` | `nvidia` | `ollama`, default `auto`):
+### Option A — full stack with Docker
 
-| Provider | When | Details |
-|---|---|---|
-| Anthropic | credentials present | `claude-fable-5`, streaming everywhere, `thinking: {type: "adaptive"}`, `output_config: {effort: "high"}`, structured outputs via json_schema |
-| NVIDIA | `NVIDIA_API_KEY` set | `openai/gpt-oss-120b` by default (`NVIDIA_MODEL`) through NVIDIA's OpenAI-compatible `/chat/completions` endpoint, streaming answers, structured extraction via schema-in-prompt JSON parsing |
-| Ollama | otherwise | `qwen3.5` by default (`OLLAMA_MODEL`), native API, streaming chat with `think: false`. Structured extraction embeds the JSON schema in the prompt instead of Ollama's grammar-constrained `format` — on thinking models the grammar only runs after an unbounded thinking pass (which jams the GPU queue), and `format` + `think:false` together silently drop the grammar |
+This starts PostgreSQL, builds the React UI, and serves everything from FastAPI
+at `http://localhost:8100`.
 
-**Embeddings** (`EMBED_PROVIDER`: `auto` | `voyage` | `ollama` | `local`, default `auto` — picked once and pinned so embedding spaces never mix):
-
-| Provider | When | Details |
-|---|---|---|
-| Voyage AI | `VOYAGE_API_KEY` set | `voyage-3-lite`, 512-dim |
-| Ollama | otherwise, if reachable | `nomic-embed-text`, Matryoshka-truncated to 512 dims, `search_document:`/`search_query:` task prefixes |
-| local hash | fallback | deterministic lexical embedder, demo-grade |
-
-After switching embedding providers, re-embed the corpus: `backend/.venv/bin/python scripts/reembed.py`.
-
-## Quickstart (one command, full stack)
-
-Prereqs: Docker, [Ollama](https://ollama.com) running on the host.
+**Prerequisites:** Docker and [Ollama](https://ollama.com) running on the host.
 
 ```bash
-cd ybase
-ollama pull qwen3.5 && ollama pull nomic-embed-text
-docker compose --profile app up -d --build    # db + backend + built UI
-# → http://localhost:8100 (first visit bootstraps the owner account)
+git clone https://github.com/KarimMakhlas/YBase.git
+cd YBase
+
+ollama pull qwen3.5
+ollama pull nomic-embed-text
+
+docker compose --profile app up -d --build
+curl http://localhost:8100/api/health
 ```
 
-## Quickstart (local dev)
+Open **http://localhost:8100**. On a fresh database, the public landing page
+guides the first owner through account and workspace setup.
 
-Prereqs: Docker, Python 3.9+, Node 18+, [Ollama](https://ollama.com).
+Stop the stack with:
 
 ```bash
-cd ybase
+docker compose --profile app down
+```
 
-# 0. Local models
-ollama pull qwen3.5 && ollama pull nomic-embed-text
+### Option B — local development
 
-# 1. Database (pgvector on host port 5433)
-docker compose up -d
+**Prerequisites:** Python 3.11+, Node.js 20+, Docker, and either Ollama or a
+configured hosted LLM provider.
+
+```bash
+git clone https://github.com/KarimMakhlas/YBase.git
+cd YBase
+
+# 1. Local PostgreSQL + pgvector
+docker compose up -d db
 
 # 2. Backend
+cp backend/.env.example backend/.env
 cd backend
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/uvicorn app.main:app --port 8100          # schema auto-created on startup
-
-# 3. Frontend (separate terminal)
-cd ../frontend && npm install && npm run dev          # http://localhost:5173
-
-# 4. Open the UI and complete first-run bootstrap
-# http://localhost:5173 creates the first workspace owner account.
-# Then open the admin Ops tab to seed demo data, watch formation, and clear failures.
-
-# 5. Demo: ingest 10 docs + run 5 queries (separate terminal)
-cd ..
-export YBASE_EMAIL=owner@example.com
-export YBASE_PASSWORD='your-bootstrap-password'
-backend/.venv/bin/python scripts/demo.py
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/uvicorn app.main:app --reload --port 8100
 ```
 
-To use NVIDIA instead of Ollama, `export NVIDIA_API_KEY=nvapi-...` before starting the backend. To force it even when Anthropic credentials are present, set `LLM_PROVIDER=nvidia`. To use Claude, `export ANTHROPIC_API_KEY=sk-ant-...` — `auto` prefers Anthropic, then NVIDIA, then Ollama (check authenticated `GET /api/health/details`).
-
-The first browser visit shows a bootstrap screen. That creates the initial workspace, owner user, and assigns any existing local memory to that workspace. Passwords must be at least 12 characters.
-
-The admin **Ops** tab is the MVP readiness center: launch checklist, provider/queue status, source sync health, failed-formation retry, failed/paused sync retry, and a one-click four-document demo seed that runs through the normal ingest pipeline.
-
-The CLI demo ingests sequentially and waits for memory formation on each document so later documents can link to earlier memory (the Jira ticket links to the Slack decision it revisits). Local models form memory slowly — expect 1–3 minutes per document.
-
-## Importing a real Slack workspace
-
-Admins can connect Slack from the **Sources** tab:
-
-1. Set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`,
-   `SLACK_REDIRECT_BASE_URL`, and `CONNECTOR_SECRET_KEY`.
-2. In Slack app settings, add the redirect URL:
-   `SLACK_REDIRECT_BASE_URL/api/integrations/slack/oauth/callback`.
-3. Give the Slack app bot scopes `channels:read` and `channels:history`, then
-   enable Events API delivery to `/api/integrations/slack/events`.
-4. Open the app as an owner/admin, connect Slack, select public channels, and run
-   the 90-day backfill.
-
-Selected public channels sync into workspace-wide memory. Private channels, DMs,
-files, attachments, and source-level ACLs are intentionally outside v1.
-
-Offline Slack exports are still supported as an admin fallback.
-
-Unzip a Slack export (Workspace Settings → Import/Export Data → Export), then:
+In a second terminal:
 
 ```bash
-backend/.venv/bin/python scripts/import_slack.py /path/to/export \
-    --channel engineering --since 2025-01-01 --limit 20 --dry-run   # preview
-backend/.venv/bin/python scripts/import_slack.py /path/to/export \
-    --channel engineering --since 2025-01-01 --limit 20             # ingest
+cd YBase/frontend
+npm ci
+npm run dev
 ```
 
-Threads become documents (the natural decision unit); loose chatter rolls into per-day digests kept only when substantial. Mentions, links, and HTML escapes are cleaned; documents ingest oldest-first awaiting formation so revisit links can form.
+| Service | URL |
+|---|---|
+| Web application | http://localhost:5173 |
+| Backend health | http://localhost:8100/api/health |
+| Interactive API docs | http://localhost:8100/docs |
+| PostgreSQL | `localhost:5433` |
 
-`scripts/demo.py` and `scripts/import_slack.py` use the authenticated API. Set `YBASE_EMAIL` and `YBASE_PASSWORD` for an owner/admin user before running them.
+To use an existing Neon database, put its pooled `DATABASE_URL` in
+`backend/.env` and skip the local database command. See
+[DEPLOY-neon.md](DEPLOY-neon.md) for production guidance.
+
+## How the memory engine works
+
+### Formation
+
+1. Content is deduplicated by hash.
+2. Documents are split into evidence-sized chunks and embedded.
+3. A bounded worker queue processes documents sequentially per workspace while
+   allowing different workspaces to run in parallel.
+4. The selected LLM extracts decisions, reasoning, alternatives, people,
+   topics, open questions, and conflicts.
+5. Memory nodes are linked to evidence chunks and to one another through typed
+   graph edges.
+6. Near-duplicate decisions are consolidated by embedding similarity.
+
+```mermaid
+sequenceDiagram
+    participant Src as Source: Slack, GitHub, Jira, Upload
+    participant Ingest as ingestion.ingest_document
+    participant DB as Postgres: documents, chunks
+    participant Queue as worker._loop / _claim
+    participant Form as formation.run_formation
+    participant LLM as LLM provider
+    participant Graph as graph.upsert_node / add_edge
+    participant Cons as consolidate.merge_similar_decisions
+
+    Src->>Ingest: raw content
+    Ingest->>Ingest: content_hash dedup check
+    alt duplicate - hash or external_ref match
+        Ingest-->>Src: existing document_id, duplicate=true
+    else new document
+        Ingest->>Ingest: chunk_text - 900-1500 char, paragraph-aware
+        Ingest->>DB: embed_texts chunks, INSERT document + chunks
+        Ingest->>Queue: schedule_formation doc_id
+    end
+    rect rgba(37,99,235,0.06)
+    loop worker loop - 1 doc per workspace in flight, N workspaces parallel
+        Queue->>DB: claim pending doc - FOR UPDATE SKIP LOCKED
+        Queue->>Form: run_formation doc_id
+        Form->>DB: fetch chunks + existing-memory digest - recency + relevance blend, cap 150
+        Form->>LLM: structured_call - FORMATION_SYSTEM, FORMATION_SCHEMA
+        LLM-->>Form: decisions, entities, questions, links
+        Form->>Graph: upsert_node / add_edge / link_chunk per item
+        Form->>DB: formation_status = complete, store context_summary
+        Form->>Cons: touched decision node ids
+        Cons->>Cons: embed signatures - label + summary
+        Cons->>Cons: cosine similarity above MERGE_SIM_THRESHOLD, about 0.86?
+        Cons->>Graph: merge_nodes keep_id, drop_id
+    end
+    end
+    Note over Queue,DB: on failure - exponential backoff, 2 to the n times FORMATION_BACKOFF_S,<br/>max FORMATION_MAX_ATTEMPTS then formation_status=failed.<br/>Stuck processing rows reclaimed on worker restart.
+```
+
+### Retrieval
+
+1. Short follow-ups are rewritten into standalone questions.
+2. Vector and PostgreSQL full-text results are fused with reciprocal-rank
+   fusion.
+3. Relevant memory nodes expand through the graph for up to two hops.
+4. Evidence is ranked by relevance and memory confidence.
+5. The LLM reasons over the evidence, graph context, and conversation history.
+6. The API streams answer tokens and structured metadata over SSE.
+
+```mermaid
+sequenceDiagram
+    participant UI as React SPA
+    participant API as POST /api/query
+    participant RW as rewrite_followup
+    participant Ret as retrieval.retrieve
+    participant DB as Postgres + pgvector
+    participant Graph as graph.expand - BFS, hops=2
+    participant LLM as LLM provider
+    participant SSE as SSE stream
+
+    UI->>API: question + chat history
+    rect rgba(217,119,6,0.08)
+    opt short follow-up under 100 chars, history exists
+        API->>RW: resolve pronouns / ellipsis
+        RW-->>API: standalone search question
+    end
+    end
+    API->>Ret: retrieve - question, workspace_id
+    par vector + full text
+        Ret->>DB: pgvector cosine top-K
+        Ret->>DB: websearch_to_tsquery top-K
+    end
+    Ret->>Ret: reciprocal rank fusion - RRF, k=60
+    Ret->>Graph: expand from seed nodes
+    Graph-->>Ret: related nodes + edges - relation-priority order, topic fanout capped
+    Ret->>Ret: rank evidence = node confidence x similarity, floor 0.5
+    Ret-->>API: chunks + nodes + edges + retrieval trace
+    API->>API: build_context - graph summary + chronological chunks + history
+    API->>LLM: stream_text - QUERY_SYSTEM, context
+    LLM-->>SSE: streamed markdown, holdback buffer strips partial delimiters
+    SSE-->>UI: event: delta - answer tokens
+    API->>API: parse trailing JSON metadata block
+    API->>API: locate_quote - exact citation spans in source chunks
+    API-->>SSE: event: metadata - citations, confidence, timeline, counter-evidence
+    SSE-->>UI: event: done
+```
+
+## Configuration
+
+YBase reads `backend/.env` at startup. Real environment variables take
+precedence, and secrets should never be committed.
+
+### LLM providers
+
+Set `LLM_PROVIDER` to `auto`, `anthropic`, `nvidia`, or `ollama`.
+
+| Provider | Activates when `auto` | Default model | Notes |
+|---|---|---|---|
+| Anthropic | Anthropic credentials are available | `claude-fable-5` | Streaming, adaptive thinking, structured extraction |
+| NVIDIA NIM | `NVIDIA_API_KEY` is set | `openai/gpt-oss-120b` | OpenAI-compatible chat completions |
+| Ollama | Fallback | `qwen3.5` | Fully local inference |
+
+### Embedding providers
+
+Set `EMBED_PROVIDER` to `auto`, `voyage`, `ollama`, or `local`.
+
+| Provider | Activates when `auto` | Model | Notes |
+|---|---|---|---|
+| Voyage AI | `VOYAGE_API_KEY` is set | `voyage-3-lite` | Hosted 512-dimensional embeddings |
+| Ollama | Ollama is reachable | `nomic-embed-text` | Local Matryoshka embeddings, normalized to 512 dimensions |
+| Local hash | Fallback | `local-hash` | Deterministic, lexical, demo-grade fallback |
+
+Embedding spaces must not be mixed. After changing providers or embedding
+models, rebuild stored vectors:
+
+```bash
+backend/.venv/bin/python scripts/reembed.py
+```
+
+### Provider routing
+
+Both `auto` chains prefer a hosted provider when credentials are present and
+degrade gracefully to fully local inference otherwise:
+
+```mermaid
+flowchart TD
+  LP{"LLM_PROVIDER"}:::gray
+  LP -->|explicit: anthropic / nvidia / ollama| LPuse["use configured provider"]:::blue
+  LP -->|auto| LP1{"Anthropic credentials present?"}:::gray
+  LP1 -->|yes| LPa["Anthropic — claude-fable-5<br/>adaptive thinking, structured output"]:::green
+  LP1 -->|no| LP2{"NVIDIA_API_KEY set?"}:::gray
+  LP2 -->|yes| LPn["NVIDIA NIM — openai/gpt-oss-120b<br/>OpenAI-compatible completions"]:::blue
+  LP2 -->|no| LPo["Ollama — qwen3.5<br/>fully local inference"]:::amber
+
+  EP{"EMBED_PROVIDER"}:::gray
+  EP -->|explicit| EPuse["use configured provider"]:::blue
+  EP -->|auto| EP1{"VOYAGE_API_KEY set?"}:::gray
+  EP1 -->|yes| EPv["Voyage — voyage-3-lite, 512d<br/>hosted embeddings"]:::green
+  EP1 -->|no| EP2{"Ollama reachable?"}:::gray
+  EP2 -->|yes| EPo["Ollama — nomic-embed-text<br/>Matryoshka, normalized to 512d"]:::blue
+  EP2 -->|no| EPl["Local hash embedder<br/>deterministic, demo-grade fallback"]:::amber
+
+  classDef blue   fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:1.4px;
+  classDef green  fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.4px;
+  classDef amber  fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:1.4px;
+  classDef gray   fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.4px;
+```
+
+### Important environment variables
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL connection string | Local Compose database |
+| `LLM_PROVIDER` | `auto`, `anthropic`, `nvidia`, or `ollama` | `auto` |
+| `EMBED_PROVIDER` | `auto`, `voyage`, `ollama`, or `local` | `auto` |
+| `CONNECTOR_SECRET_KEY` | Encrypts OAuth tokens at rest | Required for connectors |
+| `ALLOW_PUBLIC_SIGNUP` | Enables public workspace registration | `true` |
+| `SEED_DEMO_ON_SIGNUP` | Seeds new workspaces with demo memory | `true` |
+| `SESSION_COOKIE_SECURE` | Sends session cookies over HTTPS only | `false` |
+| `CORS_ORIGINS` | Allowed browser origins | Local Vite origins |
+| `DB_POOL_MAX_SIZE` | Per-process database connection limit | `20` |
+| `FORMATION_CONCURRENCY` | Parallel workspace formation workers | Auto |
+| `SENTRY_DSN` | Enables Sentry error reporting | Disabled |
+
+See [.env.example](.env.example) and
+[backend/.env.example](backend/.env.example) for the full configuration surface.
+
+## Integrations
+
+YBase currently supports:
+
+- **Slack** — OAuth, public-channel selection, Events API ingestion, periodic
+  reconciliation, and historical backfill.
+- **GitHub** — OAuth, repository selection, issue ingestion, and periodic
+  resynchronization.
+- **Jira** — Atlassian OAuth 3LO, project selection, issue ingestion, and
+  periodic resynchronization.
+- **Direct documents** — paste or upload content through the UI or API.
+- **Slack exports** — import an unzipped workspace export without OAuth.
+
+Connector credentials are encrypted using `CONNECTOR_SECRET_KEY`. Source-level
+ACLs, private Slack channels, DMs, files, and attachments are intentionally
+outside the current product boundary.
+
+Slack has a live path on top of periodic reconciliation; Jira and GitHub have
+no realtime API, so they rely purely on scheduled polling. All three converge
+on the same dedup-and-queue ingestion path:
+
+```mermaid
+flowchart TB
+  subgraph SlackFlow["Slack"]
+    S1["OAuth install<br/>oauth.v2.access"]:::blue
+    S2["Events API webhook<br/>live messages, HMAC verified"]:::green
+    S3["Quiet-thread rollup<br/>SLACK_THREAD_QUIET_S"]:::green
+    S4["Periodic reconcile<br/>SLACK_RECONCILE_INTERVAL_S<br/>(covers missed webhook deliveries)"]:::amber
+    S1 --> S2 --> S3
+    S1 --> S4
+  end
+  subgraph JiraFlow["Jira"]
+    J1["OAuth 3LO<br/>access + refresh token"]:::blue
+    J2["Initial backfill<br/>CONNECTOR_BACKFILL_DAYS<br/>(fast slice first, then full)"]:::amber
+    J3["Periodic resync<br/>CONNECTOR_RESYNC_INTERVAL_S"]:::amber
+    J1 --> J2 --> J3
+  end
+  subgraph GitHubFlow["GitHub"]
+    G1["OAuth App<br/>non-expiring token"]:::blue
+    G2["Initial backfill<br/>fast slice then full"]:::amber
+    G3["Periodic resync"]:::amber
+    G1 --> G2 --> G3
+  end
+  Ingest["ingest_document()<br/>dedup by content_hash / external_ref"]:::purple
+  Queue["Formation queue"]:::purple
+
+  S3 --> Ingest
+  S4 --> Ingest
+  J3 --> Ingest
+  G3 --> Ingest
+  Ingest --> Queue
+
+  classDef blue   fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:1.4px;
+  classDef green  fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.4px;
+  classDef amber  fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:1.4px;
+  classDef purple fill:#f3e8ff,stroke:#9333ea,color:#581c87,stroke-width:1.4px;
+```
+
+## Product surfaces
+
+| Surface | Purpose |
+|---|---|
+| **Home** | Activity, recent decisions, open questions, digests, and relitigation alerts |
+| **Ask memory** | Cited streaming chat with follow-ups, confidence, timelines, and retrieval traces |
+| **Timeline** | Chronological documents, decisions, questions, and revisits |
+| **Decision log** | Rationale, alternatives, participants, status, evidence, and lineage |
+| **People** | Decisions, positions, questions, and documents connected to each person |
+| **Graph** | Interactive exploration of the typed memory graph |
+| **Sources** | OAuth connections, stream selection, backfills, and sync status |
+| **Review** | Admin curation, editing, validation, archive, and restore |
+| **Feedback** | Trust and answer-quality triage |
+| **Ops** | Readiness checks, queue health, retries, recovery, and demo seeding |
+| **Settings** | Workspace members, roles, account, and billing |
 
 ## API
 
-| Endpoint | Description |
+FastAPI publishes the complete interactive contract at `/docs`. The main route
+groups are:
+
+| Route group | Responsibility |
 |---|---|
-| `GET /api/auth/bootstrap-status`, `POST /api/auth/bootstrap` | First-run workspace owner setup |
-| `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` | Password login with HTTP-only session cookie |
-| `GET/POST/PATCH /api/workspace/users` | Workspace user management (`owner/admin/member`) |
-| `GET /api/sources`, `GET /api/sources/slack/install-url` | Admin Slack connector status and OAuth install URL |
-| `GET/PATCH /api/sources/{id}/streams` | Admin channel discovery and selected-channel management |
-| `POST /api/sources/{id}/sync`, `GET /api/sources/{id}/jobs` | Admin selected-channel backfill and sync job status |
-| `POST /api/sources/{id}/jobs/{job_id}/retry` | Admin retry for failed/paused Slack sync jobs |
-| `GET /api/ops/overview`, `POST /api/ops/demo-seed`, `POST /api/ops/failed-documents/retry` | Admin MVP readiness dashboard, demo data seed, and failed formation recovery |
-| `GET/PATCH/POST /api/memory-review` | Admin memory review: edit, mark reviewed, archive, and unarchive extracted nodes |
-| `POST/GET/PATCH /api/answer-feedback` | Members mark/flag saved answers; admins inspect and resolve feedback |
-| `POST /api/ingest` | `{source, title, text, author?, created_at?, tags?}` → content-hash dedup, chunks, embeds, stores, enqueues memory formation |
-| `POST /api/documents/{id}/reform` / `POST /api/relink` | Re-run formation on one document / re-queue the whole corpus oldest-first so links can form order-independently |
-| `POST /api/query` | `{question, history?}` → SSE stream: `status`, `delta` (answer tokens), `metadata` (confidence, citations, timeline, related questions, retrieval trace), `done`. `history` carries prior turns so follow-ups resolve |
-| `GET /api/documents` / `GET /api/documents/{id}?full=true` | Ingested docs + formation status + extracted-memory counts; `full` returns the raw text for the document viewer |
-| `GET /api/decisions` | Decision log with confidence scores — filter by `topic`, `person`, `status`, `q` |
-| `GET /api/timeline` | Documents + decisions + questions over time, with revisited flags |
-| `GET /api/graph` / `GET /api/nodes/{id}` | Full memory graph; single node with evidence documents and neighbors |
-| `GET /api/search?q=` | Cmd-K search across decisions, questions, people, topics, documents |
-| `GET /api/people` / `GET /api/people/{id}` | Person pages: decisions involved in (with their recorded positions), questions raised, source documents |
-| `GET /api/stats?since=` | Counts, recent decisions, open + stale questions, relitigation alerts, and a since-you-were-last-here digest |
-| `POST /api/integrations/slack/events` | Slack Events API receiver (signed); threads buffer and roll up into documents after going quiet |
-| `GET /api/sessions` (+POST, +DELETE, `/{id}/messages`) | Persisted chat sessions |
-| `GET /api/health` / `GET /api/health/details` | Public DB/bootstrap status; authenticated admin provider/queue details |
+| `/api/auth/*` | Bootstrap, registration, login, OAuth, sessions, and password reset |
+| `/api/workspace/*` | Workspace setup, members, invites, roles, and ownership |
+| `/api/sources/*` | Connector OAuth, streams, sync jobs, retries, and removal |
+| `/api/ingest`, `/api/documents/*` | Ingestion, document status, reform, and relinking |
+| `/api/query` | SSE answer stream with status, deltas, metadata, and completion |
+| `/api/decisions`, `/api/timeline`, `/api/graph` | Read models over organizational memory |
+| `/api/memory-review/*` | Admin review and curation |
+| `/api/answer-feedback/*` | Member feedback and admin resolution |
+| `/api/analytics/*` | Activation, engagement, and memory-quality metrics |
+| `/api/ops/*` | Readiness, recovery, queue inspection, and demo operations |
+| `/api/health*` | Database, provider, embedding, and queue health |
 
-## UI
+## Data model
 
-Twelve views (tabs), plus a ⌘K palette that searches everything in memory and
-jumps to it in the right view. Decisions, people, documents, and citations are
-clickable everywhere — sources open in a document viewer with the cited chunk
-highlighted. Admins get a status footer (provider, formation queue, last
-memory write).
+`workspace_id` scopes nearly every table for multi-tenancy. The typed memory
+graph (`memory_nodes`, `memory_edges`, `chunk_links`) sits alongside
+document/chunk storage, connector sync state, and chat/feedback/digest
+tables:
 
-- **Home** — counts, recent decisions, open + stale questions, a
-  since-you-were-last-here digest, and a relitigation banner when a new
-  document revisits a settled decision
-- **Ask memory** — streaming chat that carries conversation context
-  (follow-ups work), citation chips, confidence, per-answer timeline,
-  copy/regenerate, a "how I remembered this" retrieval trace, and a
-  structured not-in-memory state; history persisted server-side
-- **Timeline** — continuous chronology of documents, decisions, and questions
-  with month markers, filters, and revisited badges
-- **Decision log** — every extracted decision, collapsible: status, confidence
-  meter, positions per person, alternatives considered, revisit chain, graph
-  relations, sources
-- **People** — person pages: everything someone advocated, decided, or raised,
-  with their recorded positions quoted
-- **Graph** — interactive force-directed view; drag nodes, click for detail
-  and evidence, focus mode shows a node's 2-hop neighborhood
-- **Ops** — admin MVP readiness checklist, provider/queue status, demo seed, source health, and recovery actions
-- **Review** — admin curation for extracted memory: edit fields, validate JSON data, mark reviewed, archive/unarchive
-- **Feedback** — admin queue for member answer feedback with citations, trace nodes, Review/document jumps, and resolution states
-- **Sources** — admin Slack OAuth, public channel selection, 90-day backfill, and sync status
-- **+ Add** — paste or drop documents into memory; live formation status, extracted-memory counts, retry on failure
-- **Settings** — workspace users and roles
+```mermaid
+erDiagram
+  workspaces ||--o{ workspace_memberships : has
+  users ||--o{ workspace_memberships : has
+  workspaces ||--o{ auth_sessions : scopes
+  users ||--o{ auth_sessions : has
+  workspaces ||--o{ workspace_invites : issues
+  workspaces ||--o{ documents : owns
+  documents ||--o{ chunks : "splits into"
+  chunks ||--o{ chunk_links : evidences
+  memory_nodes ||--o{ chunk_links : "evidenced by"
+  workspaces ||--o{ memory_nodes : owns
+  memory_nodes ||--o{ memory_edges : src
+  memory_nodes ||--o{ memory_edges : dst
+  memory_nodes ||--o{ decision_shares : "shared as"
+  workspaces ||--o{ source_connections : has
+  source_connections ||--o{ source_streams : has
+  source_connections ||--o{ sync_jobs : has
+  source_connections ||--o{ slack_events : buffers
+  workspaces ||--o{ chat_sessions : has
+  users ||--o{ chat_sessions : owns
+  chat_sessions ||--o{ chat_messages : has
+  chat_messages ||--o{ answer_feedback : receives
+  workspaces ||--o{ digests : generates
+  workspaces ||--o{ audit_events : logs
+
+  workspaces {
+    int id PK
+    text slug UK
+    text plan
+    text plan_status
+    timestamptz trial_ends_at
+  }
+  users {
+    int id PK
+    text email UK
+    text password_hash
+    text auth_provider
+    text google_sub UK
+  }
+  workspace_memberships {
+    int workspace_id FK
+    int user_id FK
+    text role
+  }
+  auth_sessions {
+    int id PK
+    int user_id FK
+    text token_hash UK
+    timestamptz expires_at
+    timestamptz revoked_at
+  }
+  documents {
+    int id PK
+    int workspace_id FK
+    text source
+    text content_hash
+    text formation_status
+    int formation_attempts
+    text external_ref
+  }
+  chunks {
+    int id PK
+    int document_id FK
+    int chunk_index
+    vector embedding
+    text embed_model
+    tsvector text_tsv
+  }
+  memory_nodes {
+    int id PK
+    int workspace_id FK
+    text kind
+    text label
+    text status
+    jsonb data
+    vector embedding
+    timestamptz archived_at
+  }
+  memory_edges {
+    int id PK
+    int workspace_id FK
+    int src FK
+    int dst FK
+    text relation
+  }
+  chunk_links {
+    int chunk_id FK
+    int node_id FK
+    text relation
+  }
+  source_connections {
+    int id PK
+    text provider
+    text access_token_enc
+    text refresh_token_enc
+    timestamptz last_sync_at
+  }
+  source_streams {
+    int id PK
+    int connection_id FK
+    text external_id
+    boolean selected
+    jsonb sync_cursor
+  }
+  sync_jobs {
+    int id PK
+    int connection_id FK
+    text status
+    text kind
+    jsonb stats
+  }
+  slack_events {
+    int id PK
+    text channel
+    text thread_key
+    boolean consumed
+  }
+  chat_sessions {
+    int id PK
+    int user_id FK
+    text title
+  }
+  chat_messages {
+    int id PK
+    int session_id FK
+    text role
+    jsonb meta
+  }
+  answer_feedback {
+    int id PK
+    int chat_message_id FK
+    text issue_type
+    text status
+  }
+  decision_shares {
+    int id PK
+    int node_id FK
+    text token UK
+    int view_count
+  }
+  digests {
+    int id PK
+    timestamptz period_start
+    jsonb payload
+  }
+  workspace_invites {
+    int id PK
+    text token_hash UK
+    text role
+    timestamptz expires_at
+  }
+  audit_events {
+    int id PK
+    text action
+    text target_type
+    jsonb data
+  }
+```
+
+Full schema in [schema.sql](backend/app/core/schema.sql) plus numbered
+migrations in [backend/app/core/migrations/](backend/app/core/migrations/).
 
 ## Project structure
 
-```
-backend/app/
-  main.py          FastAPI app setup, middleware, API router, static UI mount
-  api/
-    router.py      one place that wires every HTTP router onto the app
-    routes/        thin API aliases for routes that now live in domains
-  core/            config, db/schema.sql, crypto, mailer, observability,
-                   rate limits, and small shared date helpers
-  providers/       LLM and embedding provider wrappers
-  domains/
-    auth/          password auth, sessions, workspace membership, audit log
-    documents/     content-hash dedup, chunking, embedding, storage, enqueue
-    query/         hybrid retrieval, prompts, SSE streaming, citations
-    memory/        graph primitives, formation worker, review, views, scoring
-    connectors/    Slack/Jira/GitHub OAuth, API clients, sync, events
-    chat/          persisted Ask Memory sessions
-    feedback/      answer feedback trust loop
-    analytics/     workspace analytics and memory quality
-    digest/        digest generation and delivery
-    ops/           readiness/recovery endpoints and demo data
-  auth.py, ingest.py, llm.py, sources.py, memory/...
-                   compatibility shims for existing scripts/tests/imports
-backend/tests/     pytest suite (pure helpers + DB-backed graph/queue tests)
-frontend/          React + Vite (home, chat, timeline, decisions, people, graph,
-                   ops, review, feedback, sources, add, settings + cmd-K,
-                   doc viewer, footer)
-scripts/
-  sample_docs.py   10 simulated documents (Slack/Notion/GitHub/Jira/meeting)
-  demo.py          end-to-end demo: ingest all + 5 queries
-  eval.py          memory-quality scorecard (formation health, topic/evidence
-                   coverage, graph density, duplicate suspects, ground truth)
-  import_slack.py  import an unzipped Slack workspace export
-  reembed.py       re-embed all chunks after switching embedding providers
-docs/diagrams/     tracked architecture/workflow diagrams
+```text
+YBase/
+├── backend/
+│   ├── app/
+│   │   ├── api/                 # Router assembly and route compatibility aliases
+│   │   ├── core/                # Config, DB, migrations, crypto, mail, observability
+│   │   ├── domains/             # Product capabilities grouped by domain
+│   │   │   ├── auth/
+│   │   │   ├── connectors/
+│   │   │   ├── documents/
+│   │   │   ├── memory/
+│   │   │   ├── query/
+│   │   │   └── ...
+│   │   ├── providers/           # LLM and embedding adapters
+│   │   └── main.py              # FastAPI lifecycle and application assembly
+│   ├── tests/                   # Pure, API, connector, graph, and worker tests
+│   └── requirements*.txt
+├── frontend/
+│   ├── public/                  # Static brand assets
+│   └── src/                     # React application, views, components, design system
+├── scripts/                     # Demo, imports, evaluations, and re-embedding
+├── docker-compose.yml           # Local pgvector and optional full-stack profile
+├── Dockerfile                   # Multi-stage UI + API production image
+└── fly.toml                     # Fly.io deployment configuration
 ```
 
-## Tests & evals
+## Development
+
+### Backend tests
+
+The test suite expects a PostgreSQL server with pgvector on port `5433`.
 
 ```bash
-cd backend && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest            # unit + DB tests (uses ybase_test DB)
-cd .. && backend/.venv/bin/python scripts/eval.py   # memory-quality scorecard
+docker compose up -d db
+cd backend
+.venv/bin/pip install -r requirements-dev.txt
+PYTHONPATH=. .venv/bin/python -m pytest
 ```
 
-Run the eval after changing formation prompts, models, or consolidation
-thresholds — extraction quality regresses silently otherwise. Exit code is
-non-zero when issues are found, so it slots into CI.
+### Frontend build
 
-## Notes & limits (MVP)
+```bash
+cd frontend
+npm ci
+npm run build
+```
 
-- Graph is adjacency tables in Postgres (per spec) — no Neo4j needed at this scale.
-- Memory formation is per-document with the existing-graph digest in context; at large scale you'd shard the digest by similarity to the new document.
-- Entity/decision dedup is by normalized label; formation is prompted to reuse exact existing labels so repeated mentions merge and accrete evidence.
-- Answer and extraction quality scale with the model: local qwen3.5 is solid, Claude is better — the switch is just an env var.
-- Auth/multi-tenancy is workspace-scoped for v1. It does not yet enforce per-document/source ACLs inside a workspace.
+### Memory-quality evaluation
+
+Run the evaluator after changing formation prompts, models, retrieval, scoring,
+or consolidation:
+
+```bash
+backend/.venv/bin/python scripts/eval.py
+```
+
+The GitHub Actions workflow runs the backend suite against pgvector/PostgreSQL
+and builds the frontend on every push and pull request.
+
+## Demo and data import
+
+Authenticate as an owner or admin, then:
+
+```bash
+export YBASE_EMAIL=owner@example.com
+export YBASE_PASSWORD='your-password'
+
+# Seed documents and run representative questions
+backend/.venv/bin/python scripts/demo.py
+
+# Preview and import an offline Slack export
+backend/.venv/bin/python scripts/import_slack.py /path/to/export \
+  --channel engineering --since 2025-01-01 --limit 20 --dry-run
+```
+
+The in-product **Ops** surface can also seed a compact demo corpus and expose
+formation or sync failures without using the CLI.
+
+## Deployment
+
+| Target | Path |
+|---|---|
+| Docker | `docker compose --profile app up -d --build` |
+| Fly.io | [fly.toml](fly.toml) |
+| Neon Postgres | [DEPLOY-neon.md](DEPLOY-neon.md) |
+
+Production deployments should use HTTPS, set `SESSION_COOKIE_SECURE=true`,
+restrict `CORS_ORIGINS`, configure a stable `CONNECTOR_SECRET_KEY`, and use a
+pooled PostgreSQL connection string.
+
+```mermaid
+flowchart TB
+  subgraph FlyIO["Fly.io — primary_region iad"]
+    VM["Machine: 1 shared CPU, 2GB RAM<br/>always-on, min_machines_running=1"]:::blue
+    subgraph Container["Docker image"]
+      UIbuild["Vite build<br/>(node:20-alpine stage)"]:::gray
+      API2["FastAPI — python:3.12-slim<br/>serves static/ + /api/*"]:::blue
+    end
+    VM --> Container
+  end
+  Neon[(Neon Postgres<br/>pgvector, pooled DATABASE_URL)]:::purple
+  Anthropic{{"Anthropic API"}}:::purple
+  Voyage{{"Voyage AI"}}:::purple
+  Resend{{"Resend (email)"}}:::amber
+  GH["GitHub Actions CI<br/>pytest against pgvector + npm build"]:::gray
+
+  UIbuild -->|dist/ copied into image as static| API2
+  API2 <-->|DATABASE_URL secret| Neon
+  API2 --> Anthropic
+  API2 --> Voyage
+  API2 --> Resend
+  GH -.->|on push / PR| Container
+
+  classDef blue   fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:1.4px;
+  classDef purple fill:#f3e8ff,stroke:#9333ea,color:#581c87,stroke-width:1.4px;
+  classDef amber  fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:1.4px;
+  classDef gray   fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.4px;
+```
+
+## Full architecture documentation
+
+This README covers the highlights. [docs/architecture.html](docs/architecture.html)
+is a self-contained documentation site — no server or internet connection
+required, just clone the repo and open the file in a browser — with all of
+the diagrams above plus the ones that don't fit here: the domain module map,
+the formation job-queue state machine, the auth/RBAC/billing request
+lifecycle, and the system-context view. Light/dark themes, search, and
+one-click SVG/PNG export for every diagram.
+
+## Current boundaries
+
+- The graph uses PostgreSQL adjacency tables; no separate graph database is
+  required at the current scale.
+- Access control is workspace-scoped, not per document or per source.
+- Slack v1 focuses on selected public channels; private channels and DMs are not
+  ingested.
+- Local hash embeddings are for evaluation and demos, not production semantic
+  retrieval.
+- Formation quality and latency depend on the selected model and available
+  hardware.
 
 ## License
 
-Copyright © 2026 YBase. All rights reserved. This is proprietary software; no license is granted for use, copying, modification, or distribution without prior written permission.
+Copyright © 2026 YBase. All rights reserved.
+
+This repository is proprietary software. No license is granted for use,
+copying, modification, or distribution without prior written permission.

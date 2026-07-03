@@ -19,3 +19,5 @@ nohup.out
 
 # Local tooling / harness config
 .claude/
+
+docs
