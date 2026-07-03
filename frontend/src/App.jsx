@@ -383,13 +383,18 @@ export default function App() {
   }
 
   if (authState.needsBootstrap || !authState.user) {
+<<<<<<< Updated upstream
+=======
+    // The marketing page is always the public entry. On first run its CTAs open
+    // the locked owner bootstrap; later they open the normal auth flow.
+>>>>>>> Stashed changes
     const hash = window.location.hash
     const wantsAuth = /^#\/(login|signup)/.test(hash)
     const onAuthed = (user) => {
       setAuthState({ loading: false, needsBootstrap: false, user })
       navigate('home')
     }
-    if (!authState.needsBootstrap && !wantsAuth) {
+    if (!wantsAuth) {
       return (
         <ToastProvider>
           <Marketing onEnter={(intent) => {
