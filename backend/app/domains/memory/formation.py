@@ -6,13 +6,24 @@ and open/resolved questions — each tied to evidence chunks and linked to
 existing memory nodes (revisits / resolves / relates_to).
 """
 
+import logging
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
 import asyncpg
 
-from app.core import db
+from app.core import config, db
+from app.core.observability import StageTimer
 from app.providers import llm
-from . import graph
+from . import graph, validation
+
+log = logging.getLogger("ybase.formation")
+
+
+@dataclass
+class FormationOutcome:
+    touched: List[int] = field(default_factory=list)  # decision node ids
+    validation: Dict[str, Any] = field(default_factory=dict)
 
 _NULLABLE_INT = {"anyOf": [{"type": "integer"}, {"type": "null"}]}
 _NULLABLE_STR = {"anyOf": [{"type": "string"}, {"type": "null"}]}
@@ -206,6 +217,8 @@ async def _persist(
 ) -> List[int]:
     """Write the extraction into the graph. Returns the decision node ids this
     document created or updated, for incremental consolidation."""
+    from app.domains.auth import service as auth  # lazy: avoid import cycle
+
     index_to_id = {c["chunk_index"]: c["id"] for c in chunks}
     doc_chunk_ids = list(index_to_id.values())
 
@@ -215,6 +228,18 @@ async def _persist(
 
     def safe_node(node_id: Optional[int]) -> Optional[int]:
         return node_id if node_id in valid_node_ids else None
+
+    async def flip_status(node_id: int, new_status: str) -> None:
+        """Status changes on *existing* nodes (reversals, resolutions) are the
+        destructive edge of formation — leave an audit trail."""
+        old = await graph.set_status(conn, node_id, new_status)
+        if old is not None and old != new_status:
+            await auth.audit(
+                conn, "formation_node_status_change", workspace_id, None,
+                target_type="memory_node", target_id=node_id,
+                data={"old_status": old, "new_status": new_status,
+                      "document_id": document_id},
+            )
 
     entity_ids: Dict[str, int] = {}
     touched_decisions: List[int] = []
@@ -264,14 +289,14 @@ async def _persist(
         if revisits and revisits != node_id:
             await graph.add_edge(conn, workspace_id, node_id, revisits, "revisits")
             if dec["status"] == "reversed":
-                await graph.set_status(conn, revisits, "reversed")
+                await flip_status(revisits, "reversed")
             elif dec["status"] == "revisited":
-                await graph.set_status(conn, revisits, "revisited")
+                await flip_status(revisits, "revisited")
             await graph.merge_data(conn, revisits, {"last_revisited": dec.get("date")})
         resolves_q = safe_node(dec.get("resolves_question_node_id"))
         if resolves_q:
             await graph.add_edge(conn, workspace_id, node_id, resolves_q, "resolves")
-            await graph.set_status(conn, resolves_q, "resolved")
+            await flip_status(resolves_q, "resolved")
             await graph.merge_data(conn, resolves_q, {"resolution": dec["what"]})
         for rel in dec.get("relates_to_node_ids", []):
             rel_id = safe_node(rel)
@@ -284,7 +309,7 @@ async def _persist(
         resolves = safe_node(q.get("resolves_node_id"))
         if resolves:
             node_id = resolves
-            await graph.set_status(conn, node_id, "resolved")
+            await flip_status(node_id, "resolved")
             await graph.merge_data(conn, node_id, {"resolution": q.get("resolution")})
         else:
             node_id = await graph.upsert_node(
@@ -316,20 +341,29 @@ async def _persist(
 _EXISTING_CAP = 150       # total nodes shown to the extraction LLM
 _EXISTING_RECENT = 50     # slots reserved for the most recently updated nodes
 _EXISTING_RELEVANT = 100  # slots for nodes similar to the new document
+_EXISTING_TOPIC = 30      # slots for same-topic decisions/questions
 
 
 async def _fetch_existing(
-    conn: asyncpg.Connection, workspace_id: int, document_id: int
+    conn: asyncpg.Connection,
+    workspace_id: int,
+    document_id: int,
+    doc_tags: Optional[List[str]] = None,
 ) -> List[asyncpg.Record]:
     """Pick the existing-memory digest the extraction LLM sees.
 
     Recency alone starves large workspaces: an old decision this document
     revisits may not be among the last 150 updated nodes, so the LLM can't
-    link to it and forms a duplicate instead. Blend recent nodes (which also
-    carry the entity/topic labels to reuse) with the decisions/questions most
-    similar to the document (stored signature embeddings — NULL until
-    consolidation first touches a node, so a fresh database falls back to
-    pure recency)."""
+    link to it and forms a duplicate instead. Blend three slices, deduped
+    into the cap:
+      1. recent nodes (carry the entity/topic labels to reuse),
+      2. decisions/questions embedding-similar to the document (stored
+         signature vectors — NULL until consolidation first touches a node,
+         so a fresh database falls back to recency),
+      3. topic neighbors — decisions/questions sharing a topic with the
+         document's tags or with the top similar nodes. This catches the old
+         same-topic decision that neither recency nor wording similarity
+         surfaces (the classic unlinked-revisit failure)."""
     recent = await conn.fetch(
         "SELECT id, kind, label, summary, status FROM memory_nodes "
         "WHERE workspace_id=$1 AND kind IN ('decision', 'question', 'entity', 'topic') "
@@ -349,8 +383,41 @@ async def _fetch_existing(
             "ORDER BY embedding <=> $2::vector LIMIT $3",
             workspace_id, centroid, _EXISTING_RELEVANT,
         )
+
+    topic_ids: Set[int] = set()
+    tags = [t.strip().lower() for t in (doc_tags or []) if t.strip()]
+    if tags:
+        rows = await conn.fetch(
+            "SELECT id FROM memory_nodes WHERE workspace_id=$1 AND kind='topic' "
+            "AND lower(label) = ANY($2::text[]) AND archived_at IS NULL",
+            workspace_id, tags,
+        )
+        topic_ids.update(r["id"] for r in rows)
+    top_relevant = [r["id"] for r in relevant[:10]]
+    if top_relevant:
+        rows = await conn.fetch(
+            "SELECT DISTINCT e.dst AS id FROM memory_edges e "
+            "JOIN memory_nodes t ON t.id = e.dst "
+            "WHERE e.workspace_id=$1 AND e.relation='about' "
+            "AND e.src = ANY($2::int[]) AND t.kind='topic' AND t.archived_at IS NULL",
+            workspace_id, top_relevant,
+        )
+        topic_ids.update(r["id"] for r in rows)
+    topic_neighbors: List[asyncpg.Record] = []
+    if topic_ids:
+        topic_neighbors = await conn.fetch(
+            "SELECT DISTINCT n.id, n.kind, n.label, n.summary, n.status, n.updated_at "
+            "FROM memory_nodes n "
+            "JOIN memory_edges e ON e.src = n.id AND e.relation='about' "
+            "WHERE n.workspace_id=$1 AND e.dst = ANY($2::int[]) "
+            "AND n.kind IN ('decision', 'question') AND n.archived_at IS NULL "
+            "ORDER BY n.updated_at DESC LIMIT $3",
+            workspace_id, sorted(topic_ids), _EXISTING_TOPIC,
+        )
+
     by_id: Dict[int, asyncpg.Record] = {}
-    for r in list(recent[:_EXISTING_RECENT]) + list(relevant) + list(recent[_EXISTING_RECENT:]):
+    for r in (list(recent[:_EXISTING_RECENT]) + list(relevant)
+              + list(topic_neighbors) + list(recent[_EXISTING_RECENT:])):
         if r["id"] not in by_id:
             by_id[r["id"]] = r
             if len(by_id) >= _EXISTING_CAP:
@@ -358,25 +425,44 @@ async def _fetch_existing(
     return list(by_id.values())
 
 
-async def run_formation(document_id: int) -> List[int]:
+async def run_formation(
+    document_id: int, timer: Optional["StageTimer"] = None
+) -> FormationOutcome:
     """Extract memory from one document and persist it (status flips to
     'complete' inside the persist transaction). Returns the decision node ids
-    created/updated, for incremental consolidation. Raises on failure — retry,
-    backoff, and status bookkeeping live in memory.worker."""
+    created/updated (for consolidation) plus a validation report on what
+    _persist had to silently repair. Raises on failure — retry, backoff, and
+    status bookkeeping live in memory.worker. When a StageTimer is passed,
+    laps `fetch` / `llm` / `persist` for SLO reporting."""
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         doc = await conn.fetchrow("SELECT * FROM documents WHERE id=$1", document_id)
         if doc is None:
-            return []
+            return FormationOutcome()
         chunks = await conn.fetch(
             "SELECT id, chunk_index, text FROM chunks WHERE document_id=$1 ORDER BY chunk_index",
             document_id,
         )
-        existing = await _fetch_existing(conn, doc["workspace_id"], document_id)
+        existing = await _fetch_existing(conn, doc["workspace_id"], document_id,
+                                         doc_tags=list(doc["tags"] or []))
     prompt = _build_user_prompt(doc, chunks, existing)
+    if timer:
+        timer.lap("fetch")
     result = await llm.structured_call(FORMATION_SYSTEM, prompt, FORMATION_SCHEMA)
+    if timer:
+        timer.lap("llm")
     valid_ids = {r["id"] for r in existing}
+    report = validation.validate_extraction(
+        result, valid_ids, {c["chunk_index"] for c in chunks},
+        config.VALIDATION_MIN_REASONING_CHARS,
+    )
+    if report["invalid_cross_refs"]:
+        log.warning("doc %d extraction referenced %d unknown node ids "
+                    "(dropped by safe_node)", document_id, report["invalid_cross_refs"])
     async with pool.acquire() as conn:
         async with conn.transaction():
-            return await _persist(conn, doc["workspace_id"], document_id, chunks, result,
-                                  valid_ids, doc_tags=list(doc["tags"] or []))
+            touched = await _persist(conn, doc["workspace_id"], document_id, chunks,
+                                     result, valid_ids, doc_tags=list(doc["tags"] or []))
+    if timer:
+        timer.lap("persist")
+    return FormationOutcome(touched=touched, validation=report)

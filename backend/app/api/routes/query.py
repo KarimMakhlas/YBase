@@ -28,7 +28,7 @@ async def query(
 ) -> StreamingResponse:
     if not req.question.strip():
         raise HTTPException(400, "question must not be empty")
-    query_limiter.enforce((current.workspace_id, current.user_id), "query")
+    await query_limiter.enforce((current.workspace_id, current.user_id), "query")
     history = [t.model_dump() for t in (req.history or [])]
     return StreamingResponse(
         stream_query(req.question.strip(), workspace_id=current.workspace_id, history=history),

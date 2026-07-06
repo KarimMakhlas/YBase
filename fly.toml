@@ -16,6 +16,14 @@ primary_region = "iad"
 
 # Non-secret config. Secrets (DATABASE_URL, ANTHROPIC_API_KEY, CONNECTOR_SECRET_KEY,
 # VOYAGE_API_KEY, SLACK_*, JIRA_*, GITHUB_*, RESEND_API_KEY) go in `fly secrets`.
+#
+# Multi-instance: before raising machine count above 1, set a REDIS_URL secret
+# (`fly redis create` / Upstash — same region as primary_region) so instances
+# coordinate per-workspace formation locks, ticker leadership, and shared rate
+# limits. The Redis MUST run maxmemory-policy=noeviction: an evicted workspace
+# lock would let two instances form the same workspace concurrently. Also mind
+# DB_POOL_MAX_SIZE (default 20) × instance count vs your Postgres plan's
+# connection ceiling. A single machine needs no Redis at all.
 [env]
   STATIC_DIR = "/srv/static"
   SESSION_COOKIE_SECURE = "true"

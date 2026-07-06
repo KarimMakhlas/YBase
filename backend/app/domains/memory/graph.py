@@ -44,10 +44,14 @@ async def upsert_node(
     )
 
 
-async def set_status(conn: asyncpg.Connection, node_id: int, status: str) -> None:
-    await conn.execute(
-        "UPDATE memory_nodes SET status=$2, updated_at=now() "
-        "WHERE id=$1 AND archived_at IS NULL",
+async def set_status(conn: asyncpg.Connection, node_id: int, status: str) -> Optional[str]:
+    """Set a node's status; returns the previous status (None when the node
+    doesn't exist or is archived) so callers can audit the transition."""
+    return await conn.fetchval(
+        "UPDATE memory_nodes n SET status=$2, updated_at=now() "
+        "FROM (SELECT id, status FROM memory_nodes WHERE id=$1) o "
+        "WHERE n.id=o.id AND n.archived_at IS NULL "
+        "RETURNING o.status",
         node_id, status,
     )
 

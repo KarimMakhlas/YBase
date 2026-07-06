@@ -2,7 +2,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.core import config, db
+from app.core import config, coordination, db
 from app.domains.auth import service as auth
 from app.domains.memory import worker
 from app.providers import llm
@@ -51,4 +51,5 @@ async def health_details(
         "embeddings": await active_embedder(),
         "formation": await worker.queue_stats(current.workspace_id),
         "slack_events": bool(config.SLACK_SIGNING_SECRET),
+        "redis": await coordination.status(),
     }

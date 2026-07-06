@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
-from app.core import db
+from app.core import db, usage
 from app.providers.embeddings import active_embed_model, embed_texts, to_pgvector
 from ..memory import worker
 
@@ -89,7 +89,11 @@ async def ingest_document(req: IngestRequest, workspace_id: int) -> Tuple[int, b
         return existing, True
 
     pieces = chunk_text(req.text)
-    embeddings = await embed_texts(pieces)
+    usage_token = usage.set_context(workspace_id=workspace_id, surface="ingest")
+    try:
+        embeddings = await embed_texts(pieces)
+    finally:
+        usage.reset_context(usage_token)
     embed_model = await active_embed_model()  # record provenance per chunk
     async with pool.acquire() as conn:
         async with conn.transaction():

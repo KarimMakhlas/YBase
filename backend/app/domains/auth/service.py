@@ -522,7 +522,7 @@ async def register(
     to name the workspace and make the user its owner."""
     if not config.ALLOW_PUBLIC_SIGNUP:
         raise HTTPException(403, "public signup is disabled on this instance")
-    auth_limiter.enforce(_client_ip(request), "signup")
+    await auth_limiter.enforce(_client_ip(request), "signup")
     email = clean_email(req.email)
     display_name = req.display_name.strip() or email
     pool = await db.get_pool()
@@ -654,7 +654,7 @@ async def login(
     pool = await db.get_pool()
     email = clean_email(req.email)
     ip = _client_ip(request)
-    auth_limiter.enforce(ip, "login")
+    await auth_limiter.enforce(ip, "login")
     async with pool.acquire() as conn:
         if await _login_throttled(conn, email, ip):
             raise HTTPException(429, "too many failed login attempts")
@@ -785,7 +785,7 @@ async def forgot_password(
 ) -> Dict[str, Any]:
     """Start a password reset. Always returns ok (no account enumeration); when
     the email maps to an active account, emails a time-limited reset link."""
-    auth_limiter.enforce(_client_ip(request), "password reset")
+    await auth_limiter.enforce(_client_ip(request), "password reset")
     email = clean_email(req.email)
     pool = await db.get_pool()
     async with pool.acquire() as conn:
@@ -823,7 +823,7 @@ async def reset_password(
 ) -> Dict[str, Any]:
     """Complete a password reset: consume a valid token atomically, set the new
     password, and revoke every session for that user."""
-    auth_limiter.enforce(_client_ip(request), "password reset")
+    await auth_limiter.enforce(_client_ip(request), "password reset")
     if len(req.new_password) < config.PASSWORD_MIN_LENGTH:
         raise HTTPException(
             400, f"password must be at least {config.PASSWORD_MIN_LENGTH} characters"
@@ -964,7 +964,7 @@ async def google_start(request: Request):
     """Begin Google sign-in: stash a single-use state and bounce to Google."""
     if not google_configured():
         raise HTTPException(404, "Google sign-in is not configured")
-    auth_limiter.enforce(_client_ip(request), "login")
+    await auth_limiter.enforce(_client_ip(request), "login")
     state = secrets.token_urlsafe(32)
     pool = await db.get_pool()
     async with pool.acquire() as conn:

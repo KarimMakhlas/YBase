@@ -23,7 +23,7 @@ from typing import List, Optional
 
 import httpx
 
-from ..core import config
+from ..core import config, usage
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _NOMIC_PREFIX = {"document": "search_document: ", "query": "search_query: "}
@@ -103,8 +103,11 @@ async def _voyage_embed(texts: List[str], kind: str) -> List[List[float]]:
             },
         )
         r.raise_for_status()
-        data = sorted(r.json()["data"], key=lambda d: d["index"])
-        return [d["embedding"] for d in data]
+        payload = r.json()
+    await usage.record("embedding", "voyage", "voyage-3-lite",
+                       **usage.usage_from_voyage_payload(payload))
+    data = sorted(payload["data"], key=lambda d: d["index"])
+    return [d["embedding"] for d in data]
 
 
 async def _ollama_embed(texts: List[str], kind: str) -> List[List[float]]:
@@ -119,6 +122,8 @@ async def _ollama_embed(texts: List[str], kind: str) -> List[List[float]]:
         )
         r.raise_for_status()
         embs = r.json()["embeddings"]
+    # request-count only — Ollama's embed endpoint doesn't report tokens
+    await usage.record("embedding", "ollama", config.OLLAMA_EMBED_MODEL)
     # Matryoshka truncation to the schema's vector dimension, then re-normalize
     return [_normalize(e[: config.EMBED_DIM]) for e in embs]
 

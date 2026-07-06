@@ -153,6 +153,17 @@ async def memory_quality(
             "AND NOT EXISTS (SELECT 1 FROM chunk_links cl WHERE cl.node_id=n.id) "
             "ORDER BY n.kind, n.label", ws,
         )
+        # 7-day extraction-validation rates from the per-run reports
+        val = await conn.fetchrow(
+            "SELECT count(*) AS runs, "
+            "count(*) FILTER (WHERE (validation->>'flagged')::boolean) AS flagged, "
+            "coalesce(sum((validation->>'invalid_cross_refs')::int), 0) AS invalid_cross_refs, "
+            "coalesce(sum((validation->>'empty_topics')::int), 0) AS empty_topics, "
+            "coalesce(sum((validation->>'trivial_reasoning')::int), 0) AS trivial_reasoning "
+            "FROM formation_runs "
+            "WHERE workspace_id=$1 AND status='success' "
+            "AND started_at > now() - interval '7 days'", ws,
+        )
 
     total = docs["total"]
     dec_count = len(decisions)
@@ -204,6 +215,15 @@ async def memory_quality(
             if low_conf else "no low-confidence decisions",
         ),
     ]
+    flagged_share = (val["flagged"] / val["runs"]) if val["runs"] else 0.0
+    checks.append(_check(
+        "extraction_validation", "Extraction output is clean (7d)",
+        "ok" if flagged_share <= 0.2 else "warn",
+        (f"{val['flagged']}/{val['runs']} runs flagged — "
+         f"{val['invalid_cross_refs']} bad refs, {val['empty_topics']} topicless, "
+         f"{val['trivial_reasoning']} trivial reasoning")
+        if val["runs"] else "no formation runs in the last 7 days",
+    ))
     healthy = all(c["status"] == "ok" for c in checks)
     return {
         "workspace": {"id": ws, "name": current.workspace_name},

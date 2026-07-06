@@ -89,6 +89,13 @@ class StageTimer:
     def line(self) -> str:
         return " ".join(f"{k}={v * 1000:.0f}ms" for k, v in self._stages.items())
 
+    def as_dict(self) -> "dict[str, int]":
+        """Stage durations in whole milliseconds (for persistence)."""
+        return {k: int(v * 1000) for k, v in self._stages.items()}
+
+    def total_ms(self) -> int:
+        return int(sum(self._stages.values()) * 1000)
+
 
 class RequestContextMiddleware:
     """Assigns a request id (echoed as X-Request-ID), logs one line per

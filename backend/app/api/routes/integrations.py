@@ -32,7 +32,7 @@ async def slack_events(request: Request) -> Dict[str, Any]:
         # Per-team budget: drop quietly (200) when a workspace floods us, so one
         # noisy tenant can't exhaust the DB pool for everyone. Slack treats 200
         # as delivered and won't retry; a 429 would.
-        if not slack_events_limiter.allow(team_id or "unknown"):
+        if not await slack_events_limiter.allow(team_id or "unknown"):
             return {"ok": True, "throttled": True}
         stored = await slack.store_event(
             payload.get("event") or {},

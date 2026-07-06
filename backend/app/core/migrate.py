@@ -21,6 +21,7 @@ RULES
   stops the run (later files are not applied).
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import List, Set, Tuple
@@ -62,31 +63,53 @@ async def run() -> List[str]:
     pool = await db.get_pool()
     applied_now: List[str] = []
     async with pool.acquire() as conn:
-        done = await _ensure_table(conn)
+        # Two instances booting at once must not race migrations. A polled
+        # try-lock (not pg_advisory_lock) keeps each attempt inside the pool's
+        # per-statement timeout while the other instance migrates.
+        got = False
+        for _ in range(120):
+            got = await conn.fetchval(
+                "SELECT pg_try_advisory_lock(hashtext('ybase_migrate'))"
+            )
+            if got:
+                break
+            await asyncio.sleep(1)
+        if not got:
+            raise RuntimeError("could not acquire migration advisory lock")
+        try:
+            return await _run_locked(conn, applied_now)
+        finally:
+            await conn.execute(
+                "SELECT pg_advisory_unlock(hashtext('ybase_migrate'))"
+            )
 
-        # Baseline = the whole schema.sql. It is all IF NOT EXISTS, so running it
-        # on a database that already has the schema (e.g. one created before the
-        # runner existed) is a safe no-op; we record it so it never runs again.
-        if _BASELINE_VERSION not in done:
-            async with conn.transaction():
-                await conn.execute(_BASELINE_FILE.read_text())
-                await conn.execute(
-                    "INSERT INTO schema_migrations(version) VALUES($1)",
-                    _BASELINE_VERSION,
-                )
-            applied_now.append(_BASELINE_VERSION)
-            log.info("applied baseline schema (%s)", _BASELINE_VERSION)
 
-        for version, path in _pending_files():
-            if version in done:
-                continue
-            async with conn.transaction():
-                await conn.execute(path.read_text())
-                await conn.execute(
-                    "INSERT INTO schema_migrations(version) VALUES($1)", version
-                )
-            applied_now.append(version)
-            log.info("applied migration %s", version)
+async def _run_locked(conn, applied_now: List[str]) -> List[str]:
+    done = await _ensure_table(conn)
+
+    # Baseline = the whole schema.sql. It is all IF NOT EXISTS, so running it
+    # on a database that already has the schema (e.g. one created before the
+    # runner existed) is a safe no-op; we record it so it never runs again.
+    if _BASELINE_VERSION not in done:
+        async with conn.transaction():
+            await conn.execute(_BASELINE_FILE.read_text())
+            await conn.execute(
+                "INSERT INTO schema_migrations(version) VALUES($1)",
+                _BASELINE_VERSION,
+            )
+        applied_now.append(_BASELINE_VERSION)
+        log.info("applied baseline schema (%s)", _BASELINE_VERSION)
+
+    for version, path in _pending_files():
+        if version in done:
+            continue
+        async with conn.transaction():
+            await conn.execute(path.read_text())
+            await conn.execute(
+                "INSERT INTO schema_migrations(version) VALUES($1)", version
+            )
+        applied_now.append(version)
+        log.info("applied migration %s", version)
 
     if not applied_now:
         log.info("database schema up to date")

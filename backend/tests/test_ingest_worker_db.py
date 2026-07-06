@@ -44,10 +44,15 @@ async def test_ingest_different_text_is_not_duplicate(pool, workspace_id):
 async def test_worker_claim_and_success_path(pool, workspace_id):
     doc_id, _ = await ingest_document(_req(), workspace_id=workspace_id)
     claimed = await worker._claim()
-    assert claimed == doc_id
+    assert claimed.doc_id == doc_id
+    assert claimed.workspace_id == workspace_id
+    assert claimed.lock_token  # LOCAL_TOKEN without Redis, real token with
     async with pool.acquire() as conn:
-        assert await conn.fetchval(
-            "SELECT formation_status FROM documents WHERE id=$1", doc_id) == "processing"
+        row = await conn.fetchrow(
+            "SELECT formation_status, formation_claimed_at FROM documents WHERE id=$1",
+            doc_id)
+    assert row["formation_status"] == "processing"
+    assert row["formation_claimed_at"] is not None
     # nothing else pending
     assert await worker._claim() is None
 
@@ -62,15 +67,15 @@ async def test_claim_serializes_per_workspace_but_not_across(pool, workspace_id)
         ) or await conn.fetchval("SELECT id FROM workspaces WHERE lower(slug)='w2'")
     c, _ = await ingest_document(_req(text="W2 content."), workspace_id=ws2)
 
-    assert await worker._claim() == a
+    assert (await worker._claim()).doc_id == a
     # same workspace is blocked while `a` is processing; another workspace isn't
-    assert await worker._claim() == c
+    assert (await worker._claim()).doc_id == c
     assert await worker._claim() is None
     # finishing `a` frees its workspace for `b`
     async with pool.acquire() as conn:
         await conn.execute(
             "UPDATE documents SET formation_status='complete' WHERE id=$1", a)
-    assert await worker._claim() == b
+    assert (await worker._claim()).doc_id == b
 
 
 async def test_worker_failure_backs_off_then_fails_permanently(pool, workspace_id):
@@ -103,7 +108,7 @@ async def test_run_one_times_out_hung_formation(pool, workspace_id, monkeypatch)
     doc_id, _ = await ingest_document(_req(), workspace_id=workspace_id)
     await worker._claim()  # mark 'processing', as the loop does before _run_one
 
-    async def _hang(_doc_id):
+    async def _hang(_doc_id, _timer=None):
         await asyncio.sleep(30)  # far longer than the timeout below
 
     # _form_and_consolidate imports run_formation lazily, so patching the module
@@ -179,7 +184,7 @@ async def test_recover_stuck_requeues_processing(pool, workspace_id):
     async with pool.acquire() as conn:
         assert await conn.fetchval(
             "SELECT formation_status FROM documents WHERE id=$1", doc_id) == "pending"
-    assert await worker._claim() == doc_id
+    assert (await worker._claim()).doc_id == doc_id
 
 
 async def test_release_returns_doc_to_pending(pool, workspace_id):
@@ -187,5 +192,85 @@ async def test_release_returns_doc_to_pending(pool, workspace_id):
     await worker._claim()
     await worker._release(doc_id)
     async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT formation_status, formation_claimed_at FROM documents WHERE id=$1",
+            doc_id)
+    assert row["formation_status"] == "pending"
+    assert row["formation_claimed_at"] is None
+
+
+async def test_janitor_requeues_stale_processing(pool, workspace_id):
+    """A doc claimed by an instance that later crashed (claim far older than
+    the task timeout, no live workspace lock) goes back to pending via the
+    janitor — no restart needed."""
+    doc_id, _ = await ingest_document(_req(), workspace_id=workspace_id)
+    await worker._claim()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE documents SET formation_claimed_at = now() - interval '2 hours' "
+            "WHERE id=$1", doc_id)
+    await worker.janitor_tick()
+    async with pool.acquire() as conn:
         assert await conn.fetchval(
             "SELECT formation_status FROM documents WHERE id=$1", doc_id) == "pending"
+
+
+async def test_janitor_leaves_fresh_claims_alone(pool, workspace_id):
+    doc_id, _ = await ingest_document(_req(), workspace_id=workspace_id)
+    await worker._claim()  # formation_claimed_at = now()
+    await worker.janitor_tick()
+    async with pool.acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT formation_status FROM documents WHERE id=$1", doc_id) == "processing"
+
+
+# ── Cross-instance scenarios (require Redis on localhost:6380) ───────────────
+
+
+async def test_claim_yields_to_sibling_instance_lock(pool, workspace_id, redis_coord):
+    """Another instance already forming this workspace (its wslock is held)
+    wins the race: our claim is handed back and the doc stays pending."""
+    doc_id, _ = await ingest_document(_req(), workspace_id=workspace_id)
+    foreign = await redis_coord.try_workspace_lock(workspace_id)
+    assert foreign and foreign != redis_coord.LOCAL_TOKEN
+    try:
+        assert await worker._claim() is None
+        async with pool.acquire() as conn:
+            assert await conn.fetchval(
+                "SELECT formation_status FROM documents WHERE id=$1", doc_id
+            ) == "pending"
+    finally:
+        await redis_coord.release_workspace_lock(workspace_id, foreign)
+    # lock released → claim works again
+    claimed = await worker._claim()
+    assert claimed.doc_id == doc_id
+    await redis_coord.release_workspace_lock(workspace_id, claimed.lock_token)
+
+
+async def test_recover_stuck_skips_locked_workspace(pool, workspace_id, redis_coord):
+    """Startup recovery must not requeue a document a live sibling is still
+    forming (its workspace lock is held) — only truly stranded docs."""
+    doc_a, _ = await ingest_document(_req(), workspace_id=workspace_id)
+    async with pool.acquire() as conn:
+        ws2 = await conn.fetchval(
+            "INSERT INTO workspaces(name, slug) VALUES('W2','w2') "
+            "ON CONFLICT DO NOTHING RETURNING id"
+        ) or await conn.fetchval("SELECT id FROM workspaces WHERE lower(slug)='w2'")
+    doc_b, _ = await ingest_document(_req(text="W2 content."), workspace_id=ws2)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE documents SET formation_status='processing' "
+            "WHERE id = ANY($1::int[])", [doc_a, doc_b])
+    held = await redis_coord.try_workspace_lock(workspace_id)  # sibling forms ws1
+    try:
+        assert await worker.recover_stuck() == 1  # only ws2's doc
+        async with pool.acquire() as conn:
+            a_status, b_status = [
+                await conn.fetchval(
+                    "SELECT formation_status FROM documents WHERE id=$1", d)
+                for d in (doc_a, doc_b)
+            ]
+        assert a_status == "processing"  # left alone: sibling holds the lock
+        assert b_status == "pending"
+    finally:
+        await redis_coord.release_workspace_lock(workspace_id, held)

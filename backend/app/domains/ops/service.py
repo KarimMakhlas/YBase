@@ -1,5 +1,7 @@
 """Admin MVP-readiness and recovery endpoints."""
 
+import json
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends
@@ -12,6 +14,32 @@ from app.domains.ops.demo_data import DEMO_QUESTIONS, seed_demo_data as _seed_de
 from app.providers import llm
 
 router = APIRouter(prefix="/api/ops", tags=["ops"])
+log = logging.getLogger("ybase.ops")
+
+
+def _cost_rates() -> Dict[str, Dict[str, float]]:
+    """Optional {model: {input_per_mtok, output_per_mtok}} from COST_RATES_JSON.
+    Empty/invalid JSON → tokens-only reporting."""
+    if not config.COST_RATES_JSON:
+        return {}
+    try:
+        rates = json.loads(config.COST_RATES_JSON)
+        return rates if isinstance(rates, dict) else {}
+    except json.JSONDecodeError:
+        log.warning("COST_RATES_JSON is not valid JSON — cost annotation disabled")
+        return {}
+
+
+def _cost_usd(model: str, input_tokens: int, output_tokens: int,
+              rates: Dict[str, Dict[str, float]]) -> Optional[float]:
+    r = rates.get(model)
+    if not isinstance(r, dict):
+        return None
+    return round(
+        (input_tokens / 1e6) * float(r.get("input_per_mtok", 0))
+        + (output_tokens / 1e6) * float(r.get("output_per_mtok", 0)),
+        4,
+    )
 
 
 def _step(
@@ -43,6 +71,7 @@ async def ops_overview(
             "  (SELECT count(*) FROM documents WHERE workspace_id=$1 AND formation_status='pending') AS documents_pending, "
             "  (SELECT count(*) FROM documents WHERE workspace_id=$1 AND formation_status='processing') AS documents_processing, "
             "  (SELECT count(*) FROM documents WHERE workspace_id=$1 AND formation_status='failed') AS documents_failed, "
+            "  (SELECT count(*) FROM documents WHERE workspace_id=$1 AND formation_status='rate_limited') AS documents_rate_limited, "
             "  (SELECT count(*) FROM memory_nodes WHERE workspace_id=$1 AND archived_at IS NULL) AS memory_nodes, "
             "  (SELECT count(*) FROM memory_nodes WHERE workspace_id=$1 AND kind='decision' AND archived_at IS NULL) AS decisions, "
             "  (SELECT count(*) FROM memory_nodes WHERE workspace_id=$1 AND kind='question' AND archived_at IS NULL) AS questions, "
@@ -66,6 +95,12 @@ async def ops_overview(
         active_docs = await conn.fetch(
             "SELECT id, source, title, formation_status, ingested_at "
             "FROM documents WHERE workspace_id=$1 AND formation_status IN ('pending','processing') "
+            "ORDER BY ingested_at LIMIT 12",
+            current.workspace_id,
+        )
+        rate_limited_docs = await conn.fetch(
+            "SELECT id, source, title, formation_next_attempt_at, ingested_at "
+            "FROM documents WHERE workspace_id=$1 AND formation_status='rate_limited' "
             "ORDER BY ingested_at LIMIT 12",
             current.workspace_id,
         )
@@ -157,10 +192,167 @@ async def ops_overview(
         },
         "failed_documents": [dict(r) for r in failed_docs],
         "active_documents": [dict(r) for r in active_docs],
+        "rate_limited_documents": [dict(r) for r in rate_limited_docs],
         "sources": [dict(r) for r in sources],
         "sync_jobs": [dict(r) for r in sync_jobs],
         "demo_questions": DEMO_QUESTIONS,
     }
+
+
+@router.get("/slo")
+async def formation_slo(
+    days: int = 7,
+    current: auth.AuthContext = Depends(auth.require_role("admin")),
+) -> Dict[str, Any]:
+    """Formation latency/throughput percentiles for this workspace, from the
+    per-run SLO table. NULL-duration rows are excluded from percentiles by
+    the ordered-set aggregates themselves."""
+    days = max(1, min(days, 90))
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        summary = await conn.fetchrow(
+            "SELECT count(*) AS runs, "
+            "       count(*) FILTER (WHERE status='success') AS successes, "
+            "       count(*) FILTER (WHERE status='failed') AS failures, "
+            "       count(*) FILTER (WHERE status='timeout') AS timeouts, "
+            "       percentile_cont(0.5)  WITHIN GROUP (ORDER BY duration_ms) AS p50_ms, "
+            "       percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95_ms, "
+            "       percentile_cont(0.95) WITHIN GROUP (ORDER BY queue_wait_ms) AS p95_queue_wait_ms, "
+            "       percentile_cont(0.95) WITHIN GROUP "
+            "         (ORDER BY (stage_timings->>'llm')::float) AS p95_llm_ms "
+            "FROM formation_runs "
+            "WHERE workspace_id=$1 AND started_at > now() - ($2 || ' days')::interval",
+            current.workspace_id, str(days),
+        )
+        series = await conn.fetch(
+            "SELECT date_trunc('day', started_at)::date AS day, "
+            "       count(*) AS runs, "
+            "       count(*) FILTER (WHERE status='success') AS successes, "
+            "       count(*) FILTER (WHERE status IN ('failed','timeout')) AS failures, "
+            "       percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95_ms "
+            "FROM formation_runs "
+            "WHERE workspace_id=$1 AND started_at > now() - ($2 || ' days')::interval "
+            "GROUP BY 1 ORDER BY 1",
+            current.workspace_id, str(days),
+        )
+    queue = await worker.queue_stats(current.workspace_id)
+
+    def _ms(v: Any) -> Any:
+        return round(v) if v is not None else None
+
+    return {
+        "days": days,
+        "runs": summary["runs"],
+        "successes": summary["successes"],
+        "failures": summary["failures"],
+        "timeouts": summary["timeouts"],
+        "p50_ms": _ms(summary["p50_ms"]),
+        "p95_ms": _ms(summary["p95_ms"]),
+        "p95_queue_wait_ms": _ms(summary["p95_queue_wait_ms"]),
+        "p95_llm_ms": _ms(summary["p95_llm_ms"]),
+        "per_day": [
+            {
+                "day": r["day"].isoformat(),
+                "runs": r["runs"],
+                "successes": r["successes"],
+                "failures": r["failures"],
+                "p95_ms": _ms(r["p95_ms"]),
+            }
+            for r in series
+        ],
+        "queue": queue,
+    }
+
+
+@router.get("/usage")
+async def usage_report(
+    days: int = 30,
+    current: auth.AuthContext = Depends(auth.require_role("admin")),
+) -> Dict[str, Any]:
+    """Token/request usage for this workspace: totals, per-day series, and a
+    (surface, provider, model) breakdown. Dollar figures appear only when
+    COST_RATES_JSON prices the model."""
+    days = max(1, min(days, 365))
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        breakdown = await conn.fetch(
+            "SELECT surface, kind, provider, model, "
+            "       sum(request_count)::int AS requests, "
+            "       coalesce(sum(input_tokens), 0)::bigint AS input_tokens, "
+            "       coalesce(sum(output_tokens), 0)::bigint AS output_tokens, "
+            "       coalesce(sum(total_tokens), 0)::bigint AS total_tokens "
+            "FROM usage_events "
+            "WHERE workspace_id=$1 AND created_at > now() - ($2 || ' days')::interval "
+            "GROUP BY surface, kind, provider, model "
+            "ORDER BY total_tokens DESC, requests DESC",
+            current.workspace_id, str(days),
+        )
+        series = await conn.fetch(
+            "SELECT date_trunc('day', created_at)::date AS day, "
+            "       sum(request_count)::int AS requests, "
+            "       coalesce(sum(total_tokens), 0)::bigint AS total_tokens "
+            "FROM usage_events "
+            "WHERE workspace_id=$1 AND created_at > now() - ($2 || ' days')::interval "
+            "GROUP BY 1 ORDER BY 1",
+            current.workspace_id, str(days),
+        )
+    rates = _cost_rates()
+    rows = []
+    total_cost: Optional[float] = 0.0 if rates else None
+    for r in breakdown:
+        row = dict(r)
+        cost = _cost_usd(r["model"], r["input_tokens"], r["output_tokens"], rates)
+        row["cost_usd"] = cost
+        if cost is not None and total_cost is not None:
+            total_cost = round(total_cost + cost, 4)
+        rows.append(row)
+    return {
+        "days": days,
+        "requests": sum(r["requests"] for r in rows),
+        "input_tokens": sum(r["input_tokens"] for r in rows),
+        "output_tokens": sum(r["output_tokens"] for r in rows),
+        "total_tokens": sum(r["total_tokens"] for r in rows),
+        "cost_usd": total_cost,
+        "breakdown": rows,
+        "per_day": [
+            {"day": r["day"].isoformat(), "requests": r["requests"],
+             "total_tokens": r["total_tokens"]}
+            for r in series
+        ],
+    }
+
+
+@router.get("/audit")
+async def audit_log(
+    days: int = 30,
+    actions: Optional[str] = None,
+    current: auth.AuthContext = Depends(auth.require_role("admin")),
+) -> Dict[str, Any]:
+    """Workspace audit trail (newest first, capped at 200). `actions` is an
+    optional comma-separated filter, e.g.
+    actions=consolidation_merge_nodes,formation_failed_permanently."""
+    days = max(1, min(days, 365))
+    wanted = [a.strip() for a in (actions or "").split(",") if a.strip()]
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        if wanted:
+            rows = await conn.fetch(
+                "SELECT id, actor_user_id, action, target_type, target_id, data, created_at "
+                "FROM audit_events WHERE workspace_id=$1 "
+                "AND created_at > now() - ($2 || ' days')::interval "
+                "AND action = ANY($3::text[]) "
+                "ORDER BY created_at DESC, id DESC LIMIT 200",
+                current.workspace_id, str(days), wanted,
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT id, actor_user_id, action, target_type, target_id, data, created_at "
+                "FROM audit_events WHERE workspace_id=$1 "
+                "AND created_at > now() - ($2 || ' days')::interval "
+                "ORDER BY created_at DESC, id DESC LIMIT 200",
+                current.workspace_id, str(days),
+            )
+    return {"days": days, "events": [dict(r) for r in rows]}
 
 
 @router.post("/failed-documents/retry")

@@ -12,6 +12,7 @@ from datetime import date
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from app.providers import llm
+from app.core import config, usage
 from app.core.observability import StageTimer
 from . import retrieval
 
@@ -328,6 +329,10 @@ async def stream_query(
     question: str, workspace_id: int, history: Optional[List[Dict[str, str]]] = None
 ) -> AsyncIterator[str]:
     timer = StageTimer()
+    # Attribute this request's LLM/embedding calls (rewrite, retrieval query
+    # embed, answer stream). Task-scoped — each request runs in its own task,
+    # so no reset needed (same pattern as the request-id contextvar).
+    usage.set_context(workspace_id=workspace_id, surface="query")
     # Short follow-ups ("was it ever reversed?") retrieve poorly verbatim.
     # First choice: LLM-rewrite into a standalone question (resolves pronouns
     # for both vector and full-text search). Fallback when the rewrite fails:
@@ -410,6 +415,15 @@ async def stream_query(
                     buf = buf[-holdback:]
                     answer_text += emit
                     yield _sse("delta", {"text": emit})
+            if hasattr(stream, "get_final_message"):
+                # Anthropic reports usage on the final message; the stream is
+                # exhausted so this resolves immediately. Best-effort only.
+                try:
+                    final = await stream.get_final_message()
+                    await usage.record("llm", "anthropic", config.ANTHROPIC_MODEL,
+                                       **usage.usage_from_anthropic(final))
+                except Exception:
+                    log.debug("stream usage capture failed", exc_info=True)
         timer.lap("llm")
     except Exception as e:
         timer.lap("llm_error")

@@ -15,7 +15,7 @@ async def ingest(
     req: IngestRequest,
     current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
-    ingest_limiter.enforce((current.workspace_id, current.user_id), "ingest")
+    await ingest_limiter.enforce((current.workspace_id, current.user_id), "ingest")
     doc_id, duplicate = await ingest_document(req, workspace_id=current.workspace_id)
     return {
         "document_id": doc_id,

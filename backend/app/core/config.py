@@ -1,4 +1,5 @@
 import os
+import uuid
 from pathlib import Path
 
 
@@ -168,10 +169,71 @@ FORMATION_TASK_TIMEOUT_S = float(os.getenv("FORMATION_TASK_TIMEOUT_S", "420"))
 # above FORMATION_TASK_TIMEOUT_S so a healthy-but-busy queue still completes a
 # job within the window and never trips the alarm.
 FORMATION_STALL_S = int(os.getenv("FORMATION_STALL_S", "600"))
+# How long per-run SLO rows (formation_runs) are kept before the janitor
+# prunes them. Percentile reporting only ever looks weeks back.
+FORMATION_RUNS_RETENTION_DAYS = int(os.getenv("FORMATION_RUNS_RETENTION_DAYS", "30"))
+
+# Daily formation quotas by billing plan (successful formations per workspace
+# per UTC day; 0 = unlimited). Enforced at claim time — over-quota documents
+# are parked as 'rate_limited' and requeued after midnight UTC, never lost.
+# Bounds worst-case LLM spend per tenant per day.
+FORMATION_DAILY_QUOTA_TRIAL = int(os.getenv("FORMATION_DAILY_QUOTA_TRIAL", "100"))
+FORMATION_DAILY_QUOTA_TEAM = int(os.getenv("FORMATION_DAILY_QUOTA_TEAM", "5000"))
+
+
+# Extraction validation: reasoning shorter than this (or merely repeating the
+# "what") counts as trivial in the per-run validation report.
+VALIDATION_MIN_REASONING_CHARS = int(os.getenv("VALIDATION_MIN_REASONING_CHARS", "40"))
+
+# Usage accounting (usage_events): retention for per-call token rows, and an
+# optional JSON map of per-model prices for dollar annotation in /api/ops/usage:
+#   {"claude-fable-5": {"input_per_mtok": 3.0, "output_per_mtok": 15.0}}
+# Empty = report tokens only.
+USAGE_RETENTION_DAYS = int(os.getenv("USAGE_RETENTION_DAYS", "90"))
+COST_RATES_JSON = os.getenv("COST_RATES_JSON", "")
+
+
+def formation_quota_for(plan: "str | None") -> int:
+    """Daily formation quota for a billing plan; 0 = unlimited. Unknown plans
+    (including self-hosted custom values) are unlimited by design."""
+    return {
+        "trial": FORMATION_DAILY_QUOTA_TRIAL,
+        "team": FORMATION_DAILY_QUOTA_TEAM,
+    }.get((plan or "").lower(), 0)
 
 # Post-formation consolidation: decisions whose label+summary embed this close
 # are treated as the same decision and merged.
 MERGE_SIM_THRESHOLD = float(os.getenv("MERGE_SIM_THRESHOLD", "0.86"))
+# Batch consolidation debounce: a workspace's touched decisions consolidate
+# once no formation has landed for DEBOUNCE seconds — or MAX_DELAY after the
+# first touch, so continuous ingest can't postpone consolidation forever.
+# TASK_TIMEOUT bounds one batch run the way FORMATION_TASK_TIMEOUT_S bounds a
+# formation.
+CONSOLIDATION_DEBOUNCE_S = int(os.getenv("CONSOLIDATION_DEBOUNCE_S", "120"))
+CONSOLIDATION_MAX_DELAY_S = int(os.getenv("CONSOLIDATION_MAX_DELAY_S", "900"))
+CONSOLIDATION_TASK_TIMEOUT_S = float(os.getenv("CONSOLIDATION_TASK_TIMEOUT_S", "300"))
+
+# ── Cross-instance coordination (Redis) ─────────────────────────────────────
+# Optional Redis for multi-instance deployments: per-workspace formation
+# locks, cross-instance wake signals, leader election for the periodic
+# tickers, and shared rate-limit counters. Empty = disabled (single-instance
+# mode, no Redis required). Postgres stays the source of truth for job state
+# either way; Redis only coordinates. Production Redis must run with
+# maxmemory-policy=noeviction — an evicted workspace lock would let two
+# instances form the same workspace concurrently.
+REDIS_URL = os.getenv("REDIS_URL", "")
+REDIS_KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "ybase")
+# Per-workspace formation lock TTL (seconds). 0 = auto-derive as
+# FORMATION_TASK_TIMEOUT_S + 60, so the lock can only expire after the job it
+# guards is dead — raising the task timeout can't silently break the invariant.
+FORMATION_LOCK_TTL_S = float(os.getenv("FORMATION_LOCK_TTL_S", "0"))
+# Stable id for this instance in leader election and heartbeats. Fly injects
+# FLY_ALLOC_ID; elsewhere a random per-process id is fine.
+WORKER_INSTANCE_ID = (
+    os.getenv("WORKER_INSTANCE_ID") or os.getenv("FLY_ALLOC_ID") or uuid.uuid4().hex[:12]
+)
+# Ticker-leader lease (seconds); refreshed on every is_leader() check.
+LEADER_TTL_S = int(os.getenv("LEADER_TTL_S", "60"))
 
 # Open questions older than this are surfaced as "still unanswered" on Home.
 STALE_QUESTION_DAYS = int(os.getenv("STALE_QUESTION_DAYS", "21"))

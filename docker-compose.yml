@@ -16,6 +16,22 @@ services:
       timeout: 2s
       retries: 30
 
+  # Optional cross-instance coordination (multi-instance formation locks,
+  # leader election, shared rate limits). The app runs fine without it —
+  # empty REDIS_URL means single-instance mode. noeviction is required: an
+  # evicted workspace lock would let two instances form the same workspace.
+  redis:
+    image: redis:7-alpine
+    container_name: ybase-redis
+    command: ["redis-server", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
   # Full stack (backend + built UI) in one container:
   #   docker compose --profile app up -d --build       → http://localhost:8100
   # Plain `docker compose up -d` still starts only the database for local dev.
@@ -30,6 +46,7 @@ services:
       - "8100:8100"
     environment:
       DATABASE_URL: postgresql://ybase:ybase@db:5432/ybase
+      REDIS_URL: redis://redis:6379/0
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}

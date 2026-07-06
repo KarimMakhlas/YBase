@@ -29,7 +29,7 @@ from typing import Any, Dict
 import httpx
 from anthropic import AsyncAnthropic
 
-from ..core import config
+from ..core import config, usage
 
 client = AsyncAnthropic()
 
@@ -106,6 +106,8 @@ async def structured_call(
         async for _ in stream.text_stream:
             pass  # drain; structured output is consumed from the final message
         msg = await stream.get_final_message()
+    await usage.record("llm", "anthropic", config.ANTHROPIC_MODEL,
+                       **usage.usage_from_anthropic(msg))
     text = "".join(b.text for b in msg.content if b.type == "text")
     return json.loads(text)
 
@@ -218,6 +220,8 @@ async def _nvidia_structured(
         temperature=0.2,
         timeout=_NVIDIA_SLOW_TIMEOUT,
     )
+    await usage.record("llm", "nvidia", config.NVIDIA_MODEL,
+                       **usage.usage_from_openai_payload(data))
     content = _nvidia_message_content(data)
     try:
         obj = json.loads(content)
@@ -330,6 +334,8 @@ async def _ollama_structured(
         },
         _OLLAMA_SLOW_TIMEOUT,
     )
+    await usage.record("llm", "ollama", config.OLLAMA_MODEL,
+                       **usage.usage_from_ollama_payload(data))
     content = data["message"]["content"]
     try:
         obj = json.loads(content)
@@ -385,6 +391,10 @@ class _OllamaStream:
                     if piece:
                         yield piece
                     if chunk.get("done"):
+                        # the final chunk carries prompt_eval_count/eval_count
+                        await usage.record(
+                            "llm", "ollama", config.OLLAMA_MODEL,
+                            **usage.usage_from_ollama_payload(chunk))
                         break
             return
 
