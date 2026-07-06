@@ -415,6 +415,58 @@ def require_writable_workspace(min_role: str = "member"):
     return dep
 
 
+# ── API keys (machine auth for /api/agent/*) ─────────────────────────────────
+
+API_KEY_PREFIX = "ybk_"
+
+
+@dataclass
+class AgentContext:
+    """Auth context for API-key (machine) callers. Deliberately a sibling of
+    AuthContext without user/session fields: an agent acts for a workspace,
+    not as a person, and nothing downstream should pretend otherwise."""
+    workspace_id: int
+    workspace_name: str
+    key_id: int
+    key_name: str
+
+
+def generate_api_key() -> str:
+    return API_KEY_PREFIX + secrets.token_hex(20)
+
+
+async def require_api_key(request: Request) -> AgentContext:
+    """Authenticate `Authorization: Bearer ybk_...`. Reads stay open regardless
+    of plan status (same stance as session reads); the agent API is read-only
+    in v1 so no write gate is needed here."""
+    header = request.headers.get("Authorization", "")
+    token = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
+    if not token.startswith(API_KEY_PREFIX):
+        raise HTTPException(401, "missing or malformed API key")
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT k.id, k.name, k.last_used_at, k.workspace_id, w.name AS workspace_name "
+            "FROM api_keys k JOIN workspaces w ON w.id = k.workspace_id "
+            "WHERE k.token_hash=$1 AND k.revoked_at IS NULL",
+            _hash_token(token),
+        )
+        if row is None:
+            raise HTTPException(401, "invalid or revoked API key")
+        # Throttled liveness marker: one write per key per minute, not per call.
+        last = row["last_used_at"]
+        if last is None or (datetime.now(timezone.utc) - last).total_seconds() > 60:
+            await conn.execute(
+                "UPDATE api_keys SET last_used_at=now() WHERE id=$1", row["id"]
+            )
+    return AgentContext(
+        workspace_id=row["workspace_id"],
+        workspace_name=row["workspace_name"],
+        key_id=row["id"],
+        key_name=row["name"],
+    )
+
+
 
 async def _login_throttled(conn: asyncpg.Connection, email: str, ip: str) -> bool:
     failures = await conn.fetchval(

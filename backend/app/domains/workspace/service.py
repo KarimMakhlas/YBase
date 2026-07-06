@@ -436,3 +436,77 @@ async def patch_workspace_user(
             await auth.audit(conn, "patch_user", current.workspace_id, current.user_id,
                              "user", user_id, audit_data)
     return {"id": user_id}
+
+
+# ── API keys (machine credentials for /api/agent/*) ──────────────────────────
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str
+
+
+@router.post("/workspace/api-keys")
+async def create_api_key(
+    req: ApiKeyCreateRequest,
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
+) -> Dict[str, Any]:
+    """Mint a workspace API key. The plaintext token appears in this response
+    and nowhere else — only its hash is stored."""
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(400, "name must not be empty")
+    token = auth.generate_api_key()
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "INSERT INTO api_keys(workspace_id, created_by, name, token_hash, token_prefix) "
+                "VALUES($1, $2, $3, $4, $5) RETURNING id, created_at",
+                current.workspace_id, current.user_id, name[:100],
+                auth._hash_token(token), token[:12],
+            )
+            await auth.audit(conn, "api_key_created", current.workspace_id,
+                             current.user_id, "api_key", row["id"], {"name": name[:100]})
+    return {
+        "id": row["id"],
+        "name": name[:100],
+        "token": token,  # shown once
+        "token_prefix": token[:12],
+        "created_at": row["created_at"],
+    }
+
+
+@router.get("/workspace/api-keys")
+async def list_api_keys(
+    current: auth.AuthContext = Depends(auth.require_role("admin")),
+) -> List[Dict[str, Any]]:
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, name, token_prefix, created_by, created_at, last_used_at, revoked_at "
+            "FROM api_keys WHERE workspace_id=$1 ORDER BY created_at DESC",
+            current.workspace_id,
+        )
+    return [dict(r) for r in rows]
+
+
+@router.delete("/workspace/api-keys/{key_id}")
+async def revoke_api_key(
+    key_id: int,
+    current: auth.AuthContext = Depends(auth.require_role("admin")),
+) -> Dict[str, Any]:
+    # Deliberately not write-gated: an expired workspace must still be able to
+    # cut off its agents.
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "UPDATE api_keys SET revoked_at=now() "
+                "WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL RETURNING id",
+                key_id, current.workspace_id,
+            )
+            if row is None:
+                raise HTTPException(404, "API key not found or already revoked")
+            await auth.audit(conn, "api_key_revoked", current.workspace_id,
+                             current.user_id, "api_key", key_id)
+    return {"id": key_id, "revoked": True}

@@ -80,6 +80,8 @@ class Limiter:
 
 query_limiter = Limiter("query", config.QUERY_RATE_PER_MINUTE)
 ingest_limiter = Limiter("ingest", config.INGEST_RATE_PER_MINUTE)
+# Keyed by (workspace_id, api_key_id) — guards the machine-facing agent API.
+agent_limiter = Limiter("agent", config.AGENT_RATE_PER_MINUTE)
 # Keyed by client IP (not user) — these guard the unauthenticated auth routes.
 auth_limiter = Limiter("auth", config.AUTH_RATE_PER_MINUTE)
 # Keyed by Slack team id — guards the inbound Events webhook. Callers use

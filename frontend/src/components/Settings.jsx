@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
-import { Mail, Link2, UserPlus, Crown } from 'lucide-react'
+import { Mail, Link2, UserPlus, Crown, KeyRound, Copy } from 'lucide-react'
 import {
-  createWorkspaceInvite, createWorkspaceUser, getHealthDetails, listWorkspaceInvites,
-  listWorkspaceUsers, patchWorkspaceUser, revokeWorkspaceInvite, transferOwnership,
+  createApiKey, createWorkspaceInvite, createWorkspaceUser, getHealthDetails,
+  listApiKeys, listWorkspaceInvites, listWorkspaceUsers, patchWorkspaceUser,
+  revokeApiKey, revokeWorkspaceInvite, transferOwnership,
 } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Avatar, Badge } from '../ybase/ui.jsx'
@@ -34,7 +35,7 @@ function SystemStatus() {
     : '—'
 
   return (
-    <section className="settings-section wb-reveal" style={{ '--i': 4 }}>
+    <section className="settings-section wb-reveal" style={{ '--i': 5 }}>
       <h3>System status</h3>
       <p className="settings-sub">Which models are live and how memory formation is keeping up.</p>
       {err && <div className="md-empty">Backend unreachable.</div>}
@@ -59,6 +60,114 @@ function SystemStatus() {
           )}
         </div>
       )}
+    </section>
+  )
+}
+
+// Workspace API keys for the agent API and MCP server. The plaintext token
+// exists only in the create response — surface it once, loudly, then only
+// ever show the prefix.
+function ApiKeysSection() {
+  const [keys, setKeys] = useState(null)
+  const [name, setName] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [fresh, setFresh] = useState(null) // { name, token } from the last create
+  const toast = useToast()
+
+  const load = () => listApiKeys().then(setKeys).catch((e) => toast(`Failed to load API keys: ${e.message}`))
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const create = async () => {
+    if (creating || !name.trim()) return
+    setCreating(true)
+    try {
+      const res = await createApiKey(name.trim())
+      setFresh({ name: res.name, token: res.token })
+      setName('')
+      await load()
+    } catch (err) {
+      toast(`Could not create key: ${err.message}`)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const copyToken = async () => {
+    try {
+      await navigator.clipboard.writeText(fresh.token)
+      toast('API key copied', 'success')
+    } catch {
+      toast('Copy failed — select and copy manually')
+    }
+  }
+
+  const revoke = async (k) => {
+    if (!window.confirm(`Revoke "${k.name}"? Any agent using it loses access immediately.`)) return
+    try {
+      await revokeApiKey(k.id)
+      toast('API key revoked', 'success')
+      if (fresh && k.token_prefix === fresh.token.slice(0, 12)) setFresh(null)
+      await load()
+    } catch (err) {
+      toast(`Revoke failed: ${err.message}`)
+    }
+  }
+
+  const fmtDay = (v) => (v ? String(v).slice(0, 10) : null)
+  const active = (keys || []).filter((k) => !k.revoked_at)
+
+  return (
+    <section className="settings-section wb-reveal" style={{ '--i': 4 }}>
+      <h3>Agent API keys</h3>
+      <p className="settings-sub">
+        Let AI agents (via the MCP server or the agent API) read this workspace’s memory.
+        Keys are workspace-scoped and read-only; revoking cuts access immediately.
+      </p>
+      <div className="settings-form">
+        <div className="wb-input-wrap" style={{ flex: 1, minWidth: 200 }}>
+          <span className="wb-input-wrap__affix wb-input-wrap__affix--prefix" aria-hidden="true"><KeyRound size={16} strokeWidth={1.8} /></span>
+          <input
+            className="wb-input wb-input--has-prefix"
+            placeholder="Key name (e.g. “CI review agent”)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') create() }}
+          />
+        </div>
+        <button className="wb-btn wb-btn--primary" type="button" onClick={create} disabled={creating || !name.trim()}>
+          <KeyRound size={15} strokeWidth={1.8} /> {creating ? 'Creating…' : 'Create key'}
+        </button>
+      </div>
+      {fresh && (
+        <div className="invite-row" data-testid="fresh-api-key" style={{ alignItems: 'center' }}>
+          <KeyRound size={15} strokeWidth={1.8} />
+          <span className="invite-main">
+            <b>{fresh.name}</b>
+            <small>Copy it now — this key is shown only once.</small>
+          </span>
+          <code className="tnum" style={{ userSelect: 'all', overflowWrap: 'anywhere' }}>{fresh.token}</code>
+          <button className="wb-btn wb-btn--sm wb-btn--secondary" onClick={copyToken}>
+            <Copy size={13} strokeWidth={1.9} /> Copy
+          </button>
+        </div>
+      )}
+      <div className="invite-list">
+        {keys && active.length === 0 && !fresh && <div className="md-empty">No API keys yet.</div>}
+        {!keys && <div className="wb-skeleton" style={{ height: 48 }} />}
+        {active.map((k) => (
+          <div className="invite-row" key={k.id}>
+            <KeyRound size={15} strokeWidth={1.8} />
+            <span className="invite-main">
+              <b>{k.name}</b>
+              <small className="tnum">{k.token_prefix}…</small>
+            </span>
+            <span className="invite-exp tnum">
+              {k.last_used_at ? `last used ${fmtDay(k.last_used_at)}` : `created ${fmtDay(k.created_at)}`}
+            </span>
+            <button className="wb-btn wb-btn--sm wb-btn--ghost" onClick={() => revoke(k)}>Revoke</button>
+          </div>
+        ))}
+      </div>
     </section>
   )
 }
@@ -277,6 +386,8 @@ export default function Settings({ auth, onAuthChanged }) {
           ))}
         </div>
       </section>
+
+      {(myRole === 'admin' || myRole === 'owner') && <ApiKeysSection />}
 
       <SystemStatus />
     </div>

@@ -87,6 +87,10 @@ INGEST_RATE_PER_MINUTE = int(os.getenv("INGEST_RATE_PER_MINUTE", "120"))
 # Per-IP limit on the unauthenticated auth endpoints (register / login /
 # forgot / reset), events per minute. 0 disables.
 AUTH_RATE_PER_MINUTE = int(os.getenv("AUTH_RATE_PER_MINUTE", "10"))
+# Per-API-key limit on the machine-facing agent endpoints (/api/agent/*).
+# Higher than the human query limit — an agent may fan out several context
+# lookups per task — but still bounds a runaway loop's LLM spend.
+AGENT_RATE_PER_MINUTE = int(os.getenv("AGENT_RATE_PER_MINUTE", "60"))
 
 # ── Observability & ops ─────────────────────────────────────────────────────
 # Error tracking (Sentry). Empty DSN disables it entirely (local / dev /

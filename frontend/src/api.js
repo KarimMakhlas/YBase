@@ -95,6 +95,9 @@ export const patchWorkspaceUser = (id, body) => patchJSON(`/api/workspace/users/
 export const listWorkspaceInvites = () => getJSON('/api/workspace/invites')
 export const createWorkspaceInvite = (body) => postJSON('/api/workspace/invites', body)
 export const revokeWorkspaceInvite = (id) => deleteJSON(`/api/workspace/invites/${id}`)
+export const listApiKeys = () => getJSON('/api/workspace/api-keys')
+export const createApiKey = (name) => postJSON('/api/workspace/api-keys', { name })
+export const revokeApiKey = (id) => deleteJSON(`/api/workspace/api-keys/${id}`)
 
 export const listSources = () => getJSON('/api/sources')
 export const getSlackInstallUrl = () => getJSON('/api/sources/slack/install-url')
