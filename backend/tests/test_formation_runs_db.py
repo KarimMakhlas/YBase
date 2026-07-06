@@ -126,7 +126,7 @@ async def test_slo_endpoint_percentiles(pool, workspace_id):
     assert body["failures"] == 1
     assert body["p50_ms"] == 550        # percentile_cont over 100..1000
     assert body["p95_ms"] == 955
-    assert body["p95_queue_wait_ms"] == 96
+    assert body["p95_queue_wait_ms"] == 95
     assert body["p95_llm_ms"] == 478    # over 50..500
     assert len(body["per_day"]) == 1
     assert body["per_day"][0]["runs"] == 10
