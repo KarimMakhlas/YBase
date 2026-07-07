@@ -2,9 +2,9 @@
 
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core import config, db
 from app.domains.auth import service as auth
@@ -353,6 +353,169 @@ async def audit_log(
                 current.workspace_id, str(days),
             )
     return {"days": days, "events": [dict(r) for r in rows]}
+
+
+# ── Fleet view (cross-workspace) ─────────────────────────────────────────────
+# Unlike every other ops endpoint (admin on the ACTIVE workspace), the fleet
+# endpoints span every workspace where the CURRENT USER is admin/owner — no
+# new role needed, membership already encodes who may operate what.
+
+
+def _operated_workspaces(current: auth.AuthContext) -> List[Dict[str, Any]]:
+    return [w for w in current.workspaces if w.get("role") in ("admin", "owner")]
+
+
+@router.get("/fleet")
+async def fleet_overview(
+    current: auth.AuthContext = Depends(auth.get_current_user),
+) -> Dict[str, Any]:
+    """One card of operational vitals per operated workspace: formation queue
+    depth, failures, pending agent proposals, connector health, 24h usage,
+    and a 24h formation-latency SLO snapshot. Set-based queries grouped by
+    workspace — cost does not grow per workspace."""
+    operated = _operated_workspaces(current)
+    if not operated:
+        return {"workspaces": []}
+    ids = [w["id"] for w in operated]
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        docs = await conn.fetch(
+            "SELECT workspace_id, "
+            "       count(*) FILTER (WHERE formation_status IN ('pending','processing')) AS queue_depth, "
+            "       count(*) FILTER (WHERE formation_status='failed') AS failed_docs, "
+            "       count(*) FILTER (WHERE formation_status='rate_limited') AS rate_limited_docs, "
+            "       count(*) AS documents "
+            "FROM documents WHERE workspace_id = ANY($1::int[]) GROUP BY workspace_id",
+            ids,
+        )
+        memory = await conn.fetch(
+            "SELECT workspace_id, "
+            "       count(*) FILTER (WHERE kind='decision') AS decisions, "
+            "       count(*) FILTER (WHERE curated_at IS NULL) AS needs_review "
+            "FROM memory_nodes WHERE workspace_id = ANY($1::int[]) AND archived_at IS NULL "
+            "GROUP BY workspace_id",
+            ids,
+        )
+        proposals = await conn.fetch(
+            "SELECT workspace_id, count(*) AS pending_proposals "
+            "FROM memory_proposals WHERE workspace_id = ANY($1::int[]) AND status='pending' "
+            "GROUP BY workspace_id",
+            ids,
+        )
+        connectors = await conn.fetch(
+            "SELECT c.workspace_id, c.provider, c.status, c.last_sync_at, c.last_error, "
+            "       (SELECT count(*) FROM sync_jobs j WHERE j.connection_id=c.id "
+            "        AND j.status='failed') AS failed_jobs "
+            "FROM source_connections c WHERE c.workspace_id = ANY($1::int[]) "
+            "ORDER BY c.workspace_id, c.provider",
+            ids,
+        )
+        usage_24h = await conn.fetch(
+            "SELECT workspace_id, "
+            "       coalesce(sum(total_tokens), 0)::bigint AS tokens_24h, "
+            "       coalesce(sum(request_count), 0)::int AS requests_24h "
+            "FROM usage_events WHERE workspace_id = ANY($1::int[]) "
+            "AND created_at > now() - interval '24 hours' GROUP BY workspace_id",
+            ids,
+        )
+        slo = await conn.fetch(
+            "SELECT workspace_id, count(*) AS runs, "
+            "       count(*) FILTER (WHERE status IN ('failed','timeout')) AS failures, "
+            "       percentile_cont(0.5)  WITHIN GROUP (ORDER BY duration_ms) AS p50_ms, "
+            "       percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95_ms "
+            "FROM formation_runs WHERE workspace_id = ANY($1::int[]) "
+            "AND started_at > now() - interval '24 hours' GROUP BY workspace_id",
+            ids,
+        )
+
+    by_ws = lambda rows: {r["workspace_id"]: r for r in rows}  # noqa: E731
+    docs_m, mem_m, prop_m, use_m, slo_m = (
+        by_ws(docs), by_ws(memory), by_ws(proposals), by_ws(usage_24h), by_ws(slo))
+    conn_m: Dict[int, List[Dict[str, Any]]] = {}
+    for c in connectors:
+        conn_m.setdefault(c["workspace_id"], []).append({
+            "provider": c["provider"],
+            "status": c["status"],
+            "last_sync_at": c["last_sync_at"].isoformat() if c["last_sync_at"] else None,
+            "last_error": c["last_error"],
+            "failed_jobs": c["failed_jobs"],
+        })
+
+    out = []
+    for w in operated:
+        wid = w["id"]
+        d, m, p, u, s = (docs_m.get(wid), mem_m.get(wid), prop_m.get(wid),
+                         use_m.get(wid), slo_m.get(wid))
+        conns = conn_m.get(wid, [])
+        out.append({
+            "workspace_id": wid,
+            "name": w["name"],
+            "role": w["role"],
+            "is_active": wid == current.workspace_id,
+            "queue_depth": d["queue_depth"] if d else 0,
+            "failed_docs": d["failed_docs"] if d else 0,
+            "rate_limited_docs": d["rate_limited_docs"] if d else 0,
+            "documents": d["documents"] if d else 0,
+            "decisions": m["decisions"] if m else 0,
+            "needs_review": m["needs_review"] if m else 0,
+            "pending_proposals": p["pending_proposals"] if p else 0,
+            "connectors": conns,
+            "failing_connectors": [c["provider"] for c in conns
+                                   if c["status"] == "error" or c["failed_jobs"]],
+            "tokens_24h": u["tokens_24h"] if u else 0,
+            "requests_24h": u["requests_24h"] if u else 0,
+            "slo_24h": {
+                "runs": s["runs"] if s else 0,
+                "failures": s["failures"] if s else 0,
+                "p50_ms": round(s["p50_ms"]) if s and s["p50_ms"] is not None else None,
+                "p95_ms": round(s["p95_ms"]) if s and s["p95_ms"] is not None else None,
+            },
+        })
+    return {"workspaces": out}
+
+
+@router.get("/fleet/activity")
+async def fleet_activity(
+    workspace_id: Optional[int] = None,
+    limit: int = 50,
+    current: auth.AuthContext = Depends(auth.get_current_user),
+) -> Dict[str, Any]:
+    """Merged audit feed across operated workspaces (or one of them), newest
+    first, with actor display names resolved."""
+    operated = _operated_workspaces(current)
+    ids = [w["id"] for w in operated]
+    if workspace_id is not None:
+        if workspace_id not in ids:
+            raise HTTPException(403, "not an admin of that workspace")
+        ids = [workspace_id]
+    if not ids:
+        return {"events": []}
+    limit = max(1, min(limit, 200))
+    names = {w["id"]: w["name"] for w in operated}
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT a.id, a.workspace_id, a.actor_user_id, u.display_name AS actor_name, "
+            "       a.action, a.target_type, a.target_id, a.data, a.created_at "
+            "FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id "
+            "WHERE a.workspace_id = ANY($1::int[]) "
+            "ORDER BY a.created_at DESC, a.id DESC LIMIT $2",
+            ids, limit,
+        )
+    return {"events": [
+        {
+            "id": r["id"],
+            "workspace_id": r["workspace_id"],
+            "workspace_name": names.get(r["workspace_id"]),
+            "actor": r["actor_name"],
+            "action": r["action"],
+            "target_type": r["target_type"],
+            "target_id": r["target_id"],
+            "data": r["data"],
+            "created_at": r["created_at"].isoformat(),
+        }
+        for r in rows
+    ]}
 
 
 @router.post("/failed-documents/retry")

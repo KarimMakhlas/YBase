@@ -89,7 +89,8 @@ async def test_error_mapping(env, capture):
 
 
 async def test_tools_registered():
-    # FastMCP must expose exactly the four tools, names stable (agents key on them)
+    # FastMCP must expose exactly these tools, names stable (agents key on them)
     tools = await server.mcp.list_tools()
     assert {t.name for t in tools} == {
-        "ask_ybase", "get_context_for_task", "search_memory", "get_decision"}
+        "ask_ybase", "get_context_for_task", "search_memory", "get_decision",
+        "propose_decision", "check_proposal", "context_for_file"}

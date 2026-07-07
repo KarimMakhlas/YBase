@@ -1,6 +1,6 @@
 """YBase MCP server: exposes the company memory layer to MCP clients
-(Claude Code, Cursor, any MCP-compatible agent) as four tools wrapping the
-YBase agent API. Thin by design — all intelligence lives server-side; this
+(Claude Code, Cursor, any MCP-compatible agent) as tools wrapping the
+YBase agent API — reads plus a curated write path (propose_decision). Thin by design — all intelligence lives server-side; this
 process just speaks stdio MCP on one end and authenticated HTTPS on the other.
 
 Configuration (environment):
@@ -114,6 +114,59 @@ async def get_decision(node_id: int) -> str:
     A non-empty `superseded_by` means this decision is NOT current.
     """
     return _pretty(await _request("GET", f"/api/agent/decisions/{node_id}"))
+
+
+@mcp.tool()
+async def context_for_file(path: str, repo: Optional[str] = None) -> str:
+    """Get the decision history relevant to a specific file you are about to
+    read or modify — call this when opening a file in an unfamiliar area.
+
+    Pass the repo-relative path (e.g. "src/billing/charge.ts"); the server
+    mines it for domain terms and returns relevant past decisions, warnings
+    about reversed/revisited ones, and open questions. `derived_terms` in the
+    response shows which words from the path drove the match. Fast (no LLM
+    call) — cheap to call once per file. Optional `repo` adds the repository
+    name as extra context.
+    """
+    body: dict = {"path": path}
+    if repo:
+        body["repo"] = repo
+    return _pretty(await _request("POST", "/api/agent/context-for-file", json_body=body))
+
+
+@mcp.tool()
+async def propose_decision(label: str, summary: str, topics: list[str],
+                           kind: str = "decision",
+                           status: Optional[str] = None,
+                           made_by: Optional[list[str]] = None) -> str:
+    """Propose a new decision (or open question) for the company's memory.
+    The proposal does NOT become live memory — it queues for a human curator
+    to approve or reject, and only approval creates a memory node.
+
+    Use this when you and the user just made a real decision worth
+    remembering ("we chose X over Y because Z"), or discovered an open
+    question the team must resolve (kind="question"). Write the label as a
+    short decision title and put the what + reasoning in `summary`. `topics`
+    are short lowercase tags (e.g. ["billing", "retries"]) — reuse existing
+    topic names from search_memory when possible. Check the returned
+    `warnings`: an existing node with the same label means approval will
+    merge into it. Track the outcome later with check_proposal.
+    """
+    body: dict = {"kind": kind, "label": label, "summary": summary, "topics": topics}
+    if status:
+        body["status"] = status
+    if made_by:
+        body["data"] = {"made_by": made_by}
+    return _pretty(await _request("POST", "/api/agent/propose", json_body=body))
+
+
+@mcp.tool()
+async def check_proposal(proposal_id: int) -> str:
+    """Check what happened to a proposal submitted with propose_decision:
+    still pending, approved (includes the created memory node id), or
+    rejected (includes the curator's note explaining why).
+    """
+    return _pretty(await _request("GET", f"/api/agent/proposals/{proposal_id}"))
 
 
 def main() -> None:

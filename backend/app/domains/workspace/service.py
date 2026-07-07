@@ -443,6 +443,21 @@ async def patch_workspace_user(
 
 class ApiKeyCreateRequest(BaseModel):
     name: str
+    # None = unrestricted; a list restricts the key to memory linked to these
+    # topics (see AgentContext.allowed_topics).
+    allowed_topics: Optional[List[str]] = None
+
+
+class ApiKeyPatchRequest(BaseModel):
+    allowed_topics: Optional[List[str]] = None
+
+
+def _clean_topics(topics: Optional[List[str]]) -> Optional[List[str]]:
+    if topics is None:
+        return None
+    cleaned = [t.strip().lower() for t in topics if t and t.strip()]
+    cleaned = list(dict.fromkeys(cleaned))[:20]
+    return cleaned or None  # empty list would lock the key out of everything
 
 
 @router.post("/workspace/api-keys")
@@ -456,22 +471,26 @@ async def create_api_key(
     if not name:
         raise HTTPException(400, "name must not be empty")
     token = auth.generate_api_key()
+    allowed_topics = _clean_topics(req.allowed_topics)
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(
-                "INSERT INTO api_keys(workspace_id, created_by, name, token_hash, token_prefix) "
-                "VALUES($1, $2, $3, $4, $5) RETURNING id, created_at",
+                "INSERT INTO api_keys(workspace_id, created_by, name, token_hash, "
+                "token_prefix, allowed_topics) "
+                "VALUES($1, $2, $3, $4, $5, $6) RETURNING id, created_at",
                 current.workspace_id, current.user_id, name[:100],
-                auth._hash_token(token), token[:12],
+                auth._hash_token(token), token[:12], allowed_topics,
             )
             await auth.audit(conn, "api_key_created", current.workspace_id,
-                             current.user_id, "api_key", row["id"], {"name": name[:100]})
+                             current.user_id, "api_key", row["id"],
+                             {"name": name[:100], "allowed_topics": allowed_topics})
     return {
         "id": row["id"],
         "name": name[:100],
         "token": token,  # shown once
         "token_prefix": token[:12],
+        "allowed_topics": allowed_topics,
         "created_at": row["created_at"],
     }
 
@@ -483,11 +502,39 @@ async def list_api_keys(
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, name, token_prefix, created_by, created_at, last_used_at, revoked_at "
+            "SELECT id, name, token_prefix, allowed_topics, created_by, created_at, "
+            "last_used_at, revoked_at "
             "FROM api_keys WHERE workspace_id=$1 ORDER BY created_at DESC",
             current.workspace_id,
         )
     return [dict(r) for r in rows]
+
+
+@router.patch("/workspace/api-keys/{key_id}")
+async def patch_api_key(
+    key_id: int,
+    req: ApiKeyPatchRequest,
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
+) -> Dict[str, Any]:
+    """Edit a key's topic scope without re-issuing the token. Passing null
+    (or an empty list) removes the restriction."""
+    allowed_topics = _clean_topics(req.allowed_topics)
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "UPDATE api_keys SET allowed_topics=$3 "
+                "WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL "
+                "RETURNING id, name, allowed_topics",
+                key_id, current.workspace_id, allowed_topics,
+            )
+            if row is None:
+                raise HTTPException(404, "API key not found or revoked")
+            await auth.audit(conn, "api_key_scoped", current.workspace_id,
+                             current.user_id, "api_key", key_id,
+                             {"allowed_topics": allowed_topics})
+    return {"id": row["id"], "name": row["name"],
+            "allowed_topics": list(row["allowed_topics"]) if row["allowed_topics"] else None}
 
 
 @router.delete("/workspace/api-keys/{key_id}")

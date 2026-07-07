@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { Mail, Link2, UserPlus, Crown, KeyRound, Copy } from 'lucide-react'
 import {
   createApiKey, createWorkspaceInvite, createWorkspaceUser, getHealthDetails,
-  listApiKeys, listWorkspaceInvites, listWorkspaceUsers, patchWorkspaceUser,
-  revokeApiKey, revokeWorkspaceInvite, transferOwnership,
+  listApiKeys, listWorkspaceInvites, listWorkspaceUsers, patchApiKey,
+  patchWorkspaceUser, revokeApiKey, revokeWorkspaceInvite, transferOwnership,
 } from '../api.js'
 import { useToast } from './Toast.jsx'
 import { Avatar, Badge } from '../ybase/ui.jsx'
@@ -67,9 +67,15 @@ function SystemStatus() {
 // Workspace API keys for the agent API and MCP server. The plaintext token
 // exists only in the create response — surface it once, loudly, then only
 // ever show the prefix.
+const parseTopics = (raw) => {
+  const list = raw.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean)
+  return list.length ? [...new Set(list)] : null
+}
+
 function ApiKeysSection() {
   const [keys, setKeys] = useState(null)
   const [name, setName] = useState('')
+  const [topics, setTopics] = useState('')
   const [creating, setCreating] = useState(false)
   const [fresh, setFresh] = useState(null) // { name, token } from the last create
   const toast = useToast()
@@ -81,14 +87,30 @@ function ApiKeysSection() {
     if (creating || !name.trim()) return
     setCreating(true)
     try {
-      const res = await createApiKey(name.trim())
+      const res = await createApiKey(name.trim(), parseTopics(topics))
       setFresh({ name: res.name, token: res.token })
       setName('')
+      setTopics('')
       await load()
     } catch (err) {
       toast(`Could not create key: ${err.message}`)
     } finally {
       setCreating(false)
+    }
+  }
+
+  const editScope = async (k) => {
+    const raw = window.prompt(
+      `Topics "${k.name}" may access (comma-separated, empty = everything):`,
+      (k.allowed_topics || []).join(', '),
+    )
+    if (raw === null) return
+    try {
+      await patchApiKey(k.id, parseTopics(raw))
+      toast('Key scope updated', 'success')
+      await load()
+    } catch (err) {
+      toast(`Scope update failed: ${err.message}`)
     }
   }
 
@@ -120,8 +142,9 @@ function ApiKeysSection() {
     <section className="settings-section wb-reveal" style={{ '--i': 4 }}>
       <h3>Agent API keys</h3>
       <p className="settings-sub">
-        Let AI agents (via the MCP server or the agent API) read this workspace’s memory.
-        Keys are workspace-scoped and read-only; revoking cuts access immediately.
+        Let AI agents (via the MCP server or the agent API) read this workspace’s memory and
+        propose decisions for review. Optionally scope a key to specific topics — a “billing”
+        agent then can’t see or propose anything outside billing. Revoking cuts access immediately.
       </p>
       <div className="settings-form">
         <div className="wb-input-wrap" style={{ flex: 1, minWidth: 200 }}>
@@ -134,6 +157,14 @@ function ApiKeysSection() {
             onKeyDown={(e) => { if (e.key === 'Enter') create() }}
           />
         </div>
+        <input
+          className="wb-input"
+          style={{ flex: 1, minWidth: 180 }}
+          placeholder="Limit to topics (optional, comma-separated)"
+          value={topics}
+          onChange={(e) => setTopics(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') create() }}
+        />
         <button className="wb-btn wb-btn--primary" type="button" onClick={create} disabled={creating || !name.trim()}>
           <KeyRound size={15} strokeWidth={1.8} /> {creating ? 'Creating…' : 'Create key'}
         </button>
@@ -159,11 +190,17 @@ function ApiKeysSection() {
             <KeyRound size={15} strokeWidth={1.8} />
             <span className="invite-main">
               <b>{k.name}</b>
-              <small className="tnum">{k.token_prefix}…</small>
+              <small className="tnum">
+                {k.token_prefix}…
+                {k.allowed_topics?.length
+                  ? ` · scoped: ${k.allowed_topics.join(', ')}`
+                  : ' · all topics'}
+              </small>
             </span>
             <span className="invite-exp tnum">
               {k.last_used_at ? `last used ${fmtDay(k.last_used_at)}` : `created ${fmtDay(k.created_at)}`}
             </span>
+            <button className="wb-btn wb-btn--sm wb-btn--ghost" onClick={() => editScope(k)}>Scope</button>
             <button className="wb-btn wb-btn--sm wb-btn--ghost" onClick={() => revoke(k)}>Revoke</button>
           </div>
         ))}

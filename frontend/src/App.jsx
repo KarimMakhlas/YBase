@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
   Activity, GitCommitHorizontal, Users, Plug, Settings as SettingsIcon,
-  PanelLeftClose, PanelLeftOpen, Sun, Moon,
+  PanelLeftClose, PanelLeftOpen, Sun, Moon, Inbox, Gauge,
 } from 'lucide-react'
 import LeftPanel from './components/LeftPanel.jsx'
 import Chat from './components/Chat.jsx'
@@ -22,8 +22,10 @@ import CmdK from './components/CmdK.jsx'
 import DocModal from './components/DocModal.jsx'
 import Plans from './components/Plans.jsx'
 import Account from './components/Account.jsx'
+import ReviewQueue from './components/ReviewQueue.jsx'
+import OpsDashboard from './components/OpsDashboard.jsx'
 import { ToastProvider } from './components/Toast.jsx'
-import { getBootstrapStatus, getMe, getOnboarding, getBillingStatus, logout } from './api.js'
+import { getBootstrapStatus, getMe, getOnboarding, getBillingStatus, logout, listProposals } from './api.js'
 
 // Two self-contained panels, no surrounding chrome bands. Right half = Chat
 // (open by default, expandable). Left half = a tiny set of workspace pages —
@@ -33,21 +35,23 @@ import { getBootstrapStatus, getMe, getOnboarding, getBillingStatus, logout } fr
 const PAGE_DEFS = {
   pulse: { label: 'Pulse', Icon: Activity },
   decisions: { label: 'Decisions', Icon: GitCommitHorizontal },
+  review: { label: 'Review', Icon: Inbox },
   people: { label: 'People', Icon: Users },
   sources: { label: 'Sources', Icon: Plug },
+  ops: { label: 'Ops', Icon: Gauge },
   settings: { label: 'Settings', Icon: SettingsIcon },
 }
 const MEMBER_PAGES = ['pulse', 'decisions']
-const ADMIN_PAGES = ['pulse', 'decisions', 'people', 'sources', 'settings']
+const ADMIN_PAGES = ['pulse', 'decisions', 'review', 'people', 'sources', 'ops', 'settings']
 // Reachable from the menu but never shown as a nav pill.
 const EXTRA_PAGES = new Set(['account', 'plans'])
-const ADMIN_ONLY = new Set(['people', 'sources', 'settings'])
+const ADMIN_ONLY = new Set(['review', 'people', 'sources', 'ops', 'settings'])
 const ALL_RENDERABLE = new Set([...ADMIN_PAGES, ...EXTRA_PAGES])
 
 // Hash tabs we still parse (some are legacy and get rerouted to a surviving page).
 const TAB_IDS = new Set([
-  'pulse', 'chat', 'home', 'decisions', 'people', 'sources', 'settings',
-  'account', 'plans', 'timeline', 'graph', 'add',
+  'pulse', 'chat', 'home', 'decisions', 'review', 'people', 'sources', 'ops',
+  'settings', 'account', 'plans', 'timeline', 'graph', 'add',
 ])
 const ROLE_RANK = { member: 1, admin: 2, owner: 3 }
 
@@ -265,6 +269,14 @@ export default function App() {
     else { setSetup(null); setBilling(null) }
   }, [workspaceId, loadSetup, loadBilling])
 
+  // Agent-proposal queue depth for the Review nav badge (admins only).
+  const [pendingReviews, setPendingReviews] = useState(0)
+  const userRole = authState.user?.workspace?.role
+  useEffect(() => {
+    if (!workspaceId || !(ROLE_RANK[userRole] >= ROLE_RANK.admin)) { setPendingReviews(0); return }
+    listProposals('pending').then((rows) => setPendingReviews(rows.length)).catch(() => {})
+  }, [workspaceId, userRole])
+
   useEffect(() => {
     const onReadonly = () => loadBilling()
     window.addEventListener('billing:readonly', onReadonly)
@@ -454,6 +466,10 @@ export default function App() {
         return <Decisions focus={focus.tab === 'decisions' ? focus : null} onOpenDoc={openDoc} onNavigate={navigate} />
       case 'people':
         return <People focus={focus.tab === 'people' ? focus : null} onNavigate={navigate} onOpenDoc={openDoc} />
+      case 'review':
+        return <ReviewQueue onNavigate={navigate} onPendingChange={setPendingReviews} />
+      case 'ops':
+        return <OpsDashboard onNavigate={navigate} />
       case 'sources':
         return <Sources />
       case 'settings':
@@ -536,6 +552,9 @@ export default function App() {
                       onClick={() => navigate(id)}
                     >
                       <Icon size={15} strokeWidth={1.9} /> {label}
+                      {id === 'review' && pendingReviews > 0 && (
+                        <span className="leftnav-count tnum">{pendingReviews}</span>
+                      )}
                     </button>
                   )
                 })}

@@ -42,6 +42,8 @@ const STATUS_TONE = {
   decided: 'success',
   reaffirmed: 'success',
   resolved: 'success',
+  approved: 'success',
+  rejected: 'danger',
   complete: 'success',
   connected: 'success',
   idle: 'success',

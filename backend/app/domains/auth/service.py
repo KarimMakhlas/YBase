@@ -424,11 +424,15 @@ API_KEY_PREFIX = "ybk_"
 class AgentContext:
     """Auth context for API-key (machine) callers. Deliberately a sibling of
     AuthContext without user/session fields: an agent acts for a workspace,
-    not as a person, and nothing downstream should pretend otherwise."""
+    not as a person, and nothing downstream should pretend otherwise.
+
+    allowed_topics None = unrestricted; a list means the key only sees and
+    proposes memory linked to those topics (matched on lowercased label)."""
     workspace_id: int
     workspace_name: str
     key_id: int
     key_name: str
+    allowed_topics: Optional[List[str]] = None
 
 
 def generate_api_key() -> str:
@@ -446,7 +450,8 @@ async def require_api_key(request: Request) -> AgentContext:
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT k.id, k.name, k.last_used_at, k.workspace_id, w.name AS workspace_name "
+            "SELECT k.id, k.name, k.last_used_at, k.workspace_id, k.allowed_topics, "
+            "w.name AS workspace_name "
             "FROM api_keys k JOIN workspaces w ON w.id = k.workspace_id "
             "WHERE k.token_hash=$1 AND k.revoked_at IS NULL",
             _hash_token(token),
@@ -464,6 +469,7 @@ async def require_api_key(request: Request) -> AgentContext:
         workspace_name=row["workspace_name"],
         key_id=row["id"],
         key_name=row["name"],
+        allowed_topics=list(row["allowed_topics"]) if row["allowed_topics"] is not None else None,
     )
 
 

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.core import db
 from app.domains.auth import service as auth
+from app.domains.memory import graph
 
 router = APIRouter(prefix="/api/memory-review", tags=["memory-review"])
 
@@ -27,6 +28,18 @@ class MemoryPatch(BaseModel):
 
 class ArchiveRequest(BaseModel):
     reason: Optional[str] = None
+
+
+class ApproveProposal(BaseModel):
+    # Curator may correct the agent's wording before it becomes memory.
+    label: Optional[str] = None
+    summary: Optional[str] = None
+    status: Optional[str] = None
+    note: Optional[str] = None
+
+
+class RejectProposal(BaseModel):
+    note: Optional[str] = None
 
 
 def _clean_label(label: str) -> str:
@@ -145,6 +158,129 @@ async def list_review_nodes(
     async with pool.acquire() as conn:
         rows = await conn.fetch(sql, *args)
     return [dict(r) for r in rows]
+
+
+PROPOSAL_STATUSES = {"pending", "approved", "rejected", "all"}
+
+
+def _proposal_row(r) -> Dict[str, Any]:
+    out = dict(r)
+    out["topics"] = list(out.get("topics") or [])
+    return out
+
+
+@router.get("/proposals")
+async def list_proposals(
+    status: str = "pending",
+    current: auth.AuthContext = Depends(auth.require_role("admin")),
+) -> List[Dict[str, Any]]:
+    """Agent-proposed memory awaiting curation (or already resolved)."""
+    status = status or "pending"
+    if status not in PROPOSAL_STATUSES:
+        raise HTTPException(400, "status must be pending, approved, rejected, or all")
+    args: List[Any] = [current.workspace_id]
+    where = "p.workspace_id=$1"
+    if status != "all":
+        args.append(status)
+        where += " AND p.status=$2"
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT p.*, k.name AS key_name, u.email AS reviewed_by_email, "
+            "       existing.id AS existing_node_id "
+            "FROM memory_proposals p "
+            "LEFT JOIN api_keys k ON k.id=p.api_key_id "
+            "LEFT JOIN users u ON u.id=p.reviewed_by "
+            "LEFT JOIN LATERAL (SELECT id FROM memory_nodes n "
+            "  WHERE n.workspace_id=p.workspace_id AND n.kind=p.kind "
+            "  AND lower(n.label)=lower(p.label) AND n.archived_at IS NULL "
+            "  LIMIT 1) existing ON true "
+            f"WHERE {where} ORDER BY p.created_at DESC LIMIT 200",
+            *args,
+        )
+    return [_proposal_row(r) for r in rows]
+
+
+async def _pending_proposal(conn, workspace_id: int, proposal_id: int):
+    row = await conn.fetchrow(
+        "SELECT * FROM memory_proposals WHERE id=$1 AND workspace_id=$2 FOR UPDATE",
+        proposal_id, workspace_id,
+    )
+    if row is None:
+        raise HTTPException(404, "proposal not found")
+    if row["status"] != "pending":
+        raise HTTPException(409, f"proposal already {row['status']}")
+    return row
+
+
+@router.post("/proposals/{proposal_id}/approve")
+async def approve_proposal(
+    proposal_id: int,
+    req: ApproveProposal,
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
+) -> Dict[str, Any]:
+    """Turn a pending proposal into a live memory node (merging into an
+    existing active node with the same label, like formation does). The node
+    is born curated — a human just reviewed it."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            prop = await _pending_proposal(conn, current.workspace_id, proposal_id)
+            kind = prop["kind"]
+            label = _clean_label(req.label if req.label is not None else prop["label"])
+            summary = (req.summary if req.summary is not None else prop["summary"]).strip()
+            status = _clean_status(kind, req.status or prop["status_suggestion"])
+            if status is None:
+                status = "decided" if kind == "decision" else "open"
+            data = dict(prop["data"] or {})
+            data["proposal_id"] = proposal_id
+
+            node_id = await graph.upsert_node(
+                conn, current.workspace_id, kind, label,
+                summary=summary, status=status, data=data,
+            )
+            await conn.execute(
+                "UPDATE memory_nodes SET curated_at=now(), curated_by=$3, updated_at=now() "
+                "WHERE id=$1 AND workspace_id=$2",
+                node_id, current.workspace_id, current.user_id,
+            )
+            for topic in prop["topics"] or []:
+                tid = await graph.upsert_node(conn, current.workspace_id, "topic",
+                                              topic.strip().lower())
+                await graph.add_edge(conn, current.workspace_id, node_id, tid, "about")
+            note = (req.note or "").strip()[:500] or None
+            await conn.execute(
+                "UPDATE memory_proposals SET status='approved', reviewed_by=$3, "
+                "reviewed_at=now(), resolution_note=$4, created_node_id=$5 "
+                "WHERE id=$1 AND workspace_id=$2",
+                proposal_id, current.workspace_id, current.user_id, note, node_id,
+            )
+            await auth.audit(conn, "proposal_approved", current.workspace_id,
+                             current.user_id, "memory_proposal", proposal_id,
+                             {"node_id": node_id, "label": label, "kind": kind})
+            return {"proposal_id": proposal_id, "status": "approved", "node_id": node_id}
+
+
+@router.post("/proposals/{proposal_id}/reject")
+async def reject_proposal(
+    proposal_id: int,
+    req: RejectProposal,
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
+) -> Dict[str, Any]:
+    note = (req.note or "").strip()[:500] or None
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _pending_proposal(conn, current.workspace_id, proposal_id)
+            await conn.execute(
+                "UPDATE memory_proposals SET status='rejected', reviewed_by=$3, "
+                "reviewed_at=now(), resolution_note=$4 WHERE id=$1 AND workspace_id=$2",
+                proposal_id, current.workspace_id, current.user_id, note,
+            )
+            await auth.audit(conn, "proposal_rejected", current.workspace_id,
+                             current.user_id, "memory_proposal", proposal_id,
+                             {"note": note})
+    return {"proposal_id": proposal_id, "status": "rejected"}
 
 
 @router.get("/{node_id}")

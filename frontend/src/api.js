@@ -96,7 +96,10 @@ export const listWorkspaceInvites = () => getJSON('/api/workspace/invites')
 export const createWorkspaceInvite = (body) => postJSON('/api/workspace/invites', body)
 export const revokeWorkspaceInvite = (id) => deleteJSON(`/api/workspace/invites/${id}`)
 export const listApiKeys = () => getJSON('/api/workspace/api-keys')
-export const createApiKey = (name) => postJSON('/api/workspace/api-keys', { name })
+export const createApiKey = (name, allowedTopics = null) =>
+  postJSON('/api/workspace/api-keys', { name, allowed_topics: allowedTopics })
+export const patchApiKey = (id, allowedTopics) =>
+  patchJSON(`/api/workspace/api-keys/${id}`, { allowed_topics: allowedTopics })
 export const revokeApiKey = (id) => deleteJSON(`/api/workspace/api-keys/${id}`)
 
 export const listSources = () => getJSON('/api/sources')
@@ -122,6 +125,17 @@ export const listSourceJobs = (connectionId) =>
 export const retrySourceJob = (connectionId, jobId) =>
   postJSON(`/api/sources/${connectionId}/jobs/${jobId}/retry`, {})
 export const deleteSource = (connectionId) => deleteJSON(`/api/sources/${connectionId}`)
+
+export const getOpsFleet = () => getJSON('/api/ops/fleet')
+export const getOpsActivity = (workspaceId = null, limit = 50) =>
+  getJSON(`/api/ops/fleet/activity?limit=${limit}${workspaceId ? `&workspace_id=${workspaceId}` : ''}`)
+
+export const listProposals = (status = 'pending') =>
+  getJSON(`/api/memory-review/proposals?status=${encodeURIComponent(status)}`)
+export const approveProposal = (id, body = {}) =>
+  postJSON(`/api/memory-review/proposals/${id}/approve`, body)
+export const rejectProposal = (id, note = null) =>
+  postJSON(`/api/memory-review/proposals/${id}/reject`, { note })
 
 export const submitAnswerFeedback = (body) => postJSON('/api/answer-feedback', body)
 export const getMyAnswerFeedback = (chatMessageId) =>
