@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — YBase</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; line-height: 1.6; color: #1a1a1a; }
+    h1 { font-size: 28px; margin-bottom: 4px; }
+    h2 { font-size: 19px; margin-top: 40px; }
+    .updated { color: #666; font-size: 14px; margin-bottom: 32px; }
+    ul { padding-left: 22px; }
+    code { background: #f2f2f2; padding: 1px 5px; border-radius: 3px; font-size: 0.92em; }
+    a { color: #4a5cff; }
+  </style>
+</head>
+<body>
+  <h1>YBase Privacy Policy</h1>
+  <p class="updated">Last updated: July 2026</p>
+
+  <p>
+    YBase ("YBase", "we", "us") is an AI memory layer that connects to the tools your team already
+    uses — Slack, Jira, GitHub, Linear, Confluence, Discord, Google Docs, Notion, and Figma — and
+    turns the decisions and discussions inside them into searchable, cited answers. This policy
+    explains what data we collect through those connections, how we use it, and how you can control
+    or delete it.
+  </p>
+
+  <h2>1. What we collect</h2>
+  <p>When a workspace admin connects a source, YBase reads only what that connector is scoped for:</p>
+  <ul>
+    <li><strong>Account &amp; workspace info</strong> — your name, email, and workspace membership, used for login and access control.</li>
+    <li><strong>Connected-tool content</strong> — messages, issues, pages, comments, or documents from the specific channels, projects, spaces, or files an admin selects. We do not read code, files, or content outside the streams a workspace explicitly turns on.</li>
+    <li><strong>OAuth tokens</strong> — access and refresh tokens for each connected source, stored encrypted at rest and used only to sync that source's content.</li>
+    <li><strong>Usage data</strong> — questions asked, features used, and basic request logs, used to operate and improve the product.</li>
+  </ul>
+
+  <h2>2. How we use it</h2>
+  <p>
+    Connected content is processed to build your workspace's memory: extracting decisions, generating
+    embeddings for search, and answering questions with citations back to the original source. This
+    processing uses Anthropic's Claude models and Voyage AI's embedding models as subprocessors —
+    your content is sent to them solely to generate the response or embedding YBase requested, and is
+    not used by us or them to train models on your data.
+  </p>
+  <p>We do not sell your data. We do not use connected-tool content for advertising.</p>
+
+  <h2>3. Google Workspace data</h2>
+  <p>
+    If you connect Google Docs, YBase's use and transfer of information received from Google APIs
+    adheres to the
+    <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>,
+    including the Limited Use requirements. We request read-only access (<code>drive.readonly</code>)
+    to Google Docs your account can already see, and use that content only to build the searchable
+    memory described above. We do not use Google user data for advertising, and we do not allow
+    humans to read it except as needed for security, legal compliance, or with your explicit consent
+    for support purposes.
+  </p>
+
+  <h2>4. Storage &amp; security</h2>
+  <p>
+    Data is stored in an encrypted Postgres database. OAuth tokens are additionally encrypted at the
+    application layer before storage, using a rotating key scheme, so tokens never sit in the database
+    in plaintext even if the database itself were compromised.
+  </p>
+
+  <h2>5. Data retention &amp; deletion</h2>
+  <p>
+    Disconnecting a source stops future syncing immediately. Deleting a source connection or a
+    workspace removes the associated documents and tokens from our systems, subject to standard
+    backup retention windows. You can request full deletion at any time via the contact below.
+  </p>
+
+  <h2>6. Your choices</h2>
+  <ul>
+    <li>Admins choose exactly which channels, projects, spaces, or files are synced — nothing is read by default.</li>
+    <li>Any connected source can be disconnected at any time from the Sources page.</li>
+    <li>You can request an export or deletion of your workspace's data at any time.</li>
+  </ul>
+
+  <h2>7. Changes to this policy</h2>
+  <p>We'll update the date at the top of this page when this policy changes, and note material changes to workspace admins.</p>
+
+  <h2>8. Contact</h2>
+  <p>Questions about this policy or a data request: <a href="mailto:makhlasabdelkarim@gmail.com">makhlasabdelkarim@gmail.com</a></p>
+</body>
+</html>

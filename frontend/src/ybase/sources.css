@@ -108,3 +108,41 @@
   .wb-sources .ov-ring { margin: 0 auto; }
   .wb-sources .ov-facts { justify-content: center; }
 }
+
+/* ---- Figma manual team-id prompt ---- */
+.wb-sources .figma-team-prompt { align-items: center; }
+.wb-sources .figma-team-prompt span { flex: 1 1 260px; }
+.wb-sources .figma-team-prompt .wb-input { flex: 0 1 220px; min-width: 150px; }
+
+/* ---- Add-connector picker modal ---- */
+.connector-modal {
+  background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl), 0 0 60px rgba(124, 92, 255, 0.10);
+  width: min(640px, 100%); padding: var(--sp-6);
+  display: flex; flex-direction: column; gap: var(--sp-3);
+  animation: wb-scale-in var(--dur) var(--ease-spring-soft) both;
+}
+.connector-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--sp-3);
+  max-height: 60vh; overflow-y: auto; padding: 2px;
+}
+.connector-card {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: var(--sp-4) var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-inset); cursor: pointer; text-align: center;
+  font: inherit; color: inherit;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.connector-card:hover { border-color: var(--accent-border); background: var(--accent-soft); }
+.connector-card.is-connected { border-color: var(--success-border); background: var(--success-soft); cursor: default; }
+.connector-card.is-disabled { opacity: 0.55; cursor: not-allowed; }
+.connector-card.is-disabled:hover { border-color: var(--border); background: var(--surface-inset); }
+.connector-card .connector-logo { flex-direction: column; gap: 6px; padding: 10px 12px; border: none; background: none; }
+.connector-card .connector-logo .src-dot { width: 22px; height: 22px; }
+.connector-card .connector-logo > :not(.src-dot) { display: none; }
+.connector-name { font-size: var(--fs-sm); font-weight: var(--fw-medium); }
+.connector-status { font-size: var(--fs-xs); color: var(--text-tertiary); }
+.connector-check {
+  position: absolute; top: 8px; right: 8px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--success); color: #fff; display: flex; align-items: center; justify-content: center;
+}

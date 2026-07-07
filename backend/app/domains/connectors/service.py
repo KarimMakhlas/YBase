@@ -2,30 +2,50 @@
 
 import asyncio
 import logging
-import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.core import config, db
-from app.core.crypto import decrypt_secret as _decrypt_secret, encrypt_secret as _encrypt_secret
+from app.core.crypto import decrypt_secret as _decrypt_secret
 from app.domains.connectors import slack_reconcile_days
 from app.domains.auth import service as auth
+from app.domains.connectors.confluence import client as confluence
+from app.domains.connectors.confluence import routes as confluence_routes
+from app.domains.connectors.discord import client as discord
+from app.domains.connectors.discord import routes as discord_routes
+from app.domains.connectors.figma import client as figma
+from app.domains.connectors.figma import routes as figma_routes
 from app.domains.connectors.github import client as github
+from app.domains.connectors.github import routes as github_routes
+from app.domains.connectors.googledocs import client as googledocs
+from app.domains.connectors.googledocs import routes as googledocs_routes
 from app.domains.connectors.jira import client as jira
+from app.domains.connectors.jira import routes as jira_routes
+from app.domains.connectors.linear import client as linear
+from app.domains.connectors.linear import routes as linear_routes
+from app.domains.connectors.notion import client as notion
+from app.domains.connectors.notion import routes as notion_routes
 from app.domains.connectors.slack import events as slack
+from app.domains.connectors.slack import routes as slack_routes
 from app.domains.documents.ingestion import IngestRequest, ingest_document
 
 router = APIRouter(prefix="/api", tags=["sources"])
+router.include_router(slack_routes.router)
+router.include_router(jira_routes.router)
+router.include_router(github_routes.router)
+router.include_router(linear_routes.router)
+router.include_router(confluence_routes.router)
+router.include_router(discord_routes.router)
+router.include_router(googledocs_routes.router)
+router.include_router(notion_routes.router)
+router.include_router(figma_routes.router)
 
 log = logging.getLogger("ybase.connectors")
 
-SLACK_SCOPES = "channels:read,channels:history"
 SLACK_API = "https://slack.com/api"
 
 
@@ -50,22 +70,9 @@ class SlackAPIError(Exception):
     pass
 
 
-def _redirect_uri() -> str:
-    return config.SLACK_REDIRECT_BASE_URL.rstrip("/") + "/api/integrations/slack/oauth/callback"
-
-
 def _frontend_from_request(request: Request) -> str:
     ref = request.headers.get("referer") or "http://localhost:5173/"
     return ref.split("?")[0]
-
-
-def _slack_configured() -> bool:
-    return bool(
-        config.SLACK_CLIENT_ID
-        and config.SLACK_CLIENT_SECRET
-        and config.SLACK_SIGNING_SECRET
-        and config.CONNECTOR_SECRET_KEY
-    )
 
 
 async def _slack_api(
@@ -110,9 +117,12 @@ async def _connection(conn, workspace_id: int, connection_id: int):
 def _dispatch_sync(provider: str, job_id: int) -> None:
     """Run a sync job on the right connector's background coroutine, then chain a
     follow-up full backfill if this job requested one (the onboarding fast-slice)."""
-    runner = {"jira": jira.run_sync_job, "github": github.run_sync_job}.get(
-        provider, run_slack_sync_job
-    )
+    runner = {
+        "jira": jira.run_sync_job, "github": github.run_sync_job,
+        "linear": linear.run_sync_job, "confluence": confluence.run_sync_job,
+        "discord": discord.run_sync_job, "googledocs": googledocs.run_sync_job,
+        "notion": notion.run_sync_job, "figma": figma.run_sync_job,
+    }.get(provider, run_slack_sync_job)
     asyncio.create_task(_run_then_chain(runner, provider, job_id))
 
 
@@ -246,267 +256,15 @@ async def list_sources(
             current.workspace_id,
         )
     return {
-        "configured": {"slack": _slack_configured(), "jira": jira.configured(),
-                       "github": github.configured()},
+        "configured": {
+            "slack": slack_routes.configured(), "jira": jira.configured(),
+            "github": github.configured(), "linear": linear.configured(),
+            "confluence": confluence.configured(), "discord": discord.configured(),
+            "googledocs": googledocs.configured(), "notion": notion.configured(),
+            "figma": figma.configured(),
+        },
         "connections": [dict(r) for r in rows],
     }
-
-
-@router.get("/sources/slack/install-url")
-async def slack_install_url(
-    request: Request,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
-) -> Dict[str, Any]:
-    if not _slack_configured():
-        return {
-            "configured": False,
-            "error": "Slack OAuth requires SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_SIGNING_SECRET, and CONNECTOR_SECRET_KEY.",
-        }
-    state = secrets.token_urlsafe(32)
-    return_to = _frontend_from_request(request)
-    pool = await db.get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO oauth_states(state, workspace_id, user_id, provider, redirect_path, expires_at) "
-            "VALUES($1, $2, $3, 'slack', $4, now() + interval '10 minutes')",
-            state, current.workspace_id, current.user_id, return_to,
-        )
-    params = urlencode({
-        "client_id": config.SLACK_CLIENT_ID,
-        "scope": SLACK_SCOPES,
-        "redirect_uri": _redirect_uri(),
-        "state": state,
-    })
-    return {"configured": True, "url": f"https://slack.com/oauth/v2/authorize?{params}"}
-
-
-@router.get("/integrations/slack/oauth/callback")
-async def slack_oauth_callback(code: str = "", state: str = ""):
-    if not code or not state:
-        raise HTTPException(400, "missing code or state")
-    pool = await db.get_pool()
-    async with pool.acquire() as conn:
-        oauth_state = await conn.fetchrow(
-            "UPDATE oauth_states SET consumed_at=now() "
-            "WHERE state=$1 AND provider='slack' AND consumed_at IS NULL AND expires_at > now() "
-            "RETURNING workspace_id, user_id, redirect_path",
-            state,
-        )
-        if oauth_state is None:
-            raise HTTPException(400, "invalid or expired oauth state")
-    try:
-        payload = await _slack_post(
-            "oauth.v2.access",
-            {
-                "client_id": config.SLACK_CLIENT_ID,
-                "client_secret": config.SLACK_CLIENT_SECRET,
-                "code": code,
-                "redirect_uri": _redirect_uri(),
-            },
-        )
-    except Exception:
-        redirect = (oauth_state["redirect_path"] or "/") + "?slack=error"
-        return RedirectResponse(redirect)
-
-    access_token = payload.get("access_token") or payload.get("bot", {}).get("bot_access_token")
-    team = payload.get("team") or {}
-    team_id = team.get("id")
-    team_name = team.get("name") or "Slack"
-    if not access_token or not team_id:
-        raise HTTPException(400, "Slack did not return a bot token and team id")
-
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            connection_id = await conn.fetchval(
-                "INSERT INTO source_connections(workspace_id, provider, name, status, "
-                "external_workspace_id, access_token_enc, bot_user_id, metadata, created_by) "
-                "VALUES($1, 'slack', $2, 'connected', $3, $4, $5, $6, $7) "
-                "ON CONFLICT (workspace_id, provider, external_workspace_id) DO UPDATE SET "
-                "name=EXCLUDED.name, status='connected', access_token_enc=EXCLUDED.access_token_enc, "
-                "bot_user_id=EXCLUDED.bot_user_id, metadata=source_connections.metadata || EXCLUDED.metadata, "
-                "last_error=NULL, updated_at=now() RETURNING id",
-                oauth_state["workspace_id"], team_name, team_id, _encrypt_secret(access_token),
-                payload.get("bot_user_id"), {"team": team, "scope": payload.get("scope")},
-                oauth_state["user_id"],
-            )
-            await auth.audit(conn, "slack_install", oauth_state["workspace_id"],
-                             oauth_state["user_id"], "source_connection", connection_id,
-                             {"team_id": team_id, "team_name": team_name})
-            connection = await conn.fetchrow(
-                "SELECT * FROM source_connections WHERE id=$1", connection_id
-            )
-            await _refresh_slack_streams(conn, connection)
-    redirect = (oauth_state["redirect_path"] or "/") + "?slack=connected"
-    return RedirectResponse(redirect)
-
-
-@router.get("/sources/jira/install-url")
-async def jira_install_url(
-    request: Request,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
-) -> Dict[str, Any]:
-    if not jira.configured():
-        return {
-            "configured": False,
-            "error": "Jira OAuth requires JIRA_CLIENT_ID, JIRA_CLIENT_SECRET, and CONNECTOR_SECRET_KEY.",
-        }
-    state = secrets.token_urlsafe(32)
-    return_to = _frontend_from_request(request)
-    pool = await db.get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO oauth_states(state, workspace_id, user_id, provider, redirect_path, expires_at) "
-            "VALUES($1, $2, $3, 'jira', $4, now() + interval '10 minutes')",
-            state, current.workspace_id, current.user_id, return_to,
-        )
-    return {"configured": True, "url": jira.authorize_url(state)}
-
-
-@router.get("/integrations/jira/oauth/callback")
-async def jira_oauth_callback(code: str = "", state: str = ""):
-    if not code or not state:
-        raise HTTPException(400, "missing code or state")
-    pool = await db.get_pool()
-    async with pool.acquire() as conn:
-        oauth_state = await conn.fetchrow(
-            "UPDATE oauth_states SET consumed_at=now() "
-            "WHERE state=$1 AND provider='jira' AND consumed_at IS NULL AND expires_at > now() "
-            "RETURNING workspace_id, user_id, redirect_path",
-            state,
-        )
-        if oauth_state is None:
-            raise HTTPException(400, "invalid or expired oauth state")
-    try:
-        tokens = await jira.exchange_code(code)
-        access_token = tokens["access_token"]
-        resources = await jira.accessible_resources(access_token)
-    except Exception:
-        redirect = (oauth_state["redirect_path"] or "/") + "?jira=error"
-        return RedirectResponse(redirect)
-    if not resources:
-        redirect = (oauth_state["redirect_path"] or "/") + "?jira=error"
-        return RedirectResponse(redirect)
-
-    site = resources[0]
-    cloud_id = site["id"]
-    site_name = site.get("name") or site.get("url") or "Jira"
-    refresh_token = tokens.get("refresh_token")
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(tokens.get("expires_in", 3600)))
-
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            connection_id = await conn.fetchval(
-                "INSERT INTO source_connections(workspace_id, provider, name, status, "
-                "external_workspace_id, access_token_enc, refresh_token_enc, token_expires_at, "
-                "metadata, created_by) "
-                "VALUES($1, 'jira', $2, 'connected', $3, $4, $5, $6, $7, $8) "
-                "ON CONFLICT (workspace_id, provider, external_workspace_id) DO UPDATE SET "
-                "name=EXCLUDED.name, status='connected', access_token_enc=EXCLUDED.access_token_enc, "
-                "refresh_token_enc=EXCLUDED.refresh_token_enc, token_expires_at=EXCLUDED.token_expires_at, "
-                "metadata=source_connections.metadata || EXCLUDED.metadata, last_error=NULL, updated_at=now() "
-                "RETURNING id",
-                oauth_state["workspace_id"], site_name, cloud_id, _encrypt_secret(access_token),
-                _encrypt_secret(refresh_token) if refresh_token else None, expires_at,
-                {"site": {"url": site.get("url"), "scopes": site.get("scopes")}},
-                oauth_state["user_id"],
-            )
-            await auth.audit(conn, "jira_install", oauth_state["workspace_id"],
-                             oauth_state["user_id"], "source_connection", connection_id,
-                             {"cloud_id": cloud_id, "site_name": site_name})
-            connection = await conn.fetchrow(
-                "SELECT * FROM source_connections WHERE id=$1", connection_id
-            )
-            try:
-                await jira.refresh_streams(conn, connection, access_token)
-            except Exception as e:  # projects can be fetched later via Refresh
-                await conn.execute(
-                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
-                    connection_id, str(e)[:500],
-                )
-            resync_job_id = await _enqueue_connect_resync(conn, connection)
-    if resync_job_id:
-        _dispatch_sync("jira", resync_job_id)
-    redirect = (oauth_state["redirect_path"] or "/") + "?jira=connected"
-    return RedirectResponse(redirect)
-
-
-@router.get("/sources/github/install-url")
-async def github_install_url(
-    request: Request,
-    current: auth.AuthContext = Depends(auth.require_role("admin")),
-) -> Dict[str, Any]:
-    if not github.configured():
-        return {
-            "configured": False,
-            "error": "GitHub OAuth requires GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, and CONNECTOR_SECRET_KEY.",
-        }
-    state = secrets.token_urlsafe(32)
-    return_to = _frontend_from_request(request)
-    pool = await db.get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO oauth_states(state, workspace_id, user_id, provider, redirect_path, expires_at) "
-            "VALUES($1, $2, $3, 'github', $4, now() + interval '10 minutes')",
-            state, current.workspace_id, current.user_id, return_to,
-        )
-    return {"configured": True, "url": github.authorize_url(state)}
-
-
-@router.get("/integrations/github/oauth/callback")
-async def github_oauth_callback(code: str = "", state: str = ""):
-    if not code or not state:
-        raise HTTPException(400, "missing code or state")
-    pool = await db.get_pool()
-    async with pool.acquire() as conn:
-        oauth_state = await conn.fetchrow(
-            "UPDATE oauth_states SET consumed_at=now() "
-            "WHERE state=$1 AND provider='github' AND consumed_at IS NULL AND expires_at > now() "
-            "RETURNING workspace_id, user_id, redirect_path",
-            state,
-        )
-        if oauth_state is None:
-            raise HTTPException(400, "invalid or expired oauth state")
-    try:
-        tokens = await github.exchange_code(code)
-        access_token = tokens["access_token"]
-        acct = await github.account(access_token)
-    except Exception:
-        redirect = (oauth_state["redirect_path"] or "/") + "?github=error"
-        return RedirectResponse(redirect)
-
-    account_id = str(acct.get("id"))
-    login = acct.get("login") or "GitHub"
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            connection_id = await conn.fetchval(
-                "INSERT INTO source_connections(workspace_id, provider, name, status, "
-                "external_workspace_id, access_token_enc, metadata, created_by) "
-                "VALUES($1, 'github', $2, 'connected', $3, $4, $5, $6) "
-                "ON CONFLICT (workspace_id, provider, external_workspace_id) DO UPDATE SET "
-                "name=EXCLUDED.name, status='connected', access_token_enc=EXCLUDED.access_token_enc, "
-                "metadata=source_connections.metadata || EXCLUDED.metadata, last_error=NULL, updated_at=now() "
-                "RETURNING id",
-                oauth_state["workspace_id"], login, account_id, _encrypt_secret(access_token),
-                {"login": login, "scope": tokens.get("scope")}, oauth_state["user_id"],
-            )
-            await auth.audit(conn, "github_install", oauth_state["workspace_id"],
-                             oauth_state["user_id"], "source_connection", connection_id,
-                             {"login": login})
-            connection = await conn.fetchrow(
-                "SELECT * FROM source_connections WHERE id=$1", connection_id
-            )
-            try:
-                await github.refresh_streams(conn, connection, access_token)
-            except Exception as e:
-                await conn.execute(
-                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
-                    connection_id, str(e)[:500],
-                )
-            resync_job_id = await _enqueue_connect_resync(conn, connection)
-    if resync_job_id:
-        _dispatch_sync("github", resync_job_id)
-    redirect = (oauth_state["redirect_path"] or "/") + "?github=connected"
-    return RedirectResponse(redirect)
 
 
 @router.get("/sources/{connection_id}/streams")
@@ -544,6 +302,60 @@ async def list_streams(
             try:
                 token = _decrypt_secret(connection["access_token_enc"])
                 await github.refresh_streams(conn, connection, token)
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
+        elif connection["provider"] == "linear" and refresh:
+            try:
+                token = await linear.valid_access_token(conn, connection)
+                await linear.refresh_streams(conn, connection, token)
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
+        elif connection["provider"] == "confluence" and refresh:
+            try:
+                token = await confluence.valid_access_token(conn, connection)
+                await confluence.refresh_streams(conn, connection, token)
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
+        elif connection["provider"] == "discord" and refresh:
+            try:
+                token = _decrypt_secret(connection["access_token_enc"])
+                await discord.refresh_streams(conn, connection, token)
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
+        elif connection["provider"] == "googledocs" and refresh:
+            try:
+                token = await googledocs.valid_access_token(conn, connection)
+                await googledocs.refresh_streams(conn, connection, token)
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
+        elif connection["provider"] == "notion" and refresh:
+            try:
+                token = _decrypt_secret(connection["access_token_enc"])
+                await notion.refresh_streams(conn, connection, token)
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
+        elif connection["provider"] == "figma" and refresh:
+            try:
+                token = await figma.valid_access_token(conn, connection)
+                await figma.refresh_streams(conn, connection, token)
             except Exception as e:
                 await conn.execute(
                     "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
@@ -849,6 +661,12 @@ async def resync_tick() -> int:
     if config.CONNECTOR_RESYNC_INTERVAL_S:
         specs.append(("jira", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
         specs.append(("github", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("linear", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("confluence", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("discord", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("googledocs", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("notion", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("figma", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
     if not specs:
         return 0
     pool = await db.get_pool()

@@ -38,7 +38,9 @@ async def _jobs(conn, connection_id):
         "SELECT id, kind, status, state FROM sync_jobs WHERE connection_id=$1", connection_id)
 
 
-@pytest.mark.parametrize("provider", ["jira", "github"])
+@pytest.mark.parametrize("provider", [
+    "jira", "github", "linear", "confluence", "discord", "googledocs", "notion", "figma",
+])
 async def test_never_synced_connection_enqueues_backfill(pool, workspace_id, captured_dispatch, provider):
     async with pool.acquire() as conn:
         cid = await _make_connection(conn, workspace_id, provider, last_sync_at=None)

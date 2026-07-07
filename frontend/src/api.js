@@ -103,6 +103,14 @@ export const listSources = () => getJSON('/api/sources')
 export const getSlackInstallUrl = () => getJSON('/api/sources/slack/install-url')
 export const getJiraInstallUrl = () => getJSON('/api/sources/jira/install-url')
 export const getGitHubInstallUrl = () => getJSON('/api/sources/github/install-url')
+export const getLinearInstallUrl = () => getJSON('/api/sources/linear/install-url')
+export const getNotionInstallUrl = () => getJSON('/api/sources/notion/install-url')
+export const getDiscordInstallUrl = () => getJSON('/api/sources/discord/install-url')
+export const getConfluenceInstallUrl = () => getJSON('/api/sources/confluence/install-url')
+export const getGoogleDocsInstallUrl = () => getJSON('/api/sources/googledocs/install-url')
+export const getFigmaInstallUrl = () => getJSON('/api/sources/figma/install-url')
+export const setFigmaTeam = (connectionId, teamId) =>
+  postJSON(`/api/sources/${connectionId}/figma/team`, { team_id: teamId })
 export const listSourceStreams = (connectionId) =>
   getJSON(`/api/sources/${connectionId}/streams`)
 export const patchSourceStream = (connectionId, streamId, body) =>

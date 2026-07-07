@@ -427,6 +427,9 @@
   font-family: var(--font-mono); font-size: 11.5px; color: var(--mk-ink-3);
   display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
 }
+.mkt .mk-foot-legal { display: flex; gap: 14px; }
+.mkt .mk-foot-legal a { color: var(--mk-ink-3); text-decoration: none; }
+.mkt .mk-foot-legal a:hover { color: var(--mk-ink); text-decoration: underline; }
 
 /* ============================================================
    Responsive + reduced motion

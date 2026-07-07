@@ -618,6 +618,10 @@ export default function Marketing({ onEnter }) {
           </div>
           <div className="mk-foot-base">
             <span>© 2026 YBase</span>
+            <span className="mk-foot-legal">
+              <a href="/privacy.html">Privacy</a>
+              <a href="/terms.html">Terms</a>
+            </span>
             <span>runs fully local · no API keys required</span>
           </div>
         </footer>

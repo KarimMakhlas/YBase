@@ -304,6 +304,68 @@ GITHUB_REDIRECT_BASE_URL = os.getenv("GITHUB_REDIRECT_BASE_URL", "http://localho
 # Backfill ceiling per repo per sync.
 GITHUB_MAX_ITEMS_PER_REPO = int(os.getenv("GITHUB_MAX_ITEMS_PER_REPO", "300"))
 
+# Linear OAuth2 (issues + comments, via GraphQL). Register an app at
+# linear.app/settings/api/applications with the "read" scope and callback
+# <base>/api/integrations/linear/oauth/callback. Access tokens expire in 24h;
+# valid_access_token() refreshes using the returned refresh token.
+LINEAR_CLIENT_ID = os.getenv("LINEAR_CLIENT_ID", "")
+LINEAR_CLIENT_SECRET = os.getenv("LINEAR_CLIENT_SECRET", "")
+LINEAR_REDIRECT_BASE_URL = os.getenv("LINEAR_REDIRECT_BASE_URL", "http://localhost:8100")
+# Backfill ceiling per team per sync.
+LINEAR_MAX_ISSUES_PER_TEAM = int(os.getenv("LINEAR_MAX_ISSUES_PER_TEAM", "500"))
+
+# Confluence (Atlassian Cloud) OAuth 3LO — a separate OAuth app from Jira's,
+# even though both use auth.atlassian.com. Register at developer.atlassian.com
+# with the read:page:confluence, read:space:confluence, and offline_access
+# scopes and callback <base>/api/integrations/confluence/oauth/callback.
+CONFLUENCE_CLIENT_ID = os.getenv("CONFLUENCE_CLIENT_ID", "")
+CONFLUENCE_CLIENT_SECRET = os.getenv("CONFLUENCE_CLIENT_SECRET", "")
+CONFLUENCE_REDIRECT_BASE_URL = os.getenv("CONFLUENCE_REDIRECT_BASE_URL", "http://localhost:8100")
+# Backfill ceiling per space per sync.
+CONFLUENCE_MAX_PAGES_PER_SPACE = int(os.getenv("CONFLUENCE_MAX_PAGES_PER_SPACE", "300"))
+
+# Discord bot. Create an app at discord.com/developers, enable the Message
+# Content privileged intent, and set the bot token here. The OAuth flow (bot
+# scope) only picks which guild to install into; the same bot token reads all
+# connected guilds. Callback <base>/api/integrations/discord/oauth/callback.
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
+DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+DISCORD_REDIRECT_BASE_URL = os.getenv("DISCORD_REDIRECT_BASE_URL", "http://localhost:8100")
+# Backfill ceiling per channel per sync, and minimum digest size worth keeping.
+DISCORD_MAX_MESSAGES_PER_CHANNEL = int(os.getenv("DISCORD_MAX_MESSAGES_PER_CHANNEL", "2000"))
+DISCORD_MIN_DIGEST_CHARS = int(os.getenv("DISCORD_MIN_DIGEST_CHARS", "400"))
+
+# Google Docs OAuth2 — a separate OAuth client from the sign-in Google app, so
+# the drive.readonly sensitive-scope verification never touches login. Register
+# at console.cloud.google.com with callback
+# <base>/api/integrations/googledocs/oauth/callback.
+GOOGLE_DOCS_CLIENT_ID = os.getenv("GOOGLE_DOCS_CLIENT_ID", "")
+GOOGLE_DOCS_CLIENT_SECRET = os.getenv("GOOGLE_DOCS_CLIENT_SECRET", "")
+GOOGLE_DOCS_REDIRECT_BASE_URL = os.getenv("GOOGLE_DOCS_REDIRECT_BASE_URL", "http://localhost:8100")
+# Backfill ceiling per sync (docs are one implicit stream).
+GOOGLE_DOCS_MAX_DOCS = int(os.getenv("GOOGLE_DOCS_MAX_DOCS", "300"))
+
+# Notion public OAuth integration. Register at notion.so/my-integrations with
+# callback <base>/api/integrations/notion/oauth/callback. Tokens don't expire.
+NOTION_CLIENT_ID = os.getenv("NOTION_CLIENT_ID", "")
+NOTION_CLIENT_SECRET = os.getenv("NOTION_CLIENT_SECRET", "")
+NOTION_REDIRECT_BASE_URL = os.getenv("NOTION_REDIRECT_BASE_URL", "http://localhost:8100")
+# Ceilings: pages ingested per top-level stream, and blocks fetched per page.
+NOTION_MAX_PAGES_PER_STREAM = int(os.getenv("NOTION_MAX_PAGES_PER_STREAM", "200"))
+NOTION_MAX_BLOCKS_PER_PAGE = int(os.getenv("NOTION_MAX_BLOCKS_PER_PAGE", "500"))
+
+# Figma OAuth2 (comment threads on design files). Register at figma.com/developers
+# with the files:read scope and callback <base>/api/integrations/figma/oauth/callback.
+# Access tokens last ~90 days; refresh uses Figma's separate /v1/oauth/refresh
+# endpoint. There is no API to list a user's teams — after connecting, the team
+# id must be pasted manually from the Figma URL (stored in connection metadata).
+FIGMA_CLIENT_ID = os.getenv("FIGMA_CLIENT_ID", "")
+FIGMA_CLIENT_SECRET = os.getenv("FIGMA_CLIENT_SECRET", "")
+FIGMA_REDIRECT_BASE_URL = os.getenv("FIGMA_REDIRECT_BASE_URL", "http://localhost:8100")
+# Backfill ceiling: files scanned per project per sync.
+FIGMA_MAX_FILES_PER_PROJECT = int(os.getenv("FIGMA_MAX_FILES_PER_PROJECT", "50"))
+
 # Secret used to encrypt connector tokens at rest. Set to a long random value
 # in production. If empty, Slack/Jira OAuth install is disabled.
 CONNECTOR_SECRET_KEY = os.getenv("CONNECTOR_SECRET_KEY", "")

@@ -5,9 +5,11 @@ import {
 } from 'lucide-react'
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion'
 import {
-  deleteSource, getGitHubInstallUrl, getJiraInstallUrl, getSlackInstallUrl,
+  deleteSource, getConfluenceInstallUrl, getDiscordInstallUrl, getFigmaInstallUrl,
+  getGitHubInstallUrl, getGoogleDocsInstallUrl, getJiraInstallUrl, getLinearInstallUrl,
+  getNotionInstallUrl, getSlackInstallUrl,
   listSourceJobs, listSources, listSourceStreams, patchSourceStream, startSourceSync,
-  retrySourceJob,
+  retrySourceJob, setFigmaTeam,
 } from '../api.js'
 import { formatDateTime as fmtDate } from '../format.js'
 import { useToast } from './Toast.jsx'
@@ -16,6 +18,7 @@ import { useThemeColors } from '../ybase/charts.js'
 import { staggerContainer, fadeUp, ease } from '../ybase/motionPresets.js'
 import CountUp from '../ybase/CountUp.jsx'
 import PageHeader from '../ybase/PageHeader.jsx'
+import ConnectorPickerModal from './ConnectorPickerModal.jsx'
 import '../ybase/sources.css'
 
 // Recharts is heavy — lazy-load (shared chunk with HomeCharts).
@@ -25,7 +28,14 @@ const RingFallback = () => <div className="wb-skeleton" style={{ width: 150, hei
 const JOB_TONE = { complete: 'ok', failed: 'bad', paused: 'warn', running: 'run', pending: 'run' }
 
 const ACTIVE_STATUSES = new Set(['pending', 'running', 'paused'])
-const PROVIDERS = { slack: { unit: 'channels' }, jira: { unit: 'projects' }, github: { unit: 'repos' } }
+const ALL_PROVIDERS = [
+  'slack', 'jira', 'github', 'linear', 'notion', 'discord', 'confluence', 'googledocs', 'figma',
+]
+const PROVIDERS = {
+  slack: { unit: 'channels' }, jira: { unit: 'projects' }, github: { unit: 'repos' },
+  linear: { unit: 'teams' }, notion: { unit: 'pages' }, discord: { unit: 'channels' },
+  confluence: { unit: 'spaces' }, googledocs: { unit: 'docs' }, figma: { unit: 'projects' },
+}
 const unitFor = (provider) => PROVIDERS[provider]?.unit || 'streams'
 const shortDate = (iso) => { try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) } catch { return '' } }
 
@@ -35,12 +45,24 @@ const EMPTY_IMPORT_HINT = {
   github: 'These repos have no issues or pull requests in the sync window, so there was nothing to import. YBase reads issues and PRs — not code, commits, or files.',
   jira: 'These projects have no issues in the sync window, so there was nothing to import.',
   slack: 'These channels have no messages in the sync window — or the bot hasn’t been invited to them yet (run /invite in Slack).',
+  linear: 'These teams have no issues in the sync window, so there was nothing to import.',
+  notion: 'These pages have no content in the sync window, so there was nothing to import.',
+  discord: 'These channels have no messages in the sync window — or the bot hasn’t been added to them yet.',
+  confluence: 'These spaces have no pages in the sync window, so there was nothing to import.',
+  googledocs: 'No docs have changed in the sync window, so there was nothing to import.',
+  figma: 'These files have no comments in the sync window — YBase reads design discussion, not file content.',
 }
 
 const SETUP_HINT = {
   slack: 'Add SLACK_CLIENT_ID, SLACK_CLIENT_SECRET and SLACK_SIGNING_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
   jira: 'Add JIRA_CLIENT_ID and JIRA_CLIENT_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
   github: 'Add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
+  linear: 'Add LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
+  notion: 'Add NOTION_CLIENT_ID and NOTION_CLIENT_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
+  discord: 'Add DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET and DISCORD_BOT_TOKEN (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
+  confluence: 'Add CONFLUENCE_CLIENT_ID and CONFLUENCE_CLIENT_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
+  googledocs: 'Add GOOGLE_DOCS_CLIENT_ID and GOOGLE_DOCS_CLIENT_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
+  figma: 'Add FIGMA_CLIENT_ID and FIGMA_CLIENT_SECRET (plus CONNECTOR_SECRET_KEY) to the backend, then restart.',
 }
 
 export default function Sources() {
@@ -53,6 +75,9 @@ export default function Sources() {
   const [manageOpen, setManageOpen] = useState(false)
   const [showAllJobs, setShowAllJobs] = useState(false)
   const [retryBusy, setRetryBusy] = useState(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [figmaTeamInput, setFigmaTeamInput] = useState('')
+  const [figmaTeamBusy, setFigmaTeamBusy] = useState(false)
   const toast = useToast()
 
   const tc = useThemeColors({ accent: '--accent', track: '--border' })
@@ -60,7 +85,7 @@ export default function Sources() {
   const connections = sources?.connections || []
   const active = connections.find((c) => c.id === activeId) || connections[0] || null
   const missingConnectors = sources
-    ? ['slack', 'jira', 'github'].filter((p) => sources.configured?.[p] === false)
+    ? ALL_PROVIDERS.filter((p) => sources.configured?.[p] === false)
     : []
 
   const loadSources = () =>
@@ -81,7 +106,12 @@ export default function Sources() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     let touched = false
-    for (const [provider, label] of [['slack', 'Slack'], ['jira', 'Jira'], ['github', 'GitHub']]) {
+    const providerLabels = [
+      ['slack', 'Slack'], ['jira', 'Jira'], ['github', 'GitHub'], ['linear', 'Linear'],
+      ['notion', 'Notion'], ['discord', 'Discord'], ['confluence', 'Confluence'],
+      ['googledocs', 'Google Docs'], ['figma', 'Figma'],
+    ]
+    for (const [provider, label] of providerLabels) {
       const status = params.get(provider)
       if (status === 'connected') toast(`${label} connected`, 'success')
       if (status === 'error') toast(`${label} OAuth failed`)
@@ -120,6 +150,12 @@ export default function Sources() {
     slack: { label: 'Slack', get: getSlackInstallUrl },
     jira: { label: 'Jira', get: getJiraInstallUrl },
     github: { label: 'GitHub', get: getGitHubInstallUrl },
+    linear: { label: 'Linear', get: getLinearInstallUrl },
+    notion: { label: 'Notion', get: getNotionInstallUrl },
+    discord: { label: 'Discord', get: getDiscordInstallUrl },
+    confluence: { label: 'Confluence', get: getConfluenceInstallUrl },
+    googledocs: { label: 'Google Docs', get: getGoogleDocsInstallUrl },
+    figma: { label: 'Figma', get: getFigmaInstallUrl },
   }
   const connect = async (provider) => {
     if (busy) return
@@ -133,6 +169,24 @@ export default function Sources() {
       toast(`${label} install failed: ${e.message}`)
     } finally {
       setBusy(false)
+    }
+  }
+
+  // Figma can't list a user's teams, so after OAuth the team id is pasted
+  // manually (from figma.com/files/team/<id>/...) before streams exist.
+  const saveFigmaTeam = async () => {
+    if (figmaTeamBusy || !figmaTeamInput.trim() || !active) return
+    setFigmaTeamBusy(true)
+    try {
+      const streams = await setFigmaTeam(active.id, figmaTeamInput.trim())
+      toast(`Found ${streams.length} project${streams.length === 1 ? '' : 's'}`, 'success')
+      setFigmaTeamInput('')
+      await loadSources()
+      loadDetails(active.id)
+    } catch (e) {
+      toast(`Could not read that team: ${e.message}`)
+    } finally {
+      setFigmaTeamBusy(false)
     }
   }
 
@@ -206,22 +260,13 @@ export default function Sources() {
     }
   }
 
-  const connectButtons = (variant = 'wb-btn--secondary') =>
-    ['slack', 'jira', 'github'].map((p) => {
-      const ready = sources?.configured?.[p] !== false
-      return (
-        <button
-          key={p}
-          className={`wb-btn ${variant} wb-btn--sm${ready ? '' : ' wb-btn--needs-setup'}`}
-          onClick={() => connect(p)}
-          disabled={busy || !ready}
-          title={ready ? `Connect ${INSTALL[p].label}` : SETUP_HINT[p]}
-        >
-          <Plus size={14} strokeWidth={1.8} /> {INSTALL[p].label}
-          {!ready && <span className="needs-setup-tag">needs setup</span>}
-        </button>
-      )
-    })
+  const addConnectorButton = (variant = 'wb-btn--secondary') => (
+    <button className={`wb-btn ${variant} wb-btn--sm`} onClick={() => setPickerOpen(true)}>
+      <Plus size={14} strokeWidth={1.8} /> Add connector
+    </button>
+  )
+
+  const connectedProviders = useMemo(() => new Set(connections.map((c) => c.provider)), [connections])
 
   // ---- Derived metrics for the active connection ----
   const unit = active ? unitFor(active.provider) : 'streams'
@@ -247,7 +292,7 @@ export default function Sources() {
           kicker="Sources"
           title={<>Wire up your <em>sources of truth</em>.</>}
           lede="Connect the tools where decisions actually happen. Pick what to remember — YBase keeps it in sync and cites every answer back to it."
-          actions={connectButtons()}
+          actions={addConnectorButton()}
         />
 
         {missingConnectors.length > 0 && (
@@ -267,7 +312,7 @@ export default function Sources() {
           <div className="src-section" style={{ marginTop: 'var(--sp-6)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--sp-4)', textAlign: 'center', padding: 'var(--sp-9)' }}>
             <b style={{ fontSize: 'var(--fs-lg)' }}>No sources connected</b>
             <p className="page-lede" style={{ textAlign: 'center' }}>Connect a system and YBase will remember the decisions inside it.</p>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>{connectButtons('wb-btn--primary')}</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>{addConnectorButton('wb-btn--primary')}</div>
           </div>
         )}
 
@@ -303,6 +348,23 @@ export default function Sources() {
                 <button className="wb-btn wb-btn--ghost wb-btn--sm" onClick={disconnect}>Disconnect</button>
               </div>
             </motion.div>
+
+            {active.provider === 'figma' && !active.metadata?.team_id && (
+              <motion.div className="source-alert source-alert--info figma-team-prompt" variants={fadeUp}>
+                <Info size={16} strokeWidth={1.8} />
+                <span>Figma can’t list your teams — paste your team URL or id (from figma.com/files/team/…) to discover its projects.</span>
+                <input
+                  className="wb-input"
+                  placeholder="Team URL or id"
+                  value={figmaTeamInput}
+                  onChange={(e) => setFigmaTeamInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && saveFigmaTeam()}
+                />
+                <button className="wb-btn wb-btn--primary wb-btn--sm" onClick={saveFigmaTeam} disabled={figmaTeamBusy || !figmaTeamInput.trim()}>
+                  {figmaTeamBusy ? 'Checking…' : 'Save team'}
+                </button>
+              </motion.div>
+            )}
 
             {active.last_error && <motion.div className="source-alert" variants={fadeUp}><TriangleAlert size={16} strokeWidth={1.8} /> {active.last_error}</motion.div>}
 
@@ -479,6 +541,16 @@ export default function Sources() {
           </motion.div>
         )}
       </div>
+
+      {pickerOpen && (
+        <ConnectorPickerModal
+          connectedProviders={connectedProviders}
+          ready={sources?.configured || {}}
+          setupHints={SETUP_HINT}
+          onClose={() => setPickerOpen(false)}
+          onConnect={(p) => { setPickerOpen(false); connect(p) }}
+        />
+      )}
     </MotionConfig>
   )
 }
