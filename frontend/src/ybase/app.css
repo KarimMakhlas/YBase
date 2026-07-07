@@ -88,22 +88,56 @@
 /* ---- Decision log ---- */
 .filters { display: flex; gap: var(--sp-2); margin: var(--sp-6) 0 var(--sp-4); flex-wrap: wrap; }
 .filters .wb-select, .filters .wb-input { width: auto; min-width: 150px; }
-.decision { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); box-shadow: var(--shadow); margin-bottom: var(--sp-3); transition: var(--t-elevate); }
-.decision:hover { border-color: var(--border-strong); }
-.decision.open { box-shadow: var(--shadow-md), inset 3px 0 0 var(--accent); border-color: var(--accent-border); }
-.decision-toggle { display: flex; align-items: center; gap: 11px; width: 100%; background: none; border: none; cursor: pointer; text-align: left; padding: 15px 18px; color: var(--text); }
-.decision-toggle h3 { margin: 0; font-size: var(--fs-md); font-weight: var(--fw-semibold); flex: 1; min-width: 0; letter-spacing: var(--ls-snug); }
-.conf-meter { width: 54px; height: 5px; border-radius: 999px; background: var(--surface-sunken); border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; }
-.conf-meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--indigo-400), var(--accent)); border-radius: 999px; transition: width var(--dur-slow) var(--ease-out); }
-.decision-chev { color: var(--text-tertiary); transition: transform var(--dur) var(--ease-spring); }
-.decision.open .decision-chev { transform: rotate(90deg); }
-.decision-body { padding: 0 18px 18px; overflow: hidden; }
+/* Each decision is a record in the ledger. A status-coloured severity stripe
+   runs the full height so the log scans by state; a summary dek and a
+   confidence dial carry context without opening the card. */
+.decision {
+  position: relative; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md); box-shadow: var(--shadow);
+  margin-bottom: var(--sp-3); transition: var(--t-elevate);
+  --stripe: var(--text-tertiary);
+}
+.decision--success { --stripe: var(--success); }
+.decision--warning { --stripe: var(--warning); }
+.decision--info    { --stripe: var(--accent); }   /* revisited / in-review — on-brand violet */
+.decision--danger  { --stripe: var(--danger); }
+.decision--neutral { --stripe: var(--gray-400); }
+.decision::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--stripe); opacity: 0.85;
+  transition: width var(--dur) var(--ease-spring), opacity var(--dur) var(--ease-out);
+}
+.decision:hover { border-color: var(--border-strong); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+.decision:hover::before { width: 4px; opacity: 1; }
+.decision.open { box-shadow: var(--shadow-md); border-color: var(--border-strong); }
+.decision.open::before { width: 4px; opacity: 1; }
+
+.decision-toggle { display: flex; align-items: center; gap: 14px; width: 100%; background: none; border: none; cursor: pointer; text-align: left; padding: 14px 16px 14px 19px; color: var(--text); }
+.decision-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.decision-titlerow { display: flex; align-items: baseline; gap: 10px; }
+.decision-toggle h3 { margin: 0; font-size: var(--fs-md); font-weight: var(--fw-semibold); min-width: 0; letter-spacing: var(--ls-snug); line-height: var(--lh-snug); }
+.decision-preview { color: var(--text-secondary); font-size: var(--fs-sm); line-height: var(--lh-snug); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.decision-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.decision-metaitem { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--text-tertiary); }
+.decision-metaitem::before { content: ""; width: 3px; height: 3px; border-radius: 50%; background: var(--border-strong); }
+
+/* Confidence dial — shared primitive (ConfidenceRing) */
+.conf-ring { position: relative; display: inline-grid; place-items: center; flex-shrink: 0; }
+.conf-ring-svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.conf-ring-track { fill: none; stroke: var(--surface-sunken); stroke-width: 3; }
+.conf-ring-arc { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset var(--dur-slow) var(--ease-out); }
+.conf-ring-num { position: absolute; font-family: var(--font-mono); font-size: 10px; font-weight: var(--fw-semibold); color: var(--text-secondary); letter-spacing: -0.03em; }
+
+.decision-chev { color: var(--text-tertiary); flex-shrink: 0; transition: transform var(--dur) var(--ease-spring); }
+.decision.open .decision-chev { transform: rotate(90deg); color: var(--accent-text); }
+.decision-body { padding: 2px 18px 18px 19px; overflow: hidden; }
 .decision-body p { color: var(--text-secondary); font-size: var(--fs-sm); line-height: var(--lh-base); margin: 0 0 12px; }
-.dlabel { font-family: var(--font-mono); font-size: 10.5px; font-weight: var(--fw-semibold); text-transform: uppercase; letter-spacing: var(--ls-label); color: var(--text-tertiary); margin-bottom: 6px; }
-.positions { display: flex; flex-direction: column; gap: 8px; margin-bottom: var(--sp-4); }
-.position { display: flex; gap: 10px; align-items: flex-start; font-size: var(--fs-sm); }
-.position .who { display: flex; align-items: center; gap: 7px; min-width: 130px; font-weight: var(--fw-medium); }
-.position .pos { color: var(--text-secondary); flex: 1; }
+.dlabel { font-family: var(--font-mono); font-size: 10.5px; font-weight: var(--fw-semibold); text-transform: uppercase; letter-spacing: var(--ls-label); color: var(--text-tertiary); margin-bottom: 8px; }
+.positions { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--sp-4); }
+.position { display: flex; gap: 10px; align-items: flex-start; font-size: var(--fs-sm); padding: 8px 11px; background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius); }
+.position .who { display: flex; align-items: center; gap: 8px; min-width: 148px; flex-shrink: 0; font-weight: var(--fw-medium); color: var(--text); }
+.position .pos { color: var(--text-secondary); flex: 1; line-height: var(--lh-snug); padding-top: 3px; }
 .chain { display: flex; align-items: stretch; gap: 0; margin: var(--sp-3) 0; flex-wrap: wrap; }
 .chain-node { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; font-size: var(--fs-xs); max-width: 200px; }
 .chain-node.current { border-color: var(--accent-border); background: var(--accent-soft); }
@@ -416,9 +450,9 @@ body.is-col-resizing { cursor: col-resize; user-select: none; }
 .left-scroll .ph-lede { font-size: var(--fs-sm); max-width: none; }
 .left-scroll .ph-children { margin-top: var(--sp-4); }
 
-/* Narrow panel: decision rows wrap — title on its own line, meta beneath */
-.left-scroll .decision-toggle { flex-wrap: wrap; row-gap: 7px; }
-.left-scroll .decision-toggle h3 { flex: 1 1 100%; order: -1; }
+/* Narrow panel: tighten the card padding so the stacked layout
+   (title → dek → meta) stays compact beside the confidence dial. */
+.left-scroll .decision-toggle { gap: 10px; padding: 12px 13px 12px 16px; }
 
 /* Chat head + history popup (click the button again / outside to dismiss) */
 .chat-head { justify-content: space-between; }

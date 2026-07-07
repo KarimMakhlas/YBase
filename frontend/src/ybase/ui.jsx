@@ -61,13 +61,50 @@ const STATUS_TONE = {
   dismissed: 'danger',
 }
 
+/** Status word → semantic tone. Shared so cards can colour a severity stripe to match the pill. */
+export function statusTone(status) {
+  return STATUS_TONE[status] || 'neutral'
+}
+
 /** Status pill in the mono register, tone derived from the status word. */
 export function StatusBadge({ status, children, ...rest }) {
-  const tone = STATUS_TONE[status] || 'neutral'
+  const tone = statusTone(status)
   return (
     <Badge tone={tone} variant="soft" mono {...rest}>
       {children || status}
     </Badge>
+  )
+}
+
+/**
+ * Circular confidence gauge — a compact dial in the mono "engineering" register.
+ * Encodes the 0–1 score in form (arc sweep) as well as the number, so trust
+ * reads at a glance. Brand-violet magnitude, independent of the status hue.
+ */
+export function ConfidenceRing({ value, size = 34 }) {
+  const pct = Math.max(0, Math.min(100, Math.round((value || 0) * 100)))
+  const r = 15
+  const circ = 2 * Math.PI * r
+  const offset = circ * (1 - pct / 100)
+  return (
+    <span
+      className="conf-ring"
+      style={{ width: size, height: size }}
+      title={`confidence ${pct}% — status, recency, and evidence combined`}
+    >
+      <svg viewBox="0 0 36 36" className="conf-ring-svg" aria-hidden="true">
+        <circle className="conf-ring-track" cx="18" cy="18" r={r} />
+        <circle
+          className="conf-ring-arc"
+          cx="18"
+          cy="18"
+          r={r}
+          strokeDasharray={circ}
+          strokeDashoffset={offset}
+        />
+      </svg>
+      <span className="conf-ring-num tnum">{pct}</span>
+    </span>
   )
 }
 

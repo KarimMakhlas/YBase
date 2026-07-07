@@ -3,8 +3,23 @@ import { Search, ChevronRight, ArrowRight, Link2, Download } from 'lucide-react'
 import { createDecisionShare, getJSON, revokeDecisionShare } from '../api.js'
 import { decisionsToCSV, decisionsToMarkdown, downloadFile } from '../export.js'
 import { useToast } from './Toast.jsx'
-import { StatusBadge } from '../ybase/ui.jsx'
+import { StatusBadge, ConfidenceRing, Avatar, statusTone } from '../ybase/ui.jsx'
 import PageHeader from '../ybase/PageHeader.jsx'
+
+// First non-empty line of the summary — a one-line dek for the collapsed card.
+function firstLine(text) {
+  if (!text) return ''
+  const line = String(text).split('\n').map((s) => s.trim()).find(Boolean) || ''
+  return line
+}
+
+// Positions arrive as "Name: took position X" — split so we can front the name.
+function splitPosition(raw) {
+  const s = String(raw)
+  const i = s.indexOf(':')
+  if (i > 0 && i < 40) return { who: s.slice(0, i).trim(), pos: s.slice(i + 1).trim() }
+  return { who: null, pos: s }
+}
 
 const REL_LABEL = {
   revisits: { out: 'revisits', in: 'revisited by' },
@@ -226,21 +241,28 @@ export default function Decisions({ focus, onOpenDoc }) {
 
       {shown.map((d, i) => {
         const isOpen = open === d.id
+        const preview = firstLine(d.summary)
         return (
-          <article className={`decision ${isOpen ? 'open' : ''}`} key={d.id} id={`decision-${d.id}`} style={{ '--i': Math.min(i, 12) }}>
+          <article className={`decision decision--${statusTone(d.status)} ${isOpen ? 'open' : ''}`} key={d.id} id={`decision-${d.id}`} style={{ '--i': Math.min(i, 12) }}>
             <button className="decision-toggle" onClick={() => setOpen(isOpen ? null : d.id)} aria-expanded={isOpen}>
-              <StatusBadge status={d.status} />
-              <h3>{d.title}</h3>
-              <span className="tl-date tnum">{d.date || 'undated'}</span>
-              {typeof d.confidence === 'number' && (
-                <>
-                  <span className="tnum" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-tertiary)' }}>{Math.round(d.confidence * 100)}%</span>
-                  <span className="conf-meter" title={`confidence ${Math.round(d.confidence * 100)}% — status, recency, and evidence combined`}>
-                    <i style={{ width: `${Math.round(d.confidence * 100)}%` }} />
-                  </span>
-                </>
-              )}
-              <ChevronRight size={17} strokeWidth={1.8} className="decision-chev" />
+              <span className="decision-main">
+                <span className="decision-titlerow">
+                  <h3>{d.title}</h3>
+                </span>
+                {preview && !isOpen && <span className="decision-preview">{preview}</span>}
+                <span className="decision-meta">
+                  <StatusBadge status={d.status} />
+                  <span className="tl-date tnum">{d.date || 'undated'}</span>
+                  {d.sources.length > 0 && (
+                    <span className="decision-metaitem tnum">{d.sources.length} source{d.sources.length > 1 ? 's' : ''}</span>
+                  )}
+                  {d.made_by.length > 0 && (
+                    <span className="decision-metaitem">{d.made_by[0]}{d.made_by.length > 1 ? ` +${d.made_by.length - 1}` : ''}</span>
+                  )}
+                </span>
+              </span>
+              {typeof d.confidence === 'number' && <ConfidenceRing value={d.confidence} />}
+              <ChevronRight size={18} strokeWidth={1.8} className="decision-chev" />
             </button>
             {isOpen && (
               <div className="decision-body wb-reveal">
@@ -249,9 +271,15 @@ export default function Decisions({ focus, onOpenDoc }) {
                   <>
                     <div className="dlabel">Positions on the record</div>
                     <div className="positions">
-                      {d.positions.map((p, j) => (
-                        <div className="position" key={j}><span className="pos">{p}</span></div>
-                      ))}
+                      {d.positions.map((p, j) => {
+                        const { who, pos } = splitPosition(p)
+                        return (
+                          <div className="position" key={j}>
+                            {who && <span className="who"><Avatar name={who} size="sm" />{who}</span>}
+                            <span className="pos">{pos}</span>
+                          </div>
+                        )
+                      })}
                     </div>
                   </>
                 )}
