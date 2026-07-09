@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, lazy, Suspense } from 'react'
 import {
-  Plus, Search, RotateCw, TriangleAlert, Check, Info, ChevronDown, Settings2,
+  Plus, Search, RotateCw, TriangleAlert, Check, Info, ChevronDown, Settings2, FileText, Upload,
   RefreshCw, CheckCheck, Square,
 } from 'lucide-react'
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion'
@@ -8,6 +8,7 @@ import {
   deleteSource, getConfluenceInstallUrl, getDiscordInstallUrl, getFigmaInstallUrl,
   getGitHubInstallUrl, getGoogleDocsInstallUrl, getJiraInstallUrl, getLinearInstallUrl,
   getNotionInstallUrl, getSlackInstallUrl,
+  ingestDocument,
   listSourceJobs, listSources, listSourceStreams, patchSourceStream, startSourceSync,
   retrySourceJob, setFigmaTeam,
 } from '../api.js'
@@ -38,6 +39,85 @@ const PROVIDERS = {
 }
 const unitFor = (provider) => PROVIDERS[provider]?.unit || 'streams'
 const shortDate = (iso) => { try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) } catch { return '' } }
+
+function DocumentImportModal({ onClose, onImported }) {
+  const [form, setForm] = useState({ source: 'meeting', title: '', text: '', author: '', created_at: '', tags: '' })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!form.title.trim() || !form.text.trim()) {
+      setError('Add a title and some text first.')
+      return
+    }
+    setBusy(true); setError('')
+    try {
+      const result = await ingestDocument({
+        source: form.source.trim() || 'other',
+        title: form.title.trim(),
+        text: form.text.trim(),
+        author: form.author.trim() || null,
+        created_at: form.created_at || null,
+        tags: form.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+      })
+      onImported(result)
+      onClose()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const readFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 2 * 1024 * 1024) {
+      setError('That file is larger than 2 MB. Paste a smaller text export instead.')
+      return
+    }
+    const text = await file.text()
+    setForm((current) => ({
+      ...current,
+      text,
+      title: current.title || file.name.replace(/\.[^.]+$/, ''),
+    }))
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <form className="invite-modal" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
+        <div className="invite-modal-head">
+          <h3>Add a document</h3>
+          <button type="button" className="wb-iconbtn" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <p className="settings-sub">Paste meeting notes, a decision, or a text export. YBase will index it and form memory in the background.</p>
+        <div className="invite-modal-form">
+          <input className="wb-input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Title" autoFocus />
+          <input className="wb-input" value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} placeholder="Source (meeting, other…)" />
+        </div>
+        <div className="invite-modal-form">
+          <input className="wb-input" value={form.author} onChange={(e) => setForm({ ...form, author: e.target.value })} placeholder="Author (optional)" />
+          <input className="wb-input" type="date" value={form.created_at} onChange={(e) => setForm({ ...form, created_at: e.target.value })} aria-label="Original date" />
+          <input className="wb-input" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="Tags, comma separated" />
+        </div>
+        <textarea className="wb-textarea" rows={10} value={form.text} onChange={(e) => setForm({ ...form, text: e.target.value })} placeholder="Paste the document text here…" />
+        <label className="wb-btn wb-btn--ghost wb-btn--sm" style={{ alignSelf: 'flex-start', cursor: 'pointer' }}>
+          <Upload size={14} strokeWidth={1.8} /> Load a text file
+          <input type="file" accept=".txt,.md,.csv,.json,text/plain,text/markdown" onChange={readFile} style={{ display: 'none' }} />
+        </label>
+        {error && <div className="auth-error" role="alert">{error}</div>}
+        <div className="onb-actions" style={{ marginTop: 'var(--sp-3)' }}>
+          <button type="button" className="linkbtn" onClick={onClose}>Cancel</button>
+          <button type="submit" className="wb-btn wb-btn--primary" disabled={busy}>
+            <FileText size={14} strokeWidth={1.8} /> {busy ? 'Importing…' : 'Import document'}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
 
 // Why a completed sync brought in nothing — shown when the last sync imported 0
 // documents while streams are selected. YBase ingests discussion, not code.
@@ -76,6 +156,7 @@ export default function Sources() {
   const [showAllJobs, setShowAllJobs] = useState(false)
   const [retryBusy, setRetryBusy] = useState(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [ingestOpen, setIngestOpen] = useState(false)
   const [figmaTeamInput, setFigmaTeamInput] = useState('')
   const [figmaTeamBusy, setFigmaTeamBusy] = useState(false)
   const toast = useToast()
@@ -292,7 +373,10 @@ export default function Sources() {
           kicker="Sources"
           title={<>Wire up your <em>sources of truth</em>.</>}
           lede="Connect the tools where decisions actually happen. Pick what to remember — YBase keeps it in sync and cites every answer back to it."
-          actions={addConnectorButton()}
+          actions={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="wb-btn wb-btn--secondary wb-btn--sm" onClick={() => setIngestOpen(true)}><FileText size={14} strokeWidth={1.8} /> Add document</button>
+            {addConnectorButton()}
+          </div>}
         />
 
         {missingConnectors.length > 0 && (
@@ -312,7 +396,10 @@ export default function Sources() {
           <div className="src-section" style={{ marginTop: 'var(--sp-6)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--sp-4)', textAlign: 'center', padding: 'var(--sp-9)' }}>
             <b style={{ fontSize: 'var(--fs-lg)' }}>No sources connected</b>
             <p className="page-lede" style={{ textAlign: 'center' }}>Connect a system and YBase will remember the decisions inside it.</p>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>{addConnectorButton('wb-btn--primary')}</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button className="wb-btn wb-btn--secondary" onClick={() => setIngestOpen(true)}><FileText size={14} strokeWidth={1.8} /> Add a document</button>
+              {addConnectorButton('wb-btn--primary')}
+            </div>
           </div>
         )}
 
@@ -549,6 +636,12 @@ export default function Sources() {
           setupHints={SETUP_HINT}
           onClose={() => setPickerOpen(false)}
           onConnect={(p) => { setPickerOpen(false); connect(p) }}
+        />
+      )}
+      {ingestOpen && (
+        <DocumentImportModal
+          onClose={() => setIngestOpen(false)}
+          onImported={(result) => toast(result.duplicate ? 'That document is already in memory.' : 'Document imported — memory formation scheduled.', 'success')}
         />
       )}
     </MotionConfig>

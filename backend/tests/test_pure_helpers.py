@@ -16,6 +16,8 @@ from app.providers.embeddings import _local_embed
 from app.domains.connectors.slack.events import clean_text, thread_document, verify_signature, wanted_event
 from app.domains.connectors.jira.client import issue_to_doc as jira_issue_to_doc
 from app.domains.connectors.github.client import issue_to_doc as github_issue_to_doc
+from app.domains.connectors.service import _frontend_from_request
+from starlette.requests import Request
 
 import hashlib
 import hmac
@@ -48,6 +50,22 @@ def test_content_hash_distinguishes_and_repeats():
     assert a == content_hash("slack", "t", "body")
     assert a != content_hash("slack", "t", "body2")
     assert a != content_hash("notion", "t", "body")
+
+
+def test_oauth_redirect_rejects_untrusted_referer(monkeypatch):
+    monkeypatch.setattr(config, "APP_BASE_URL", "https://app.example.com")
+    monkeypatch.setattr(config, "CORS_ORIGINS", ["https://app.example.com"])
+
+    allowed = Request({
+        "type": "http",
+        "headers": [(b"referer", b"https://app.example.com/sources?provider=slack")],
+    })
+    attacker = Request({
+        "type": "http",
+        "headers": [(b"referer", b"https://evil.example/steal")],
+    })
+    assert _frontend_from_request(allowed) == "https://app.example.com/sources"
+    assert _frontend_from_request(attacker) == "https://app.example.com"
 
 
 # ---- reciprocal-rank fusion ----
@@ -126,6 +144,13 @@ def test_strip_metadata_bleed_removes_card_sections():
 
     raw = "PostgreSQL won because it fit the workload [C1].\n\nTimeline:\n- 2026-01-01 Chosen"
     assert _strip_metadata_bleed(raw) == "PostgreSQL won because it fit the workload [C1]."
+
+
+def test_strip_metadata_bleed_repairs_compact_citations_and_hides_graph_ids():
+    raw = "PostgreSQL stayed the default. C199C204C208[N908]"
+    assert _strip_metadata_bleed(raw) == (
+        "PostgreSQL stayed the default. [C199] [C204] [C208]"
+    )
 
 
 def test_auto_provider_uses_nvidia_before_ollama(monkeypatch):

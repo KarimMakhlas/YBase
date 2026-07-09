@@ -7,7 +7,12 @@ from typing import List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from app.core import db, usage
-from app.providers.embeddings import active_embed_model, embed_texts, to_pgvector
+from app.providers.embeddings import (
+    EmbeddingSpaceMismatch,
+    active_embed_model,
+    embed_texts,
+    to_pgvector,
+)
 from ..memory import worker
 
 
@@ -88,13 +93,26 @@ async def ingest_document(req: IngestRequest, workspace_id: int) -> Tuple[int, b
     if existing is not None:
         return existing, True
 
+    embed_model = await active_embed_model()
+    async with pool.acquire() as conn:
+        existing_models = await conn.fetch(
+            "SELECT DISTINCT COALESCE(c.embed_model, 'legacy:unknown') AS embed_model "
+            "FROM chunks c JOIN documents d ON d.id=c.document_id "
+            "WHERE d.workspace_id=$1 AND c.embed_model IS DISTINCT FROM $2 "
+            "ORDER BY 1 LIMIT 5",
+            workspace_id, embed_model,
+        )
+    if existing_models:
+        raise EmbeddingSpaceMismatch(
+            embed_model, [row["embed_model"] for row in existing_models]
+        )
+
     pieces = chunk_text(req.text)
     usage_token = usage.set_context(workspace_id=workspace_id, surface="ingest")
     try:
         embeddings = await embed_texts(pieces)
     finally:
         usage.reset_context(usage_token)
-    embed_model = await active_embed_model()  # record provenance per chunk
     async with pool.acquire() as conn:
         async with conn.transaction():
             doc_id = await conn.fetchval(

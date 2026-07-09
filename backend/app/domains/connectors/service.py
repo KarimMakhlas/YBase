@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -47,6 +48,7 @@ router.include_router(figma_routes.router)
 log = logging.getLogger("ybase.connectors")
 
 SLACK_API = "https://slack.com/api"
+_sync_tasks: Dict[asyncio.Task, Tuple[str, int]] = {}
 
 
 class StreamPatch(BaseModel):
@@ -71,8 +73,23 @@ class SlackAPIError(Exception):
 
 
 def _frontend_from_request(request: Request) -> str:
-    ref = request.headers.get("referer") or "http://localhost:5173/"
-    return ref.split("?")[0]
+    """Return a safe frontend redirect, never an arbitrary Referer origin."""
+    configured = [config.APP_BASE_URL, *config.CORS_ORIGINS]
+    allowed = set()
+    for raw in configured:
+        parsed = urlsplit(raw)
+        if parsed.scheme and parsed.netloc:
+            allowed.add((parsed.scheme.lower(), parsed.netloc.lower()))
+
+    fallback = config.APP_BASE_URL.rstrip("/") or "http://localhost:5173"
+    ref = request.headers.get("referer")
+    if not ref:
+        return fallback
+    parsed = urlsplit(ref)
+    origin = (parsed.scheme.lower(), parsed.netloc.lower())
+    if origin not in allowed:
+        return fallback
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", "")).rstrip("/")
 
 
 async def _slack_api(
@@ -123,7 +140,98 @@ def _dispatch_sync(provider: str, job_id: int) -> None:
         "discord": discord.run_sync_job, "googledocs": googledocs.run_sync_job,
         "notion": notion.run_sync_job, "figma": figma.run_sync_job,
     }.get(provider, run_slack_sync_job)
-    asyncio.create_task(_run_then_chain(runner, provider, job_id))
+    task = asyncio.create_task(_run_then_chain(runner, provider, job_id))
+    _sync_tasks[task] = (provider, job_id)
+
+    def _finished(done: asyncio.Task) -> None:
+        _sync_tasks.pop(done, None)
+        if done.cancelled():
+            return
+        try:
+            error = done.exception()
+        except asyncio.CancelledError:
+            return
+        if error:
+            log.error("sync task %s/%d crashed: %s", provider, job_id, error)
+
+    task.add_done_callback(_finished)
+
+
+async def stop_sync_tasks() -> None:
+    """Cancel connector tasks during graceful shutdown.
+
+    A canceled task is intentionally left recoverable in Postgres; the startup
+    janitor below requeues it after the stale threshold if the process dies
+    before a connector can write its final state.
+    """
+    tracked = list(_sync_tasks.items())
+    tasks = [task for task, _ in tracked]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    if tracked:
+        pool = await db.get_pool()
+        reason = "requeued during graceful shutdown"
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                for _, (_, job_id) in tracked:
+                    await conn.execute(
+                        "UPDATE sync_jobs SET status='pending', error=$2, next_retry_at=NULL, "
+                        "started_at=NULL, completed_at=NULL, updated_at=now() "
+                        "WHERE id=$1 AND status IN ('pending', 'running')",
+                        job_id, reason,
+                    )
+                    await conn.execute(
+                        "UPDATE source_streams SET status='idle', last_error=$2, updated_at=now() "
+                        "WHERE connection_id=(SELECT connection_id FROM sync_jobs WHERE id=$1) "
+                        "AND status='syncing'",
+                        job_id, reason,
+                    )
+
+
+async def recover_stuck_sync_jobs() -> int:
+    """Requeue connector jobs left pending/running by a crashed process.
+
+    The old implementation only recovered memory-formation rows. Because sync
+    tasks were fire-and-forget, a process restart could leave a `running` job
+    that permanently blocked the periodic resync safety net.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=config.SYNC_JOB_STALE_S)
+    pool = await db.get_pool()
+    recovered: List[Tuple[str, int]] = []
+    reason = "recovered after an abandoned connector task"
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            rows = await conn.fetch(
+                "SELECT id, provider, connection_id FROM sync_jobs "
+                "WHERE status IN ('pending', 'running') "
+                "AND COALESCE(updated_at, started_at, created_at) < $1 "
+                "ORDER BY id FOR UPDATE SKIP LOCKED",
+                cutoff,
+            )
+            for row in rows:
+                await conn.execute(
+                    "UPDATE sync_jobs SET status='pending', error=$2, next_retry_at=NULL, "
+                    "started_at=NULL, completed_at=NULL, updated_at=now() WHERE id=$1",
+                    row["id"], reason,
+                )
+                await conn.execute(
+                    "UPDATE source_streams SET status='idle', last_error=$3, updated_at=now() "
+                    "WHERE connection_id=$2 AND workspace_id=(SELECT workspace_id FROM sync_jobs WHERE id=$1) "
+                    "AND status IN ('syncing', 'failed', 'paused')",
+                    row["id"], row["connection_id"], reason,
+                )
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    row["connection_id"], reason,
+                )
+                recovered.append((row["provider"], row["id"]))
+    for provider, job_id in recovered:
+        _dispatch_sync(provider, job_id)
+    if recovered:
+        log.warning("recovered %d abandoned connector job(s)", len(recovered))
+    return len(recovered)
 
 
 async def _run_then_chain(runner, provider: str, job_id: int) -> None:
@@ -653,6 +761,7 @@ async def resync_tick() -> int:
     path, so the per-stream lookback is derived at run time by the connector
     (full backfill for never-synced streams, short window otherwise) — the tick
     leaves the job window unset and only decides when to fire."""
+    await recover_stuck_sync_jobs()
     # (provider, interval_seconds, job_state, backfill_when_never)
     specs: List[tuple] = []
     if config.SLACK_RECONCILE_INTERVAL_S:

@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api.router import api_router
 from .core import config, db, migrate
+from .domains.connectors import service as sources
 from .domains.memory import worker
 from .core.observability import (
     RequestContextMiddleware,
@@ -22,9 +23,11 @@ setup_sentry()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await migrate.run()
+    await sources.recover_stuck_sync_jobs()
     await worker.recover_stuck()
     worker.start()
     yield
+    await sources.stop_sync_tasks()
     await worker.stop()
     await db.close_pool()
 

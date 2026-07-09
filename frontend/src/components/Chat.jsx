@@ -11,7 +11,7 @@ import Md from '../md.jsx'
 import { useToast } from './Toast.jsx'
 import { Badge, StatusBadge, SrcBadge, Spinner } from '../ybase/ui.jsx'
 import { STARTERS, startersFromStats } from '../lib/starters.js'
-import ybaseMark from '../assets/ybase-mark.svg'
+import ybaseMark from '../assets/ybase-mark-exact.png'
 
 const SOURCE_ICON = { slack: Hash, notion: FileText, github: SquareCheck, jira: SquareCheck, meeting: Calendar }
 const CONF_TONE = { high: 'success', medium: 'warning', low: 'danger' }
@@ -184,8 +184,11 @@ function InsightCards({ cards, onOpenDoc }) {
   )
 }
 
-function AssistantExtras({ meta, onAsk, onOpenDoc, canAdd, onAddDoc, onCopy, onRegen, onFlagCitation }) {
-  if (!meta) return null
+function AssistantExtras({ meta, ready = false, onAsk, onOpenDoc, canAdd, onAddDoc, onCopy, onRegen, onFlagCitation }) {
+  // Metadata can arrive before the streamed answer is complete. Keep the
+  // heavy answer furniture hidden until the model has finished so the user
+  // sees a calm forming state instead of an empty table/card scaffold.
+  if (!meta || !ready) return null
   const empty = !meta.citations || meta.citations.length === 0
   return (
     <>
@@ -692,13 +695,20 @@ export default function Chat({ pendingAsk, canAdd, onAddDoc, onOpenDoc, onNaviga
                   <div className="msg-role">
                     <img src={ybaseMark} width="15" height="15" alt="" /> YBase
                   </div>
-                  {m.status && <div className="thinking"><Spinner size="sm" /> {m.status}</div>}
+                  {m.status && (
+                    <div className="thinking" role="status" aria-live="polite">
+                      <span className="thinking-mark" aria-hidden="true"><img src={ybaseMark} alt="" /></span>
+                      <span className="thinking-status">{m.status}</span>
+                      <span className="thinking-dots" aria-hidden="true"><i /><i /><i /></span>
+                    </div>
+                  )}
                   <div className="msg-body">
                     <Md text={m.text} onCite={onCite} />
                     {m.streaming && !m.status && <span className="wb-caret" />}
                   </div>
                   <AssistantExtras
                     meta={m.meta}
+                    ready={!m.streaming && !m.status && !!m.text.trim()}
                     onAsk={ask}
                     onOpenDoc={onOpenDoc}
                     canAdd={canAdd}

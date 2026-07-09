@@ -34,6 +34,8 @@ _METADATA_BLEED_PATTERNS = [
     ),
     re.compile(r"(?ims)\n\s*confidence\s*:\s*(?:high|medium|low|unknown)\b.*$"),
 ]
+_GRAPH_MARKER_RE = re.compile(r"\[N\d+\]")
+_COMPACT_CITATION_RE = re.compile(r"(?<![A-Za-z0-9])(?:C\d+){2,}(?![A-Za-z0-9])")
 log = logging.getLogger("ybase.query")
 
 
@@ -242,7 +244,14 @@ def _sse(event: str, payload: Dict[str, Any]) -> str:
 
 def _strip_metadata_bleed(text: str) -> str:
     """Remove card-shaped metadata sections that smaller models sometimes put
-    in the visible answer just before the metadata delimiter."""
+    in the visible answer just before the metadata delimiter.
+
+    Models occasionally copy the retrieval context's internal graph markers
+    into the answer, or collapse several citation markers into a string such
+    as ``C199C204C208[N908]``. Keep valid ``[C12]`` citations useful while
+    removing graph IDs and expanding compact citation runs into clickable
+    citation tokens for the frontend.
+    """
     cut = len(text)
     for pattern in _METADATA_BLEED_PATTERNS:
         match = pattern.search(text)
@@ -250,6 +259,12 @@ def _strip_metadata_bleed(text: str) -> str:
             cut = min(cut, match.start())
     cleaned = text[:cut].rstrip()
     cleaned = re.sub(r"(?m)(?:\n\s*-{3,}\s*)+\Z", "", cleaned).rstrip()
+    cleaned = _GRAPH_MARKER_RE.sub(" ", cleaned)
+    cleaned = _COMPACT_CITATION_RE.sub(
+        lambda match: " ".join(f"[{token}]" for token in re.findall(r"C\d+", match.group(0))),
+        cleaned,
+    )
+    cleaned = re.sub(r"(?m)[ \t]+$", "", cleaned).rstrip()
     return cleaned
 
 

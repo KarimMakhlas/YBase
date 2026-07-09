@@ -31,6 +31,19 @@ _NOMIC_PREFIX = {"document": "search_document: ", "query": "search_query: "}
 _provider: Optional[str] = None  # pinned on first use
 
 
+class EmbeddingSpaceMismatch(RuntimeError):
+    """Raised when a workspace corpus was built in a different vector space."""
+
+    def __init__(self, current: str, existing: List[str]) -> None:
+        self.current = current
+        self.existing = existing
+        super().__init__(
+            "workspace embeddings use a different model "
+            f"({', '.join(existing)}); active model is {current}. "
+            "Run scripts/reembed.py before ingesting more documents."
+        )
+
+
 def _local_embed(text: str) -> List[float]:
     dim = config.EMBED_DIM
     vec = [0.0] * dim

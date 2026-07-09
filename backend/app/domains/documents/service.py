@@ -5,7 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.core import db
 from app.core.ratelimit import ingest_limiter
 from app.domains.auth import service as auth
-from app.domains.documents.ingestion import IngestRequest, ingest_document, schedule_formation
+from app.domains.documents.ingestion import (
+    EmbeddingSpaceMismatch,
+    IngestRequest,
+    ingest_document,
+    schedule_formation,
+)
 
 router = APIRouter(prefix="/api", tags=["documents"])
 
@@ -16,7 +21,10 @@ async def ingest(
     current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
 ) -> Dict[str, Any]:
     await ingest_limiter.enforce((current.workspace_id, current.user_id), "ingest")
-    doc_id, duplicate = await ingest_document(req, workspace_id=current.workspace_id)
+    try:
+        doc_id, duplicate = await ingest_document(req, workspace_id=current.workspace_id)
+    except EmbeddingSpaceMismatch as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {
         "document_id": doc_id,
         "duplicate": duplicate,

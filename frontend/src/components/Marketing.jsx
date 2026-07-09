@@ -7,7 +7,7 @@ import {
   Users, ShieldCheck, Scale, MessageSquare, SquareCheck, CircleHelp, FileText, User,
   Download, GitFork, MessageSquareQuote,
 } from 'lucide-react'
-import ybaseMark from '../assets/ybase-mark.svg'
+import ybaseMark from '../assets/ybase-mark-exact.png'
 import { staggerContainer, fadeUp, spring, ease, inView } from '../ybase/motionPresets'
 import '../ybase/marketing.css'
 

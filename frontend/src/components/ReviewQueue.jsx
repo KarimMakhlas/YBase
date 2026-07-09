@@ -1,6 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Check, X, Bot, GitMerge, CircleHelp, GitCommitHorizontal } from 'lucide-react'
-import { listProposals, approveProposal, rejectProposal } from '../api.js'
+import { Check, X, Bot, GitMerge, CircleHelp, GitCommitHorizontal, Archive, RotateCcw } from 'lucide-react'
+import {
+  archiveReviewNode,
+  approveProposal,
+  listProposals,
+  listReviewNodes,
+  patchReviewNode,
+  rejectProposal,
+  unarchiveReviewNode,
+} from '../api.js'
 import { useToast } from './Toast.jsx'
 import { StatusBadge } from '../ybase/ui.jsx'
 import PageHeader from '../ybase/PageHeader.jsx'
@@ -121,7 +129,92 @@ function ProposalCard({ p, onResolved, onNavigate }) {
   )
 }
 
+function MemoryNodeCard({ node, onChanged }) {
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  const archived = Boolean(node.archived_at)
+  const reviewed = Boolean(node.curated_at)
+
+  const act = async (fn, message) => {
+    setBusy(true)
+    try {
+      await fn()
+      toast(message, 'success')
+      onChanged(node.id)
+    } catch (e) {
+      toast(`Memory update failed: ${e.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="review-card wb-reveal">
+      <div className="review-card-head">
+        <StatusBadge status={archived ? 'archived' : reviewed ? 'reviewed' : 'needs review'} />
+        <span className="review-done-label">{node.label}</span>
+      </div>
+      <p className="review-summary-text">{node.summary || 'No summary recorded.'}</p>
+      <div className="review-meta">
+        <span>{node.kind}</span>
+        <span>{node.evidence_count} evidence chunk{node.evidence_count === 1 ? '' : 's'}</span>
+        <span>{node.neighbor_count} connected node{node.neighbor_count === 1 ? '' : 's'}</span>
+      </div>
+      <div className="review-actions">
+        {!archived && !reviewed && (
+          <button className="wb-btn wb-btn--primary wb-btn--sm" disabled={busy} onClick={() => act(() => patchReviewNode(node.id, { mark_reviewed: true }), 'Memory marked as reviewed.')}>
+            <Check size={14} strokeWidth={2} /> Mark reviewed
+          </button>
+        )}
+        {archived ? (
+          <button className="wb-btn wb-btn--ghost wb-btn--sm" disabled={busy} onClick={() => act(() => unarchiveReviewNode(node.id), 'Memory restored.')}>
+            <RotateCcw size={14} strokeWidth={1.8} /> Restore
+          </button>
+        ) : (
+          <button className="wb-btn wb-btn--ghost wb-btn--sm" disabled={busy} onClick={() => act(() => archiveReviewNode(node.id), 'Memory archived.')}>
+            <Archive size={14} strokeWidth={1.8} /> Archive
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function MemoryReviewPanel() {
+  const [state, setState] = useState('needs_review')
+  const [items, setItems] = useState(null)
+  const toast = useToast()
+
+  const load = useCallback(() => {
+    setItems(null)
+    listReviewNodes(state)
+      .then(setItems)
+      .catch((e) => toast(`Failed to load memory review: ${e.message}`))
+  }, [state, toast])
+
+  useEffect(() => { load() }, [load])
+
+  const states = [
+    ['needs_review', 'Needs review'],
+    ['reviewed', 'Reviewed'],
+    ['archived', 'Archived'],
+  ]
+  return (
+    <>
+      <div className="review-tabs" role="tablist">
+        {states.map(([id, label]) => (
+          <button key={id} role="tab" aria-selected={state === id} className={`leftnav-btn${state === id ? ' is-active' : ''}`} onClick={() => setState(id)}>{label}</button>
+        ))}
+      </div>
+      {!items && <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 'var(--sp-4)' }}>{[0, 1].map((i) => <div key={i} className="wb-skeleton" style={{ height: 120, borderRadius: 'var(--radius-md)' }} />)}</div>}
+      {items && items.length === 0 && <div className="md-empty" style={{ marginTop: 'var(--sp-4)' }}>No memory nodes in this list.</div>}
+      {items && items.length > 0 && <div className="review-list">{items.map((node) => <MemoryNodeCard key={node.id} node={node} onChanged={(id) => setItems((rows) => rows.filter((row) => row.id !== id))} />)}</div>}
+    </>
+  )
+}
+
 export default function ReviewQueue({ onNavigate, onPendingChange }) {
+  const [mode, setMode] = useState('proposals')
   const [tab, setTab] = useState('pending')
   const [items, setItems] = useState(null)
   const toast = useToast()
@@ -136,7 +229,7 @@ export default function ReviewQueue({ onNavigate, onPendingChange }) {
       .catch((e) => toast(`Failed to load proposals: ${e.message}`))
   }, [toast, onPendingChange])
 
-  useEffect(() => { load(tab) }, [tab, load])
+  useEffect(() => { if (mode === 'proposals') load(tab) }, [mode, tab, load])
 
   const onResolved = (id, res) => {
     setItems((rows) => {
@@ -154,6 +247,11 @@ export default function ReviewQueue({ onNavigate, onPendingChange }) {
         title={<>Agents propose. <em>You decide.</em></>}
         lede="Decisions your AI agents want to record wait here — nothing becomes memory until you approve it."
       />
+      <div className="review-tabs" role="tablist">
+        <button role="tab" aria-selected={mode === 'proposals'} className={`leftnav-btn${mode === 'proposals' ? ' is-active' : ''}`} onClick={() => setMode('proposals')}>Agent proposals</button>
+        <button role="tab" aria-selected={mode === 'nodes'} className={`leftnav-btn${mode === 'nodes' ? ' is-active' : ''}`} onClick={() => setMode('nodes')}>Memory nodes</button>
+      </div>
+      {mode === 'nodes' ? <MemoryReviewPanel /> : <>
       <div className="review-tabs" role="tablist">
         {TABS.map((t) => (
           <button
@@ -206,6 +304,7 @@ export default function ReviewQueue({ onNavigate, onPendingChange }) {
             ))}
         </div>
       )}
+      </>}
     </div>
   )
 }

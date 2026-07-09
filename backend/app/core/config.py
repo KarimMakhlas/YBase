@@ -265,6 +265,10 @@ SLACK_RECONCILE_WINDOW_DAYS = int(os.getenv("SLACK_RECONCILE_WINDOW_DAYS", "1"))
 # CONNECTOR_RESYNC_WINDOW_DAYS (dedup absorbs the overlap). 0 disables re-sync.
 CONNECTOR_RESYNC_INTERVAL_S = int(os.getenv("CONNECTOR_RESYNC_INTERVAL_S", "21600"))  # 6h
 CONNECTOR_RESYNC_WINDOW_DAYS = int(os.getenv("CONNECTOR_RESYNC_WINDOW_DAYS", "2"))
+# A sync job is considered abandoned after this long without a heartbeat. The
+# connector runners update `updated_at` while they fetch pages, so a genuinely
+# long backfill is not mistaken for a crashed task.
+SYNC_JOB_STALE_S = int(os.getenv("SYNC_JOB_STALE_S", "1800"))
 CONNECTOR_BACKFILL_DAYS = int(os.getenv("CONNECTOR_BACKFILL_DAYS", "90"))
 # Onboarding fast slice: the first backfill pulls only this many recent days so
 # memory forms in minutes (connectors ingest oldest-first, so a full 90-day

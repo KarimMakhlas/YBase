@@ -1,6 +1,19 @@
 
 // Minimal markdown renderer (headings, lists, fenced code, bold, inline code)
 // plus [C12]-style citation chips. Dependency-free on purpose.
+function sanitizeCitationMarkers(text) {
+  if (!text) return ''
+  // Graph node IDs are retrieval internals, never user-facing citations.
+  let cleaned = text.replace(/\[N\d+\]/g, '')
+  // Some models collapse several source markers at the end of a response
+  // (C199C204C208). Expand them so the existing citation-chip renderer can
+  // make each source clickable.
+  cleaned = cleaned.replace(/(?<![A-Za-z0-9])(?:C\d+){2,}(?![A-Za-z0-9])/g, (run) =>
+    run.match(/C\d+/g).map((id) => `[${id}]`).join(' ')
+  )
+  return cleaned
+}
+
 function inline(text, onCite, keyPrefix) {
   const parts = []
   // [C12] and combined [C12, C13] forms both become chips
@@ -40,7 +53,7 @@ function inline(text, onCite, keyPrefix) {
 export default function Md({ text, onCite }) {
   if (!text) return null
   const blocks = []
-  const lines = text.split('\n')
+  const lines = sanitizeCitationMarkers(text).split('\n')
   let list = null
   let code = null // { lang, lines }
   const flushList = (key) => {

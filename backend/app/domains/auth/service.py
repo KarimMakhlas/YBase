@@ -1070,7 +1070,7 @@ async def google_callback(request: Request, code: str = "", state: str = ""):
     raw_email = identity.get("email")
     # email_verified can come back as a bool or the string "true" from Google.
     verified = identity.get("email_verified")
-    verified_ok = verified is None or verified in (True, "true")
+    verified_ok = verified in (True, "true")
     if not sub or not raw_email or not verified_ok:
         return _login_error_redirect()
     email = clean_email(raw_email)

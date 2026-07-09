@@ -117,6 +117,34 @@ async def test_active_job_blocks_duplicate_enqueue(pool, workspace_id, captured_
     assert captured_dispatch == []
 
 
+async def test_stale_connector_job_is_requeued_and_dispatched(pool, workspace_id, captured_dispatch):
+    async with pool.acquire() as conn:
+        cid = await _make_connection(conn, workspace_id, "jira")
+        stream_id = await _make_stream(conn, workspace_id, cid, "jira", selected=True)
+        job_id = await conn.fetchval(
+            "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, state, stats) "
+            "VALUES($1, $2, 'jira', 'running', 'backfill', '{}'::jsonb, '{}'::jsonb) RETURNING id",
+            workspace_id, cid,
+        )
+        await conn.execute(
+            "UPDATE sync_jobs SET updated_at=now() - interval '2 hours' WHERE id=$1", job_id
+        )
+        await conn.execute(
+            "UPDATE source_streams SET status='syncing' WHERE id=$1", stream_id
+        )
+
+    assert await service.recover_stuck_sync_jobs() == 1
+
+    async with pool.acquire() as conn:
+        job = await conn.fetchrow("SELECT status, error FROM sync_jobs WHERE id=$1", job_id)
+        stream = await conn.fetchrow("SELECT status, last_error FROM source_streams WHERE id=$1", stream_id)
+    assert job["status"] == "pending"
+    assert "abandoned" in job["error"]
+    assert stream["status"] == "idle"
+    assert "abandoned" in stream["last_error"]
+    assert ("jira", job_id) in captured_dispatch
+
+
 async def test_second_tick_does_not_double_enqueue(pool, workspace_id, captured_dispatch):
     async with pool.acquire() as conn:
         cid = await _make_connection(conn, workspace_id, "jira", last_sync_at=None)

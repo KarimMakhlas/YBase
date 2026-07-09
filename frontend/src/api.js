@@ -1,7 +1,20 @@
+async function throwResponseError(res, prefix = '') {
+  let detail = ''
+  try {
+    const payload = await res.json()
+    detail = typeof payload?.detail === 'string'
+      ? payload.detail
+      : typeof payload?.error === 'string' ? payload.error : ''
+  } catch { /* response was not JSON */ }
+  const fallback = `${res.status} ${res.statusText || 'Request failed'}`
+  throw new Error(`${prefix ? `${prefix}: ` : ''}${detail || fallback}`)
+}
+
 export async function getJSON(path) {
   const res = await fetch(path, { credentials: 'include' })
   if (res.status === 401) window.dispatchEvent(new Event('auth:required'))
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  if (res.status === 402) window.dispatchEvent(new Event('billing:readonly'))
+  if (!res.ok) await throwResponseError(res)
   return res.json()
 }
 
@@ -14,7 +27,7 @@ async function postJSON(path, body) {
   })
   if (res.status === 401) window.dispatchEvent(new Event('auth:required'))
   if (res.status === 402) window.dispatchEvent(new Event('billing:readonly'))
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  if (!res.ok) await throwResponseError(res)
   return res.json()
 }
 
@@ -22,7 +35,7 @@ async function deleteJSON(path) {
   const res = await fetch(path, { method: 'DELETE', credentials: 'include' })
   if (res.status === 401) window.dispatchEvent(new Event('auth:required'))
   if (res.status === 402) window.dispatchEvent(new Event('billing:readonly'))
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  if (!res.ok) await throwResponseError(res)
   return res.json()
 }
 
@@ -35,7 +48,7 @@ async function patchJSON(path, body) {
   })
   if (res.status === 401) window.dispatchEvent(new Event('auth:required'))
   if (res.status === 402) window.dispatchEvent(new Event('billing:readonly'))
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  if (!res.ok) await throwResponseError(res)
   return res.json()
 }
 
@@ -112,6 +125,7 @@ export const getDiscordInstallUrl = () => getJSON('/api/sources/discord/install-
 export const getConfluenceInstallUrl = () => getJSON('/api/sources/confluence/install-url')
 export const getGoogleDocsInstallUrl = () => getJSON('/api/sources/googledocs/install-url')
 export const getFigmaInstallUrl = () => getJSON('/api/sources/figma/install-url')
+export const ingestDocument = (body) => postJSON('/api/ingest', body)
 export const setFigmaTeam = (connectionId, teamId) =>
   postJSON(`/api/sources/${connectionId}/figma/team`, { team_id: teamId })
 export const listSourceStreams = (connectionId) =>
@@ -136,6 +150,12 @@ export const approveProposal = (id, body = {}) =>
   postJSON(`/api/memory-review/proposals/${id}/approve`, body)
 export const rejectProposal = (id, note = null) =>
   postJSON(`/api/memory-review/proposals/${id}/reject`, { note })
+export const listReviewNodes = (state = 'needs_review') =>
+  getJSON(`/api/memory-review?state=${encodeURIComponent(state)}`)
+export const patchReviewNode = (id, body = {}) => patchJSON(`/api/memory-review/${id}`, body)
+export const archiveReviewNode = (id, reason = null) =>
+  postJSON(`/api/memory-review/${id}/archive`, { reason })
+export const unarchiveReviewNode = (id) => postJSON(`/api/memory-review/${id}/unarchive`, {})
 
 export const submitAnswerFeedback = (body) => postJSON('/api/answer-feedback', body)
 export const getMyAnswerFeedback = (chatMessageId) =>
@@ -152,7 +172,9 @@ export async function streamQuery(question, handlers, history = []) {
     body: JSON.stringify({ question, history }),
   })
   if (res.status === 401) window.dispatchEvent(new Event('auth:required'))
-  if (!res.ok || !res.body) throw new Error(`query failed: ${res.status}`)
+  if (res.status === 402) window.dispatchEvent(new Event('billing:readonly'))
+  if (!res.ok) await throwResponseError(res, 'Query failed')
+  if (!res.body) throw new Error('Query failed: the server returned no stream')
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ''

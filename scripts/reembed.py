@@ -18,17 +18,23 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 from app.core import db  # noqa: E402
 from app.domains.memory.consolidate import _signature  # noqa: E402
-from app.providers.embeddings import active_embedder, embed_texts, to_pgvector  # noqa: E402
+from app.providers.embeddings import (  # noqa: E402
+    active_embed_model,
+    active_embedder,
+    embed_texts,
+    to_pgvector,
+)
 
 BATCH = 32
 
 
 async def main() -> None:
     provider = await active_embedder()
+    model = await active_embed_model()
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT id, text FROM chunks ORDER BY id")
-    print(f"Re-embedding {len(rows)} chunks with provider: {provider}")
+    print(f"Re-embedding {len(rows)} chunks with model: {model}")
     for start in range(0, len(rows), BATCH):
         batch = rows[start : start + BATCH]
         vecs = await embed_texts([r["text"] for r in batch], kind="document")
@@ -36,8 +42,8 @@ async def main() -> None:
             async with conn.transaction():
                 for r, v in zip(batch, vecs):
                     await conn.execute(
-                        "UPDATE chunks SET embedding = $2::vector WHERE id = $1",
-                        r["id"], to_pgvector(v),
+                        "UPDATE chunks SET embedding = $2::vector, embed_model = $3 WHERE id = $1",
+                        r["id"], to_pgvector(v), model,
                     )
         print(f"  {min(start + BATCH, len(rows))}/{len(rows)}")
 

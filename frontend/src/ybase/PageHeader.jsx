@@ -1,4 +1,4 @@
-import ybaseMark from '../assets/ybase-mark.svg'
+import ybaseMark from '../assets/ybase-mark-exact.png'
 import './pageheader.css'
 
 // The YBase page header — a mono kicker, a display title, a lede, and an

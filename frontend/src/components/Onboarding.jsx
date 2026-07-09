@@ -6,6 +6,8 @@ import {
   seedDemoData,
   getJiraInstallUrl,
   getGitHubInstallUrl,
+  getSlackInstallUrl,
+  getNotionInstallUrl,
   completeOnboarding,
 } from '../api.js'
 
@@ -110,7 +112,12 @@ export default function Onboarding({ user, onWorkspaceCreated, onFinish, onLogou
     setBusy(true)
     setError('')
     try {
-      const fn = provider === 'jira' ? getJiraInstallUrl : getGitHubInstallUrl
+      const fn = {
+        jira: getJiraInstallUrl,
+        github: getGitHubInstallUrl,
+        slack: getSlackInstallUrl,
+        notion: getNotionInstallUrl,
+      }[provider]
       const res = await fn()
       if (!res.configured) {
         setError(res.error || 'This connector is not configured on this instance yet.')
@@ -250,12 +257,12 @@ export default function Onboarding({ user, onWorkspaceCreated, onFinish, onLogou
               <button type="button" className="onb-tile" onClick={() => connect('github')} disabled={busy}>
                 <Plug size={16} strokeWidth={1.8} /> Connect GitHub
               </button>
-              <div className="onb-tile is-soon">
-                <Plug size={16} strokeWidth={1.8} /> Slack <span>Coming soon</span>
-              </div>
-              <div className="onb-tile is-soon">
-                <Plug size={16} strokeWidth={1.8} /> Notion <span>Coming soon</span>
-              </div>
+              <button type="button" className="onb-tile" onClick={() => connect('slack')} disabled={busy}>
+                <Plug size={16} strokeWidth={1.8} /> Connect Slack
+              </button>
+              <button type="button" className="onb-tile" onClick={() => connect('notion')} disabled={busy}>
+                <Plug size={16} strokeWidth={1.8} /> Connect Notion
+              </button>
             </div>
             <button
               type="button"

@@ -278,7 +278,13 @@ export default function App() {
   }, [workspaceId, userRole])
 
   useEffect(() => {
-    const onReadonly = () => loadBilling()
+    const onReadonly = () => {
+      loadBilling()
+      // A read-only workspace can still browse memory, but write/query actions
+      // should explain the block immediately instead of leaving the user on a
+      // page whose controls appear to have failed silently.
+      window.location.hash = '#/plans'
+    }
     window.addEventListener('billing:readonly', onReadonly)
     return () => window.removeEventListener('billing:readonly', onReadonly)
   }, [loadBilling])

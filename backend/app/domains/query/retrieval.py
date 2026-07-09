@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from app.core import config, db
 from app.core.dates import iso_date
-from app.providers.embeddings import embed_texts, to_pgvector
+from app.providers.embeddings import active_embed_model, embed_texts, to_pgvector
 from ..memory import graph
 from ..memory.scoring import node_score
 
@@ -75,23 +75,25 @@ async def retrieve(
 ) -> Dict[str, Any]:
     pool = await db.get_pool()
     qvec = (await embed_texts([embed_text or question], kind="query"))[0]
+    embed_model = await active_embed_model()
     async with pool.acquire() as conn:
         vec_rows = await conn.fetch(
             "SELECT c.id, c.text, c.document_id, d.source, d.title, d.author, "
             "       d.doc_created_at, 1 - (c.embedding <=> $1::vector) AS score "
             "FROM chunks c JOIN documents d ON d.id = c.document_id "
-            "WHERE d.workspace_id=$2 "
-            "ORDER BY c.embedding <=> $1::vector LIMIT $3",
-            to_pgvector(qvec), workspace_id, config.TOP_K,
+            "WHERE d.workspace_id=$2 AND c.embed_model=$3 "
+            "ORDER BY c.embedding <=> $1::vector LIMIT $4",
+            to_pgvector(qvec), workspace_id, embed_model, config.TOP_K,
         )
         ft_rows = await conn.fetch(
             "SELECT c.id, c.text, c.document_id, d.source, d.title, d.author, "
             "       d.doc_created_at, "
             "       ts_rank_cd(c.text_tsv, websearch_to_tsquery('english', $1))::float AS score "
             "FROM chunks c JOIN documents d ON d.id = c.document_id "
-            "WHERE d.workspace_id=$2 AND c.text_tsv @@ websearch_to_tsquery('english', $1) "
-            "ORDER BY score DESC LIMIT $3",
-            question, workspace_id, config.TOP_K,
+            "WHERE d.workspace_id=$2 AND c.embed_model=$3 "
+            "AND c.text_tsv @@ websearch_to_tsquery('english', $1) "
+            "ORDER BY score DESC LIMIT $4",
+            question, workspace_id, embed_model, config.TOP_K,
         )
         by_id = {r["id"]: r for r in vec_rows}
         by_id.update({r["id"]: r for r in ft_rows if r["id"] not in by_id})
@@ -145,8 +147,8 @@ async def retrieve(
                 "JOIN memory_nodes n ON n.id = cl.node_id "
                 "WHERE d.workspace_id=$1 AND n.workspace_id=$1 "
                 "AND cl.node_id = ANY($2::int[]) AND n.kind IN ('decision', 'question') "
-                "AND n.archived_at IS NULL",
-                workspace_id, list(node_ids), to_pgvector(qvec),
+                "AND n.archived_at IS NULL AND c.embed_model=$4",
+                workspace_id, list(node_ids), to_pgvector(qvec), embed_model,
             )
             total_chars = sum(len(c["text"]) for c in chunks.values())
             for r in rank_graph_evidence(extra, score_by_node):
