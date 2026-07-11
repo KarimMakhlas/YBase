@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="frontend/public/ybase-mark.svg" alt="YBase logo" width="84" height="84">
+  <img src="frontend/public/ybase-mark-exact.png" alt="YBase logo" width="84" height="84">
 
   # YBase
 
