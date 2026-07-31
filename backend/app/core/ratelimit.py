@@ -76,6 +76,7 @@ class Limiter:
             raise HTTPException(
                 429, f"{what} rate limit exceeded — try again in a minute"
             )
+            
 
 
 query_limiter = Limiter("query", config.QUERY_RATE_PER_MINUTE)
