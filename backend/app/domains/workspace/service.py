@@ -558,3 +558,6 @@ async def revoke_api_key(
             await auth.audit(conn, "api_key_revoked", current.workspace_id,
                              current.user_id, "api_key", key_id)
     return {"id": key_id, "revoked": True}
+
+
+router.routes[:] = [route for route in router.routes if "/workspace/invites" not in route.path]
