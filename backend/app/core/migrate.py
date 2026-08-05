@@ -12,8 +12,9 @@ been applied and no safe way to run a destructive change (rename, backfill,
 constraint). The runner gives ordered, tracked, transactional changes.
 
 RULES
-- `schema.sql` is the baseline. It only ever runs on a brand-new database.
-  Do NOT add new changes to it after launch — they won't apply to existing DBs.
+- `schema.sql` is the baseline. It only runs on a brand-new database. Prune it
+  only when an equivalent numbered migration brings existing databases to the
+  same schema.
 - Every change to an existing schema is a new file: `migrations/NNNN_name.sql`,
   with NNNN the next zero-padded integer. Keep each migration idempotent where
   practical (IF NOT EXISTS / IF EXISTS) so a half-applied run can be retried.
