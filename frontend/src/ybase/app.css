@@ -126,13 +126,7 @@
 .src-slack .src-dot { background: var(--src-slack); }
 .src-notion .src-dot { background: var(--src-notion); }
 .src-github .src-dot { background: var(--src-github); }
-.src-jira .src-dot { background: var(--src-jira); }
 .src-meeting .src-dot { background: var(--src-meeting); }
-.src-linear .src-dot { background: var(--src-linear); }
-.src-discord .src-dot { background: var(--src-discord); }
-.src-confluence .src-dot { background: var(--src-confluence); }
-.src-googledocs .src-dot { background: var(--src-googledocs); }
-.src-figma .src-dot { background: var(--src-figma); }
 .src-other .src-dot { background: var(--text-tertiary); }
 
 /* Master-detail scaffold (People, Sources, Review, Feedback) */
