@@ -163,9 +163,11 @@ def main() -> None:
               f"LLM: {provider} ({health.get('llm_model', '?')}), "
               f"workspace: {auth.get('workspace', {}).get('name', '?')}.")
 
-        existing = cx.get(f"{BASE}/api/documents").json()
+        # /api/documents is paged; this is only a "is the workspace empty?"
+        # check, so ask for one row rather than implying an exact total.
+        existing = cx.get(f"{BASE}/api/documents", params={"limit": 1}).json()
         if existing:
-            print(f"{YELLOW}Note: {len(existing)} documents already ingested; "
+            print(f"{YELLOW}Note: this workspace already has documents; "
                   f"ingesting the sample corpus again will duplicate memory.{RESET}")
             if input("Continue anyway? [y/N] ").strip().lower() != "y":
                 sys.exit(0)

@@ -8,7 +8,7 @@ separate source_connections (decided during connector-expansion planning).
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from urllib.parse import urlencode
 
 import httpx

@@ -1,5 +1,6 @@
 """Password auth, workspace membership, and role dependencies."""
 
+import asyncio
 import hashlib
 import logging
 import secrets
@@ -45,6 +46,11 @@ class AuthContext:
     # 'password' or 'google' — lets the account page hide the password form for
     # Google-only sign-ins.
     auth_provider: str = "password"
+    # Whether this account has proven it owns its email address. Google accounts
+    # and every account predating verification are treated as verified; only new
+    # password signups start False. Drives the "verify your email" banner and,
+    # more importantly, whether Google sign-in may auto-link into this account.
+    email_verified: bool = True
 
 
 class BootstrapRequest(BaseModel):
@@ -111,6 +117,10 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
@@ -120,6 +130,35 @@ def _hash_token(token: str) -> str:
 
 def _reset_path(token: str) -> str:
     return f"/#/reset/{token}"
+
+
+def _verify_path(token: str) -> str:
+    return f"/#/verify/{token}"
+
+
+async def send_verification_email(
+    conn: asyncpg.Connection, user_id: int, email: str, display_name: str
+) -> None:
+    """Mint a single-use verification token and email the link. Best effort:
+    mailer.send never raises, and without RESEND_API_KEY it is a logged no-op —
+    so signup still succeeds on an instance with no email provider (which is
+    also why verification does not gate sign-in)."""
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(hours=config.VERIFICATION_TTL_HOURS)
+    await conn.execute(
+        "INSERT INTO email_verification_tokens(user_id, token_hash, expires_at) "
+        "VALUES($1, $2, $3)",
+        user_id, _hash_token(token), expires,
+    )
+    link = f"{config.APP_BASE_URL.rstrip('/')}{_verify_path(token)}"
+    await mailer.send(
+        [email],
+        "Verify your YBase email",
+        f"Hi {display_name},\n\n"
+        f"Confirm this address to finish setting up your YBase account "
+        f"(link valid for {config.VERIFICATION_TTL_HOURS} hours):\n\n{link}\n\n"
+        "If you didn't create a YBase account, you can safely ignore this email.",
+    )
 
 
 def _client_ip(request: Request) -> str:
@@ -175,22 +214,37 @@ def clean_email(email: str) -> str:
     return email
 
 
-def hash_password(password: str) -> str:
-    if len(password) < config.PASSWORD_MIN_LENGTH:
-        raise HTTPException(
-            400,
-            f"password must be at least {config.PASSWORD_MIN_LENGTH} characters",
-        )
-    return _ph.hash(password)
-
-
-def verify_password(password: str, password_hash: str) -> bool:
+def _verify_sync(password: str, password_hash: str) -> bool:
     try:
         return _ph.verify(password_hash, password)
     except VerifyMismatchError:
         return False
     except Exception:
         return False
+
+
+async def hash_password(password: str) -> str:
+    """Argon2 hash, computed off the event loop.
+
+    Argon2 is deliberately expensive (~30ms here, 100-200ms on a shared vCPU)
+    and the hasher is synchronous C code. Called inline it blocks the whole
+    single-worker event loop for that long, so one login stalls every in-flight
+    SSE query stream — and a modest burst of login attempts becomes a cheap DoS.
+    The length check stays on the loop so the 400 raises without a thread hop."""
+    if len(password) < config.PASSWORD_MIN_LENGTH:
+        raise HTTPException(
+            400,
+            f"password must be at least {config.PASSWORD_MIN_LENGTH} characters",
+        )
+    return await asyncio.to_thread(_ph.hash, password)
+
+
+async def verify_password(password: str, password_hash: Optional[str]) -> bool:
+    """Argon2 verify, off the event loop for the same reason as hash_password.
+    A missing hash (Google-only account) is a plain False, not a thread hop."""
+    if not password_hash:
+        return False
+    return await asyncio.to_thread(_verify_sync, password, password_hash)
 
 
 async def audit(
@@ -236,7 +290,8 @@ async def _context_for(
     if workspace_id is None:
         # Onboarding state: the user exists but hasn't created a workspace yet.
         urow = await conn.fetchrow(
-            "SELECT id AS user_id, email, display_name, auth_provider FROM users WHERE id=$1",
+            "SELECT id AS user_id, email, display_name, auth_provider, email_verified_at "
+            "FROM users WHERE id=$1",
             user_id,
         )
         if urow is None:
@@ -251,9 +306,10 @@ async def _context_for(
             session_id=session_id,
             workspaces=await _memberships(conn, user_id),
             auth_provider=urow["auth_provider"],
+            email_verified=urow["email_verified_at"] is not None,
         )
     row = await conn.fetchrow(
-        "SELECT u.id AS user_id, u.email, u.display_name, u.auth_provider, "
+        "SELECT u.id AS user_id, u.email, u.display_name, u.auth_provider, u.email_verified_at, "
         "       w.name AS workspace_name, m.role, w.plan_status, w.trial_ends_at "
         "FROM users u "
         "JOIN workspace_memberships m ON m.user_id = u.id "
@@ -275,6 +331,7 @@ async def _context_for(
         plan_status=row["plan_status"],
         trial_ends_at=row["trial_ends_at"],
         auth_provider=row["auth_provider"],
+        email_verified=row["email_verified_at"] is not None,
     )
 
 
@@ -342,7 +399,7 @@ async def get_current_user(request: Request) -> AuthContext:
         # yet (s.workspace_id IS NULL), and must still authenticate.
         row = await conn.fetchrow(
             "SELECT s.id AS session_id, s.workspace_id, s.last_seen_at, u.id AS user_id, "
-            "       u.email, u.display_name, u.disabled, u.auth_provider, "
+            "       u.email, u.display_name, u.disabled, u.auth_provider, u.email_verified_at, "
             "       w.name AS workspace_name, m.role, w.plan_status, w.trial_ends_at "
             "FROM auth_sessions s "
             "JOIN users u ON u.id = s.user_id "
@@ -377,6 +434,7 @@ async def get_current_user(request: Request) -> AuthContext:
         plan_status=row["plan_status"],
         trial_ends_at=row["trial_ends_at"],
         auth_provider=row["auth_provider"],
+        email_verified=row["email_verified_at"] is not None,
     )
 
 
@@ -398,6 +456,21 @@ def require_role(min_role: str):
             raise HTTPException(403, "insufficient role")
         return user
     return dep
+
+
+async def assert_workspace_writable(workspace_id: int) -> None:
+    """402 when the workspace is read-only (trial expired or payment past due).
+
+    The session path gets plan state for free on AuthContext; an AgentContext
+    doesn't carry it (an API key acts for a workspace, not a person), so the
+    machine-facing write routes read it here rather than skipping the gate."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT plan_status, trial_ends_at FROM workspaces WHERE id=$1", workspace_id
+        )
+    if row is None or not workspace_writable(row["plan_status"], row["trial_ends_at"]):
+        raise HTTPException(402, "workspace is read-only — upgrade to keep editing")
 
 
 def require_writable_workspace(min_role: str = "member"):
@@ -441,8 +514,9 @@ def generate_api_key() -> str:
 
 async def require_api_key(request: Request) -> AgentContext:
     """Authenticate `Authorization: Bearer ybk_...`. Reads stay open regardless
-    of plan status (same stance as session reads); the agent API is read-only
-    in v1 so no write gate is needed here."""
+    of plan status, matching the stance on session reads. Write routes on the
+    agent API (currently /api/agent/propose) call assert_workspace_writable
+    themselves — this dependency only establishes identity."""
     header = request.headers.get("Authorization", "")
     token = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
     if not token.startswith(API_KEY_PREFIX):
@@ -501,6 +575,7 @@ def user_payload(user: AuthContext) -> Dict[str, Any]:
             "email": user.email,
             "display_name": user.display_name,
             "auth_provider": user.auth_provider,
+            "email_verified": user.email_verified,
         },
         # null while the user is mid-onboarding (no workspace created yet) —
         # the frontend renders the setup wizard in that case.
@@ -550,11 +625,14 @@ async def bootstrap(
                     req.workspace_name.strip() or "Default Workspace",
                     _slug(req.workspace_name),
                 )
+            # The bootstrap owner is verified by construction: this route only
+            # runs on an empty users table, on an install that may well have no
+            # email provider at all. Nothing to squat, nobody to notify.
             user_id = await conn.fetchval(
-                "INSERT INTO users(email, display_name, password_hash) VALUES($1, $2, $3) "
-                "RETURNING id",
+                "INSERT INTO users(email, display_name, password_hash, email_verified_at) "
+                "VALUES($1, $2, $3, now()) RETURNING id",
                 email, req.display_name.strip() or email,
-                hash_password(req.password),
+                await hash_password(req.password),
             )
             await conn.execute(
                 "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
@@ -593,7 +671,7 @@ async def register(
                 raise HTTPException(
                     409, "an account with this email already exists — sign in instead"
                 )
-            password_hash = hash_password(req.password)  # validates length
+            password_hash = await hash_password(req.password)  # validates length
             user_id = await conn.fetchval(
                 "INSERT INTO users(email, display_name, password_hash) VALUES($1, $2, $3) "
                 "RETURNING id",
@@ -601,6 +679,10 @@ async def register(
             )
             session_id = await create_session(conn, user_id, None, request, response)
             await audit(conn, "register", None, user_id, "user", user_id)
+            # New password signups start unverified — this is what stops a
+            # squatted address from later absorbing the real owner's Google
+            # identity. See _google_find_or_create.
+            await send_verification_email(conn, user_id, email, display_name)
             user = await _context_for(conn, user_id, None, session_id)
     return user_payload(user)
 
@@ -669,12 +751,19 @@ async def join(
                 user_id = await conn.fetchval(
                     "INSERT INTO users(email, display_name, password_hash) "
                     "VALUES($1, $2, $3) RETURNING id",
-                    email, req.display_name.strip() or email, hash_password(req.password),
+                    email, req.display_name.strip() or email,
+                    await hash_password(req.password),
+                )
+                # An invite link can be pasted anywhere and the invite's email
+                # is optional, so joining proves workspace access, not address
+                # ownership. New accounts still have to verify.
+                await send_verification_email(
+                    conn, user_id, email, req.display_name.strip() or email
                 )
             else:
                 # Existing account: require its password so an invite link can't
                 # be used to hijack someone else's email.
-                ok = not user["disabled"] and verify_password(
+                ok = not user["disabled"] and await verify_password(
                     req.password, user["password_hash"]
                 )
                 await _record_login_attempt(conn, email, ip, ok)
@@ -728,7 +817,7 @@ async def login(
             raise HTTPException(
                 401, "this account uses Google sign-in — use “Continue with Google”"
             )
-        ok = bool(user) and not user["disabled"] and verify_password(
+        ok = bool(user) and not user["disabled"] and await verify_password(
             req.password, user["password_hash"]
         )
         await _record_login_attempt(conn, email, ip, ok)
@@ -800,11 +889,11 @@ async def patch_me(
                 row = await conn.fetchrow(
                     "SELECT password_hash FROM users WHERE id=$1", user.user_id
                 )
-                if row is None or not verify_password(
+                if row is None or not await verify_password(
                     req.current_password or "", row["password_hash"]
                 ):
                     raise HTTPException(403, "current password is incorrect")
-                new_hash = hash_password(req.new_password)  # validates length
+                new_hash = await hash_password(req.new_password)  # validates length
                 await conn.execute(
                     "UPDATE users SET password_hash=$2, updated_at=now() WHERE id=$1",
                     user.user_id, new_hash,
@@ -899,7 +988,7 @@ async def reset_password(
                 raise HTTPException(400, "this reset link is invalid or has expired")
             await conn.execute(
                 "UPDATE users SET password_hash=$2, updated_at=now() WHERE id=$1",
-                row["user_id"], hash_password(req.new_password),
+                row["user_id"], await hash_password(req.new_password),
             )
             await conn.execute(
                 "UPDATE auth_sessions SET revoked_at=now() "
@@ -909,6 +998,69 @@ async def reset_password(
             await audit(conn, "password_reset", None, row["user_id"],
                         "user", row["user_id"])
     return {"ok": True}
+
+
+@router.post("/verify")
+async def verify_email(req: VerifyEmailRequest, request: Request) -> Dict[str, Any]:
+    """Complete email verification: consume a valid token atomically and stamp
+    email_verified_at. Idempotent from the user's point of view — a second click
+    on the same link reports already-verified rather than an error, because mail
+    clients and link scanners routinely fetch a link more than once."""
+    await auth_limiter.enforce(_client_ip(request), "email verification")
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "UPDATE email_verification_tokens SET consumed_at=now() "
+                "WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at > now() "
+                "RETURNING user_id",
+                _hash_token(req.token),
+            )
+            if row is None:
+                # Distinguish "already done" from "bad link": a consumed token
+                # whose user is verified is a success, not a dead end.
+                spent = await conn.fetchrow(
+                    "SELECT u.email_verified_at FROM email_verification_tokens t "
+                    "JOIN users u ON u.id = t.user_id WHERE t.token_hash=$1",
+                    _hash_token(req.token),
+                )
+                if spent is not None and spent["email_verified_at"] is not None:
+                    return {"ok": True, "already_verified": True}
+                raise HTTPException(
+                    400, "this verification link is invalid or has expired"
+                )
+            await conn.execute(
+                "UPDATE users SET email_verified_at=now(), updated_at=now() "
+                "WHERE id=$1 AND email_verified_at IS NULL",
+                row["user_id"],
+            )
+            await audit(conn, "email_verified", None, row["user_id"],
+                        "user", row["user_id"])
+    return {"ok": True, "already_verified": False}
+
+
+@router.post("/resend-verification")
+async def resend_verification(
+    request: Request,
+    user: AuthContext = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Re-send the verification email to the signed-in user's own address."""
+    await auth_limiter.enforce(_client_ip(request), "email verification")
+    if user.email_verified:
+        return {"ok": True, "already_verified": True}
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Retire outstanding links so only the newest one works.
+            await conn.execute(
+                "UPDATE email_verification_tokens SET consumed_at=now() "
+                "WHERE user_id=$1 AND consumed_at IS NULL",
+                user.user_id,
+            )
+            await send_verification_email(
+                conn, user.user_id, user.email, user.display_name
+            )
+    return {"ok": True, "already_verified": False, "sent": mailer.configured()}
 
 
 @router.post("/switch-workspace")
@@ -978,12 +1130,26 @@ async def _google_fetch_identity(code: str) -> Dict[str, Any]:
         return info.json()
 
 
+class UnverifiedAccountConflict(Exception):
+    """A Google identity matched an existing password account that has never
+    proven it owns the address, so auto-linking is refused."""
+
+
 async def _google_find_or_create(
     conn: asyncpg.Connection, sub: str, email: str, name: str
 ) -> int:
     """Resolve a Google identity to a user id: match on google_sub, else
-    auto-link an existing account by (verified) email, else create a fresh
-    passwordless account."""
+    auto-link an existing account by email, else create a fresh passwordless
+    account.
+
+    Google asserting the email is only half of what auto-linking needs — the
+    LOCAL side has to be trustworthy too. Public signup accepts any address
+    without proof, so an attacker could register victim@corp.com, wait for the
+    real victim to "Continue with Google", and have their squatted row silently
+    adopt that identity — keeping their own password on the victim's account.
+    Linking into a password account therefore requires that account to be
+    verified; a passwordless row has no such credential to inherit and is safe.
+    """
     row = await conn.fetchrow(
         "SELECT id, disabled FROM users WHERE google_sub=$1", sub
     )
@@ -991,22 +1157,26 @@ async def _google_find_or_create(
         if row["disabled"]:
             raise HTTPException(403, "this account is disabled")
         return row["id"]
-    # Google asserts a verified email, so linking by email can't be used to
-    # hijack an account the way an unverified email could.
     row = await conn.fetchrow(
-        "SELECT id, disabled FROM users WHERE lower(email)=lower($1)", email
+        "SELECT id, disabled, password_hash, email_verified_at FROM users "
+        "WHERE lower(email)=lower($1)",
+        email,
     )
     if row is not None:
         if row["disabled"]:
             raise HTTPException(403, "this account is disabled")
+        if row["password_hash"] is not None and row["email_verified_at"] is None:
+            raise UnverifiedAccountConflict(email)
         await conn.execute(
-            "UPDATE users SET google_sub=$2, updated_at=now() WHERE id=$1",
+            "UPDATE users SET google_sub=$2, updated_at=now(), "
+            "email_verified_at=COALESCE(email_verified_at, now()) WHERE id=$1",
             row["id"], sub,
         )
         return row["id"]
+    # Fresh Google account: Google already asserted email_verified upstream.
     return await conn.fetchval(
-        "INSERT INTO users(email, display_name, password_hash, auth_provider, google_sub) "
-        "VALUES($1, $2, NULL, 'google', $3) RETURNING id",
+        "INSERT INTO users(email, display_name, password_hash, auth_provider, google_sub, "
+        "email_verified_at) VALUES($1, $2, NULL, 'google', $3, now()) RETURNING id",
         email, name or email, sub,
     )
 
@@ -1080,7 +1250,18 @@ async def google_callback(request: Request, code: str = "", state: str = ""):
     redirect = RedirectResponse(redirect_to)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            user_id = await _google_find_or_create(conn, sub, email, name)
+            try:
+                user_id = await _google_find_or_create(conn, sub, email, name)
+            except UnverifiedAccountConflict:
+                # Someone registered this address with a password and never
+                # verified it. Refuse the link and send them to sign in with
+                # that password instead — the address's real owner can always
+                # reset it, while a squatter gains nothing.
+                logger.warning(
+                    "google sign-in refused: unverified password account exists for %s",
+                    email,
+                )
+                return _login_error_redirect("unverified_account")
             memberships = await _memberships(conn, user_id)
             workspace_id = memberships[0]["id"] if memberships else None
             # Set the session cookie on the redirect response itself — a returned

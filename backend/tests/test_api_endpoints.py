@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import httpx
 
-from app.core import migrate
+from app.core import config, migrate
 from app.domains.auth import service as auth
 from app.main import app
 
@@ -28,7 +28,7 @@ async def _auth_client(pool, workspace_id: int, role: str = "admin"):
             "VALUES($1, $2, $3) RETURNING id",
             email,
             f"{role.title()} User",
-            auth.hash_password("correct horse battery staple"),
+            await auth.hash_password("correct horse battery staple"),
         )
         await conn.execute(
             "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
@@ -595,7 +595,7 @@ async def test_forgot_password_is_quiet_and_issues_token(pool, workspace_id):
         user_id = await conn.fetchval(
             "INSERT INTO users(email, display_name, password_hash) VALUES($1, $2, $3) "
             "RETURNING id",
-            email, "Forgot User", auth.hash_password("correct horse battery staple"),
+            email, "Forgot User", await auth.hash_password("correct horse battery staple"),
         )
     async with await _client() as client:
         known = await client.post("/api/auth/forgot", json={"email": email})
@@ -611,6 +611,97 @@ async def test_forgot_password_is_quiet_and_issues_token(pool, workspace_id):
     assert issued == 1  # only the real account got a token
 
 
+async def test_register_starts_unverified_and_issues_a_verification_token(pool):
+    email = f"newsignup-{uuid4().hex}@example.test"
+    async with await _client() as client:
+        resp = await client.post("/api/auth/register", json={
+            "email": email, "display_name": "New Signup",
+            "password": "correct horse battery staple",
+        })
+    assert resp.status_code == 200
+    assert resp.json()["user"]["email_verified"] is False
+    async with pool.acquire() as conn:
+        issued = await conn.fetchval(
+            "SELECT count(*) FROM email_verification_tokens t JOIN users u ON u.id=t.user_id "
+            "WHERE lower(u.email)=lower($1)",
+            email,
+        )
+    assert issued == 1
+
+
+async def test_verify_email_consumes_token_and_is_idempotent(pool):
+    email = f"verify-{uuid4().hex}@example.test"
+    raw = f"vtok-{uuid4().hex}"
+    user_id = await _password_user(pool, email, verified=False)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO email_verification_tokens(user_id, token_hash, expires_at) "
+            "VALUES($1, $2, now() + interval '1 hour')",
+            user_id, auth._hash_token(raw),
+        )
+    async with await _client() as client:
+        first = await client.post("/api/auth/verify", json={"token": raw})
+        # Mail clients and link scanners fetch links more than once.
+        second = await client.post("/api/auth/verify", json={"token": raw})
+    assert first.status_code == 200 and first.json()["already_verified"] is False
+    assert second.status_code == 200 and second.json()["already_verified"] is True
+    async with pool.acquire() as conn:
+        verified_at = await conn.fetchval(
+            "SELECT email_verified_at FROM users WHERE id=$1", user_id
+        )
+    assert verified_at is not None
+
+
+async def test_verify_email_rejects_expired_and_unknown_tokens(pool):
+    email = f"vexpired-{uuid4().hex}@example.test"
+    raw = f"vtok-{uuid4().hex}"
+    user_id = await _password_user(pool, email, verified=False)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO email_verification_tokens(user_id, token_hash, expires_at) "
+            "VALUES($1, $2, now() - interval '1 minute')",
+            user_id, auth._hash_token(raw),
+        )
+    async with await _client() as client:
+        expired = await client.post("/api/auth/verify", json={"token": raw})
+        unknown = await client.post("/api/auth/verify", json={"token": "no-such-token"})
+    assert expired.status_code == 400
+    assert unknown.status_code == 400
+    async with pool.acquire() as conn:
+        still_null = await conn.fetchval(
+            "SELECT email_verified_at FROM users WHERE id=$1", user_id
+        )
+    assert still_null is None
+
+
+async def test_verified_account_accepts_the_google_link_after_verifying(pool, monkeypatch):
+    """The other half of the takeover fix: once the address IS verified, the
+    normal auto-link path works again — the guard blocks squatters, not users."""
+    email = f"gverified-{uuid4().hex}@example.test"
+    raw = f"vtok-{uuid4().hex}"
+    user_id = await _password_user(pool, email, verified=False)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO email_verification_tokens(user_id, token_hash, expires_at) "
+            "VALUES($1, $2, now() + interval '1 hour')",
+            user_id, auth._hash_token(raw),
+        )
+    state = await _seed_login_state(pool)
+    sub = f"sub-{uuid4().hex}"
+    monkeypatch.setattr(
+        "app.domains.auth.service._google_fetch_identity",
+        _fake_identity(sub=sub, email=email, name="Owner"),
+    )
+    async with await _client() as client:
+        assert (await client.post("/api/auth/verify", json={"token": raw})).status_code == 200
+        resp = await client.get(f"/api/auth/google/callback?code=abc&state={state}")
+        assert resp.status_code in (302, 307)
+        assert "unverified_account" not in resp.headers["location"]
+    async with pool.acquire() as conn:
+        linked = await conn.fetchval("SELECT google_sub FROM users WHERE id=$1", user_id)
+    assert linked == sub
+
+
 async def test_reset_password_consumes_token_and_revokes_sessions(pool, workspace_id):
     email = f"reset-{uuid4().hex}@example.test"
     raw = f"reset-{uuid4().hex}"
@@ -619,7 +710,7 @@ async def test_reset_password_consumes_token_and_revokes_sessions(pool, workspac
         user_id = await conn.fetchval(
             "INSERT INTO users(email, display_name, password_hash) VALUES($1, $2, $3) "
             "RETURNING id",
-            email, "Reset User", auth.hash_password("the old password here"),
+            email, "Reset User", await auth.hash_password("the old password here"),
         )
         await conn.execute(
             "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
@@ -666,7 +757,7 @@ async def test_reset_password_rejects_expired_token(pool, workspace_id):
         user_id = await conn.fetchval(
             "INSERT INTO users(email, display_name, password_hash) VALUES($1, $2, $3) "
             "RETURNING id",
-            email, "Expired User", auth.hash_password("correct horse battery staple"),
+            email, "Expired User", await auth.hash_password("correct horse battery staple"),
         )
         await conn.execute(
             "INSERT INTO password_reset_tokens(user_id, token_hash, expires_at) "
@@ -854,17 +945,22 @@ async def test_google_callback_creates_passwordless_user(pool, monkeypatch):
     assert row["google_sub"]
 
 
-async def test_google_callback_links_existing_password_account(pool, monkeypatch):
-    """Signing in with Google on an email that already has a password account
-    links to that same user (no duplicate) and stamps google_sub. Matching is
-    case-insensitive on email."""
-    email = f"glink-{uuid4().hex}@example.test"
+async def _password_user(pool, email: str, verified: bool) -> int:
     async with pool.acquire() as conn:
-        existing_id = await conn.fetchval(
-            "INSERT INTO users(email, display_name, password_hash) "
-            "VALUES($1, $2, $3) RETURNING id",
-            email, "Pat Password", auth.hash_password("correct horse battery staple"),
+        return await conn.fetchval(
+            "INSERT INTO users(email, display_name, password_hash, email_verified_at) "
+            "VALUES($1, $2, $3, CASE WHEN $4 THEN now() END) RETURNING id",
+            email, "Pat Password",
+            await auth.hash_password("correct horse battery staple"), verified,
         )
+
+
+async def test_google_callback_links_existing_verified_password_account(pool, monkeypatch):
+    """Signing in with Google on an email that already has a VERIFIED password
+    account links to that same user (no duplicate) and stamps google_sub.
+    Matching is case-insensitive on email."""
+    email = f"glink-{uuid4().hex}@example.test"
+    existing_id = await _password_user(pool, email, verified=True)
     state = await _seed_login_state(pool)
     sub = f"sub-{uuid4().hex}"
     monkeypatch.setattr(
@@ -881,6 +977,35 @@ async def test_google_callback_links_existing_password_account(pool, monkeypatch
     assert len(rows) == 1
     assert rows[0]["id"] == existing_id
     assert rows[0]["google_sub"] == sub
+
+
+async def test_google_callback_refuses_unverified_password_account(pool, monkeypatch):
+    """Account-takeover regression. An attacker registers victim@corp.com with
+    their own password and never verifies it. When the real owner signs in with
+    Google, auto-linking that identity onto the squatted row would hand the
+    attacker a password on the victim's account — so it must be refused, leaving
+    google_sub unset and no session cookie issued."""
+    email = f"gsquat-{uuid4().hex}@example.test"
+    squatted_id = await _password_user(pool, email, verified=False)
+    state = await _seed_login_state(pool)
+    sub = f"sub-{uuid4().hex}"
+    monkeypatch.setattr(
+        "app.domains.auth.service._google_fetch_identity",
+        _fake_identity(sub=sub, email=email, name="Real Owner"),
+    )
+    async with await _client() as client:
+        resp = await client.get(f"/api/auth/google/callback?code=abc&state={state}")
+        assert resp.status_code in (302, 307)
+        assert "unverified_account" in resp.headers["location"]
+        assert auth.COOKIE_NAME not in resp.cookies
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, google_sub FROM users WHERE lower(email)=lower($1)", email
+        )
+    # The squatted row is untouched and no shadow account was created.
+    assert len(rows) == 1
+    assert rows[0]["id"] == squatted_id
+    assert rows[0]["google_sub"] is None
 
 
 async def test_google_callback_rejects_unknown_state(pool):
@@ -991,7 +1116,8 @@ async def test_query_blocked_when_workspace_read_only(pool):
         assert resp.status_code == 402
 
 
-async def test_checkout_activates_and_reenables_writes(pool):
+async def test_checkout_activates_and_reenables_writes(pool, monkeypatch):
+    monkeypatch.setattr(config, "BILLING_STUB_CHECKOUT", True)
     ws = await _workspace_with_billing(
         pool, "trialing", datetime.now(timezone.utc) - timedelta(days=1)
     )
@@ -1006,6 +1132,89 @@ async def test_checkout_activates_and_reenables_writes(pool):
         st = await owner.get("/api/billing/status")
         assert st.json()["plan_status"] == "active"
         assert st.json()["writable"] is True
+
+
+async def test_checkout_disabled_by_default_does_not_grant_the_paid_plan(pool):
+    """The stub activates a paid plan without taking payment, so it must be off
+    unless explicitly opted into — otherwise any owner can skip the trial gate."""
+    ws = await _workspace_with_billing(pool, "expired", None)
+    owner, _ = await _auth_client(pool, ws, role="owner")
+    async with owner:
+        assert (await owner.post("/api/billing/checkout")).status_code == 501
+        # ...and the workspace is still read-only afterwards.
+        assert (await owner.post("/api/ingest", json=_INGEST)).status_code == 402
+        assert (await owner.get("/api/billing/status")).json()["writable"] is False
+
+
+async def test_formation_health_withholds_fleet_counts_without_a_token(pool):
+    """The detailed payload counts documents and failures across EVERY workspace
+    on the instance, so an anonymous caller gets liveness only."""
+    async with await _client() as client:
+        resp = await client.get("/api/health/formation")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["detail"] is False
+    assert body["status"] in ("ok", "stalled")
+    for leaked in ("pending", "failed", "complete", "workers", "failed_1h"):
+        assert leaked not in body
+
+
+async def test_formation_health_returns_detail_with_a_valid_token(pool, monkeypatch):
+    monkeypatch.setattr(config, "HEALTH_TOKEN", "s3cret-health")
+    async with await _client() as client:
+        good = await client.get(
+            "/api/health/formation", headers={"x-health-token": "s3cret-health"}
+        )
+        bad = await client.get(
+            "/api/health/formation", headers={"x-health-token": "wrong"}
+        )
+    assert good.status_code == 200
+    assert "pending" in good.json() and "workers" in good.json()
+    assert bad.status_code == 401
+
+
+async def test_oversized_request_body_is_rejected(pool, workspace_id):
+    """Uvicorn imposes no body limit, so the middleware is the only thing between
+    a huge POST and an LLM prompt. Declared Content-Length is refused up front."""
+    member, _ = await _auth_client(pool, workspace_id, role="member")
+    async with member:
+        resp = await member.post(
+            "/api/query",
+            content=b"x" * (config.MAX_REQUEST_BYTES + 1),
+            headers={"content-type": "application/json"},
+        )
+        assert resp.status_code == 413
+
+
+async def test_oversized_chunked_body_is_cut_off(pool, workspace_id):
+    """A chunked request declares no Content-Length, so it's metered as it
+    streams. The abort surfaces as FastAPI's 400 rather than a 413 (see
+    BodySizeLimitMiddleware) — what matters is that it's refused, not buffered."""
+    member, _ = await _auth_client(pool, workspace_id, role="member")
+
+    async def oversized_chunks():
+        chunk = b"x" * 65536
+        for _ in range(config.MAX_REQUEST_BYTES // len(chunk) + 5):
+            yield chunk
+
+    async with member:
+        resp = await member.post(
+            "/api/query",
+            content=oversized_chunks(),
+            headers={"content-type": "application/json"},
+        )
+        assert resp.status_code in (400, 413)
+
+
+async def test_overlong_question_is_rejected_by_field_cap(pool, workspace_id):
+    """Under the body limit but over the per-field cap — Pydantic refuses it
+    before any retrieval or LLM work starts."""
+    member, _ = await _auth_client(pool, workspace_id, role="member")
+    async with member:
+        resp = await member.post(
+            "/api/query", json={"question": "x" * (config.MAX_QUESTION_CHARS + 1)}
+        )
+        assert resp.status_code == 422
 
 
 async def test_checkout_requires_owner(pool):

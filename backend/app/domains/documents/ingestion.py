@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
-from app.core import db, usage
+from app.core import config, db, usage
 from app.providers.embeddings import (
     EmbeddingSpaceMismatch,
     active_embed_model,
@@ -21,10 +21,13 @@ async def schedule_formation(doc_id: int) -> None:
 
 
 class IngestRequest(BaseModel):
-    source: str = Field(..., description="slack | notion | github | jira | meeting | other")
-    title: str
-    text: str
-    author: Optional[str] = None
+    source: str = Field(..., description="slack | notion | github | jira | meeting | other",
+                        max_length=64)
+    title: str = Field(..., max_length=1000)
+    # Bounded so one request can't buffer an arbitrarily large document through
+    # chunking and embedding. Connectors chunk long sources upstream anyway.
+    text: str = Field(..., max_length=config.MAX_DOCUMENT_CHARS)
+    author: Optional[str] = Field(None, max_length=500)
     created_at: Optional[str] = None  # ISO 8601 — when the content was originally written
     tags: List[str] = Field(default_factory=list)
     source_connection_id: Optional[int] = None

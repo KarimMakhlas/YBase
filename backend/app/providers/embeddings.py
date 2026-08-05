@@ -53,7 +53,9 @@ def _local_embed(text: str) -> List[float]:
     for g in grams:
         counts[g] = counts.get(g, 0) + 1
     for g, c in counts.items():
-        h = hashlib.md5(g.encode()).digest()
+        # Feature hashing — md5 is a fast bucket function here, not a security
+        # primitive. Flagging it as such keeps linters honest about the intent.
+        h = hashlib.md5(g.encode(), usedforsecurity=False).digest()
         idx = int.from_bytes(h[:4], "little") % dim
         sign = 1.0 if h[4] % 2 == 0 else -1.0
         vec[idx] += sign * (1.0 + math.log(c))

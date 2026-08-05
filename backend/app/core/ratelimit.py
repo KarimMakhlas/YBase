@@ -20,6 +20,7 @@ class SlidingWindowLimiter:
         self.max_events = max_events
         self.window_s = window_s
         self._events: Dict[Hashable, Deque[float]] = {}
+        self._last_sweep = time.monotonic()
 
     def allow(self, key: Hashable) -> bool:
         if self.max_events <= 0:  # 0 disables the limit
@@ -33,7 +34,23 @@ class SlidingWindowLimiter:
         if len(dq) >= self.max_events:
             return False
         dq.append(now)
+        self._maybe_sweep(now)
         return True
+
+    def _maybe_sweep(self, now: float) -> None:
+        """Drop keys whose window has fully drained.
+
+        auth_limiter is keyed by client IP, so without this the dict grew one
+        permanent entry per IP ever seen — an unbounded leak in a
+        long-running single-instance process, and one an attacker can drive.
+        Amortised: a full pass at most once per window, not per request."""
+        if now - self._last_sweep < self.window_s:
+            return
+        self._last_sweep = now
+        cutoff = now - self.window_s
+        stale = [k for k, dq in self._events.items() if not dq or dq[-1] <= cutoff]
+        for k in stale:
+            del self._events[k]
 
     def enforce(self, key: Hashable, what: str) -> None:
         if not self.allow(key):

@@ -46,6 +46,42 @@ async def test_propose_queues_pending_without_touching_graph(pool, workspace_id)
     assert audit is not None and audit["data"]["key_name"] == "test"
 
 
+async def _agent_client_then_expire(pool):
+    """An API key minted while the workspace is still writable (creating a key
+    is itself write-gated), with the workspace flipped to expired afterwards —
+    the real-world shape: the key outlives the subscription."""
+    from test_api_endpoints import _workspace_with_billing
+
+    ws = await _workspace_with_billing(pool, "trialing", None)
+    agent = await _agent_client(pool, ws)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE workspaces SET plan_status='expired' WHERE id=$1", ws)
+    return agent, ws
+
+
+async def test_propose_is_blocked_when_the_workspace_is_read_only(pool):
+    """/api/agent/propose is the one write on the agent API, so it honours the
+    same billing gate as the session write routes — an expired workspace must
+    not keep accumulating proposals through a still-valid API key."""
+    agent, ws = await _agent_client_then_expire(pool)
+    async with agent:
+        resp = await agent.post("/api/agent/propose", json=PROPOSAL)
+    assert resp.status_code == 402
+    async with pool.acquire() as conn:
+        queued = await conn.fetchval(
+            "SELECT count(*) FROM memory_proposals WHERE workspace_id=$1", ws)
+    assert queued == 0
+
+
+async def test_agent_reads_still_work_when_read_only(pool):
+    """...but reads stay open, matching the stance on session reads."""
+    agent, _ = await _agent_client_then_expire(pool)
+    async with agent:
+        resp = await agent.post("/api/agent/context", json={"task": "why postgres?"})
+    assert resp.status_code == 200
+
+
 async def test_propose_validation(pool, workspace_id):
     assert (await _propose(pool, workspace_id, topics=[])).status_code == 400
     assert (await _propose(pool, workspace_id, label="  ")).status_code == 400

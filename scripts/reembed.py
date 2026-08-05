@@ -29,7 +29,6 @@ BATCH = 32
 
 
 async def main() -> None:
-    provider = await active_embedder()
     model = await active_embed_model()
     pool = await db.get_pool()
     async with pool.acquire() as conn:

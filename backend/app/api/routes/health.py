@@ -2,7 +2,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.core import config, coordination, db
+from app.core import config, coordination, db, mailer
 from app.domains.auth import service as auth
 from app.domains.memory import worker
 from app.providers import llm
@@ -25,14 +25,22 @@ async def health() -> Dict[str, Any]:
 
 @router.get("/health/formation")
 async def health_formation(request: Request) -> Dict[str, Any]:
-    """Formation-queue health for external uptime monitors. Open by default
-    (like /api/health); set HEALTH_TOKEN to require a matching token via the
-    x-health-token header or ?token= query param."""
-    if config.HEALTH_TOKEN:
-        token = request.headers.get("x-health-token") or request.query_params.get("token")
-        if token != config.HEALTH_TOKEN:
-            raise HTTPException(401, "bad health token")
-    return await worker.formation_health()
+    """Formation-queue health for external uptime monitors.
+
+    The full payload counts documents and failures across EVERY workspace on the
+    instance, so it tells an anonymous caller how much data the whole tenant base
+    is pushing through. Detail therefore requires HEALTH_TOKEN (via the
+    x-health-token header or ?token=). Without a matching token the endpoint
+    still answers liveness — enough for an uptime check to see the app is up and
+    the queue isn't stalled — but withholds the numbers."""
+    token = request.headers.get("x-health-token") or request.query_params.get("token")
+    authorized = bool(config.HEALTH_TOKEN) and token == config.HEALTH_TOKEN
+    if config.HEALTH_TOKEN and token is not None and not authorized:
+        raise HTTPException(401, "bad health token")
+    health = await worker.formation_health()
+    if authorized:
+        return health
+    return {"status": "stalled" if health.get("stalled") else "ok", "detail": False}
 
 
 @router.get("/health/details")
@@ -63,5 +71,8 @@ async def health_details(
         ),
         "formation": await worker.queue_stats(current.workspace_id),
         "slack_events": bool(config.SLACK_SIGNING_SECRET),
+        # False means password-reset and email-verification links are silently
+        # discarded on this instance.
+        "email_configured": mailer.configured(),
         "redis": await coordination.status(),
     }
