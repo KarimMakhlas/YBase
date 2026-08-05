@@ -1326,6 +1326,37 @@ async def test_sources_last_sync_documents_null_without_completed_job(pool, work
     assert conn_row["last_sync_documents"] is None
 
 
+async def test_sources_expose_only_mvp_connectors(pool, workspace_id):
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        response = await admin.get("/api/sources")
+
+    assert response.status_code == 200
+    assert set(response.json()["configured"]) == {"slack", "github", "notion"}
+
+
+async def test_sync_rejects_legacy_connector_rows(pool, workspace_id):
+    async with pool.acquire() as conn:
+        connection_id = await conn.fetchval(
+            "INSERT INTO source_connections(workspace_id, provider, name, external_workspace_id) "
+            "VALUES($1, 'jira', 'Legacy Jira', 'legacy-jira') RETURNING id",
+            workspace_id,
+        )
+        await conn.execute(
+            "INSERT INTO source_streams(workspace_id, connection_id, provider, external_id, name, selected) "
+            "VALUES($1, $2, 'jira', 'legacy-project', 'Legacy project', true)",
+            workspace_id,
+            connection_id,
+        )
+
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        response = await admin.post(f"/api/sources/{connection_id}/sync", json={"days": 30})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "unsupported source provider"
+
+
 def _sse_event(body: str, event: str):
     """Pull the JSON payload of a named SSE event out of a response body."""
     for block in body.split("\n\n"):

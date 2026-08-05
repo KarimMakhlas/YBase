@@ -39,7 +39,7 @@ async def _jobs(conn, connection_id):
 
 
 @pytest.mark.parametrize("provider", [
-    "jira", "github", "linear", "confluence", "discord", "googledocs", "notion", "figma",
+    "github", "notion",
 ])
 async def test_never_synced_connection_enqueues_backfill(pool, workspace_id, captured_dispatch, provider):
     async with pool.acquire() as conn:
@@ -60,10 +60,10 @@ async def test_never_synced_connection_enqueues_backfill(pool, workspace_id, cap
 async def test_already_synced_due_connection_enqueues_reconcile(pool, workspace_id, captured_dispatch):
     async with pool.acquire() as conn:
         # synced long ago -> due, but not "never" -> reconcile kind
-        cid = await _make_connection(conn, workspace_id, "jira")
+        cid = await _make_connection(conn, workspace_id, "github")
         await conn.execute(
             "UPDATE source_connections SET last_sync_at = now() - interval '30 days' WHERE id=$1", cid)
-        await _make_stream(conn, workspace_id, cid, "jira", selected=True)
+        await _make_stream(conn, workspace_id, cid, "github", selected=True)
 
     await service.resync_tick()
 
@@ -75,10 +75,10 @@ async def test_already_synced_due_connection_enqueues_reconcile(pool, workspace_
 
 async def test_recently_synced_connection_is_not_due(pool, workspace_id, captured_dispatch):
     async with pool.acquire() as conn:
-        cid = await _make_connection(conn, workspace_id, "jira")
+        cid = await _make_connection(conn, workspace_id, "github")
         await conn.execute(
             "UPDATE source_connections SET last_sync_at = now() WHERE id=$1", cid)
-        await _make_stream(conn, workspace_id, cid, "jira", selected=True)
+        await _make_stream(conn, workspace_id, cid, "github", selected=True)
 
     await service.resync_tick()
 
@@ -100,11 +100,11 @@ async def test_no_selected_streams_enqueues_nothing(pool, workspace_id, captured
 
 async def test_active_job_blocks_duplicate_enqueue(pool, workspace_id, captured_dispatch):
     async with pool.acquire() as conn:
-        cid = await _make_connection(conn, workspace_id, "jira", last_sync_at=None)
-        await _make_stream(conn, workspace_id, cid, "jira", selected=True)
+        cid = await _make_connection(conn, workspace_id, "github", last_sync_at=None)
+        await _make_stream(conn, workspace_id, cid, "github", selected=True)
         await conn.execute(
             "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, state, stats) "
-            "VALUES($1, $2, 'jira', 'running', 'backfill', '{}'::jsonb, '{}'::jsonb)",
+            "VALUES($1, $2, 'github', 'running', 'backfill', '{}'::jsonb, '{}'::jsonb)",
             workspace_id, cid)
 
     await service.resync_tick()
@@ -119,11 +119,11 @@ async def test_active_job_blocks_duplicate_enqueue(pool, workspace_id, captured_
 
 async def test_stale_connector_job_is_requeued_and_dispatched(pool, workspace_id, captured_dispatch):
     async with pool.acquire() as conn:
-        cid = await _make_connection(conn, workspace_id, "jira")
-        stream_id = await _make_stream(conn, workspace_id, cid, "jira", selected=True)
+        cid = await _make_connection(conn, workspace_id, "github")
+        stream_id = await _make_stream(conn, workspace_id, cid, "github", selected=True)
         job_id = await conn.fetchval(
             "INSERT INTO sync_jobs(workspace_id, connection_id, provider, status, kind, state, stats) "
-            "VALUES($1, $2, 'jira', 'running', 'backfill', '{}'::jsonb, '{}'::jsonb) RETURNING id",
+            "VALUES($1, $2, 'github', 'running', 'backfill', '{}'::jsonb, '{}'::jsonb) RETURNING id",
             workspace_id, cid,
         )
         await conn.execute(
@@ -142,13 +142,13 @@ async def test_stale_connector_job_is_requeued_and_dispatched(pool, workspace_id
     assert "abandoned" in job["error"]
     assert stream["status"] == "idle"
     assert "abandoned" in stream["last_error"]
-    assert ("jira", job_id) in captured_dispatch
+    assert ("github", job_id) in captured_dispatch
 
 
 async def test_second_tick_does_not_double_enqueue(pool, workspace_id, captured_dispatch):
     async with pool.acquire() as conn:
-        cid = await _make_connection(conn, workspace_id, "jira", last_sync_at=None)
-        await _make_stream(conn, workspace_id, cid, "jira", selected=True)
+        cid = await _make_connection(conn, workspace_id, "github", last_sync_at=None)
+        await _make_stream(conn, workspace_id, cid, "github", selected=True)
 
     await service.resync_tick()           # creates a pending job
     await service.resync_tick()           # pending job is "active" -> guard blocks
@@ -159,8 +159,8 @@ async def test_second_tick_does_not_double_enqueue(pool, workspace_id, captured_
 
 async def test_disconnected_connection_skipped(pool, workspace_id, captured_dispatch):
     async with pool.acquire() as conn:
-        cid = await _make_connection(conn, workspace_id, "jira", last_sync_at=None, status="revoked")
-        await _make_stream(conn, workspace_id, cid, "jira", selected=True)
+        cid = await _make_connection(conn, workspace_id, "github", last_sync_at=None, status="revoked")
+        await _make_stream(conn, workspace_id, cid, "github", selected=True)
 
     await service.resync_tick()
 

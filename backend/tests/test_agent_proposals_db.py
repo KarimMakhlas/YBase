@@ -1,4 +1,4 @@
-"""Agent write-back (/api/agent/propose + /api/memory-review/proposals):
+"""Agent write-back (/api/agent/propose + /api/proposals):
 proposals queue as pending rows without touching the memory graph; a curator
 approves them into curated nodes with topic edges (merging on label like
 formation) or rejects them; agents can only see their own workspace's queue.
@@ -108,12 +108,12 @@ async def test_approve_creates_curated_node_with_topic_edges(pool, workspace_id)
 
     admin, user_id = await _auth_client(pool, workspace_id, role="admin")
     async with admin:
-        pending = (await admin.get("/api/memory-review/proposals")).json()
+        pending = (await admin.get("/api/proposals")).json()
         assert [p["id"] for p in pending] == [proposal_id]
         assert pending[0]["key_name"] == "test"
         assert pending[0]["existing_node_id"] is None
         resp = await admin.post(
-            f"/api/memory-review/proposals/{proposal_id}/approve",
+            f"/api/proposals/{proposal_id}/approve",
             json={"summary": "Curator-tightened summary."})
     assert resp.status_code == 200
     node_id = resp.json()["node_id"]
@@ -145,7 +145,7 @@ async def test_approve_merges_into_existing_active_node(pool, workspace_id):
     admin, _ = await _auth_client(pool, workspace_id, role="admin")
     async with admin:
         resp = await admin.post(
-            f"/api/memory-review/proposals/{proposal_id}/approve", json={})
+            f"/api/proposals/{proposal_id}/approve", json={})
     assert resp.json()["node_id"] == existing
     async with pool.acquire() as conn:
         count = await conn.fetchval(
@@ -162,10 +162,10 @@ async def test_reject_leaves_no_node_and_double_review_conflicts(pool, workspace
     admin, _ = await _auth_client(pool, workspace_id, role="admin")
     async with admin:
         resp = await admin.post(
-            f"/api/memory-review/proposals/{proposal_id}/reject",
+            f"/api/proposals/{proposal_id}/reject",
             json={"note": "Not an actual decision."})
         again = await admin.post(
-            f"/api/memory-review/proposals/{proposal_id}/approve", json={})
+            f"/api/proposals/{proposal_id}/approve", json={})
     assert resp.status_code == 200
     assert again.status_code == 409  # already rejected — no resurrection
     async with pool.acquire() as conn:
@@ -184,9 +184,9 @@ async def test_member_cannot_review_proposals(pool, workspace_id):
     proposal_id = (await _propose(pool, workspace_id)).json()["proposal_id"]
     member, _ = await _auth_client(pool, workspace_id, role="member")
     async with member:
-        listed = await member.get("/api/memory-review/proposals")
+        listed = await member.get("/api/proposals")
         approved = await member.post(
-            f"/api/memory-review/proposals/{proposal_id}/approve", json={})
+            f"/api/proposals/{proposal_id}/approve", json={})
     assert listed.status_code == 403
     assert approved.status_code == 403
 
@@ -209,7 +209,7 @@ async def test_agent_sees_only_its_workspace_proposals(pool, workspace_id):
     # the proposing workspace's agent can track the outcome
     admin, _ = await _auth_client(pool, workspace_id, role="admin")
     async with admin:
-        await admin.post(f"/api/memory-review/proposals/{proposal_id}/approve", json={})
+        await admin.post(f"/api/proposals/{proposal_id}/approve", json={})
     async with await _agent_client(pool, workspace_id) as agent:
         mine = (await agent.get(f"/api/agent/proposals/{proposal_id}")).json()
     assert mine["status"] == "approved"

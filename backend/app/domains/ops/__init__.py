@@ -1,1 +1,0 @@
-"""Ops/demo data domain."""
