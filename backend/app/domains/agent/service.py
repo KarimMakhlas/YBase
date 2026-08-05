@@ -547,8 +547,13 @@ async def agent_propose(
 ) -> Dict[str, Any]:
     """Propose a new decision (or open question) for the memory graph. The
     proposal queues for human curation — it is NOT live memory and will not
-    appear in search/ask/context until a curator approves it."""
+    appear in search/ask/context until a curator approves it.
+
+    This is the one write on the agent API, so unlike the read routes it honours
+    the same billing gate as the session write routes."""
     from app.domains.memory import review_service
+
+    await auth.assert_workspace_writable(current.workspace_id)
 
     kind = (req.kind or "decision").strip().lower()
     if kind not in PROPOSAL_KINDS:

@@ -258,7 +258,8 @@ async def create_workspace_user(
             user_id = await conn.fetchval(
                 "INSERT INTO users(email, display_name, password_hash) "
                 "VALUES($1, $2, $3) RETURNING id",
-                email, req.display_name.strip() or email, auth.hash_password(req.password),
+                email, req.display_name.strip() or email,
+                await auth.hash_password(req.password),
             )
             await conn.execute(
                 "INSERT INTO workspace_memberships(workspace_id, user_id, role) "
@@ -410,7 +411,7 @@ async def patch_workspace_user(
             if req.password is not None:
                 await conn.execute(
                     "UPDATE users SET password_hash=$2, updated_at=now() WHERE id=$1",
-                    user_id, auth.hash_password(req.password),
+                    user_id, await auth.hash_password(req.password),
                 )
             if req.disabled is not None:
                 await conn.execute(

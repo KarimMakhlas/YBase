@@ -33,7 +33,13 @@ export default function Plans({ billing, canPay = false, onUpgraded, onBack }) {
       toast('You’re on the Team plan — editing re-enabled', 'success')
       onUpgraded?.()
     } catch (err) {
-      toast(`Upgrade failed: ${err.message}`)
+      // 501 = no payment provider wired up on this instance. That's a setup
+      // state, not a failed payment, so say so plainly rather than "failed".
+      if (/not configured/i.test(err.message)) {
+        toast('Billing isn’t set up on this instance yet — contact your admin')
+      } else {
+        toast(`Upgrade failed: ${err.message}`)
+      }
     } finally {
       setBusy(false)
     }

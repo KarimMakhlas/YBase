@@ -1,3 +1,9 @@
 -r requirements.txt
-pytest>=8.0
-pytest-asyncio>=0.23
+pytest==9.1.1
+pytest-asyncio==1.4.0
+# Lint only — CI runs it non-blocking, so it never gates a deploy.
+ruff==0.16.1
+# mcp-server/'s SDK. tests/test_mcp_server.py importorskip's it, so without this
+# those 5 tests silently skipped in CI and only ever ran on a dev machine that
+# happened to have it installed.
+mcp==1.28.1

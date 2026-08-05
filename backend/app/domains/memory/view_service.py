@@ -234,15 +234,22 @@ async def shared_decision(token: str) -> Dict[str, Any]:
 
 @router.get("/timeline")
 async def timeline(
+    limit: int = 500,
     current: auth.AuthContext = Depends(auth.get_current_user),
 ) -> List[Dict[str, Any]]:
+    """Newest `limit` events. Unbounded, this pulled every document AND every
+    decision/question node in the workspace on each request — fine at demo
+    scale, unusable once a real corpus lands. Each side is capped, then merged
+    and re-sorted, so the returned window is the most recent activity."""
+    limit = max(1, min(limit, 2000))
     pool = await db.get_pool()
     events: List[Dict[str, Any]] = []
     async with pool.acquire() as conn:
         docs = await conn.fetch(
             "SELECT id, source, title, author, doc_created_at, context_summary, "
-            "       formation_status FROM documents WHERE workspace_id=$1",
-            current.workspace_id,
+            "       formation_status FROM documents WHERE workspace_id=$1 "
+            "ORDER BY doc_created_at DESC NULLS LAST, id DESC LIMIT $2",
+            current.workspace_id, limit,
         )
         for d in docs:
             events.append({
@@ -265,8 +272,9 @@ async def timeline(
             "WHERE n.workspace_id=$1 AND d.workspace_id=$1 "
             "AND n.kind IN ('decision', 'question') "
             "AND n.archived_at IS NULL "
-            "GROUP BY n.id",
-            current.workspace_id,
+            "GROUP BY n.id "
+            "ORDER BY min(d.doc_created_at) DESC NULLS LAST, n.id DESC LIMIT $2",
+            current.workspace_id, limit,
         )
         revisited = {
             r["dst"] for r in await conn.fetch(

@@ -130,16 +130,24 @@ async def reform_document(
 
 @router.get("/documents")
 async def list_documents(
+    limit: int = 200,
+    offset: int = 0,
     current: auth.AuthContext = Depends(auth.get_current_user),
 ) -> List[Dict[str, Any]]:
+    """Paged. A workspace that has backfilled a few months of Slack has tens of
+    thousands of documents, and this used to return every row (with tags and
+    summaries) on every page load."""
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, source, title, author, doc_created_at, tags, context_summary, "
             "       formation_status, formation_error, formation_attempts, ingested_at, "
             "       source_connection_id, source_stream_id, external_ref "
-            "FROM documents WHERE workspace_id=$1 ORDER BY doc_created_at NULLS LAST, id",
-            current.workspace_id,
+            "FROM documents WHERE workspace_id=$1 "
+            "ORDER BY doc_created_at NULLS LAST, id LIMIT $2 OFFSET $3",
+            current.workspace_id, limit, offset,
         )
     return [dict(r) for r in rows]
 

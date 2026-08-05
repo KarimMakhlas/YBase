@@ -79,6 +79,9 @@ LOGIN_MAX_FAILURES = int(os.getenv("LOGIN_MAX_FAILURES", "5"))
 LOGIN_WINDOW_MINUTES = int(os.getenv("LOGIN_WINDOW_MINUTES", "15"))
 # How long a password-reset link stays valid.
 PASSWORD_RESET_TTL_MINUTES = int(os.getenv("PASSWORD_RESET_TTL_MINUTES", "60"))
+# How long an email-verification link stays valid. Longer than a password reset
+# — it is sent unprompted at signup, so it has to survive "I'll do it tonight".
+VERIFICATION_TTL_HOURS = int(os.getenv("VERIFICATION_TTL_HOURS", "48"))
 
 # Per-user rate limits on the expensive endpoints (events per minute,
 # 0 disables). Login has its own throttle (auth_login_attempts).
@@ -103,9 +106,22 @@ SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0"))
 # Log output: "text" (human-readable, default) or "json" (one JSON object per
 # line, for log aggregators / queryable production logs).
 LOG_FORMAT = os.getenv("LOG_FORMAT", "text")
-# Optional shared secret guarding /api/health/formation for external uptime
-# monitors. Empty = open, like /api/health.
+# Shared secret guarding the detailed /api/health/formation payload for external
+# uptime monitors. Empty = the endpoint still answers liveness, but withholds the
+# fleet-wide queue/failure counts (those describe every tenant on the instance,
+# so they are not for anonymous callers).
 HEALTH_TOKEN = os.getenv("HEALTH_TOKEN", "")
+
+# Hard ceiling on an inbound request body. Nothing else bounds it: uvicorn has no
+# default limit, so without this a single POST /api/query could carry an
+# arbitrarily large question straight into an LLM prompt. Generous enough for a
+# document paste, small enough that it can't exhaust memory.
+MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", str(10 * 1024 * 1024)))
+# Per-field caps on the free-text inputs, enforced by Pydantic before any work
+# starts. Well under MAX_REQUEST_BYTES, which is the blunt outer wall.
+MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "4000"))
+MAX_DOCUMENT_CHARS = int(os.getenv("MAX_DOCUMENT_CHARS", "1000000"))
+MAX_MESSAGE_CHARS = int(os.getenv("MAX_MESSAGE_CHARS", "100000"))
 
 # Claude — memory formation, query reasoning, answer synthesis.
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-fable-5")
@@ -383,6 +399,14 @@ CONNECTOR_SECRET_KEYS_OLD = [
 
 # Billing: length of the no-credit-card free trial for new workspaces (days).
 TRIAL_DAYS = int(os.getenv("TRIAL_DAYS", "7"))
+# The stubbed checkout activates the paid plan WITHOUT taking payment. That is
+# fine for local dev and self-hosted installs, and a free-plan giveaway on a
+# public deployment — any owner could POST /api/billing/checkout and skip the
+# trial gate forever. Default off: the route 501s until real billing is wired,
+# or until a self-hoster opts in here.
+BILLING_STUB_CHECKOUT = os.getenv("BILLING_STUB_CHECKOUT", "false").lower() in (
+    "1", "true", "yes", "on",
+)
 
 # Google sign-in (OAuth 2.0 / OpenID Connect). Register an app at
 # console.cloud.google.com with the authorized redirect URI

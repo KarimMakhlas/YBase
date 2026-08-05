@@ -19,5 +19,6 @@ nohup.out
 
 # Local tooling / harness config
 .claude/
-
-docs
+# Agent-generated plans/specs. NOT the whole docs/ tree — a bare "docs" entry
+# here also untracked docs/architecture.html, which the README links to.
+docs/superpowers/

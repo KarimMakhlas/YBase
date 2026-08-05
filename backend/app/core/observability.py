@@ -132,6 +132,91 @@ class RequestContextMiddleware:
             request_id_var.reset(token)
 
 
+class BodySizeLimitMiddleware:
+    """Bound the size of an inbound request body.
+
+    Uvicorn imposes no body-size limit of its own, so every JSON endpoint was
+    willing to buffer an arbitrarily large payload — and for /api/query and
+    /api/ingest that payload feeds an LLM prompt.
+
+    Two paths, with deliberately different responses:
+
+    * Declared Content-Length (what every normal HTTP client sends for a JSON
+      POST) is checked before a single byte is read, and over-limit requests get
+      a clean 413.
+    * A chunked request has no Content-Length, so the body is metered as it
+      streams and cut off past the limit. There the abort surfaces through
+      Starlette's body reader and the client sees FastAPI's 400 "error parsing
+      the body" rather than a 413. Less tidy, but the memory bound — the point
+      of this middleware — holds either way.
+
+    Pure ASGI, like the middleware around it, so SSE responses stay unbuffered.
+    """
+
+    def __init__(self, app, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or self.max_bytes <= 0:
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers") or [])
+        declared = headers.get(b"content-length")
+        if declared is not None:
+            try:
+                if int(declared) > self.max_bytes:
+                    await self._reject(send)
+                    return
+            except ValueError:
+                pass  # malformed header — let the metered path below handle it
+
+        received = 0
+        started = False
+
+        async def receive_metered():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise _BodyTooLarge()
+            return message
+
+        async def send_tracked(message):
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive_metered, send_tracked)
+        except _BodyTooLarge:
+            # Only synthesize a 413 if nothing has gone out yet. A streaming
+            # endpoint can start responding before it finishes reading the body;
+            # sending a second http.response.start there would be an ASGI
+            # protocol violation, so let the connection tear down instead.
+            if not started:
+                await self._reject(send)
+
+    async def _reject(self, send) -> None:
+        body = b'{"detail":"request body too large"}'
+        await send({
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+
+class _BodyTooLarge(Exception):
+    """Internal signal from the metered receive() to the middleware."""
+
+
 class SecurityHeadersMiddleware:
     """Baseline security headers. No CSP yet — the built UI would need its
     inline styles/scripts audited first. HSTS only makes sense behind HTTPS,

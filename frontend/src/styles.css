@@ -746,6 +746,31 @@ html { scroll-behavior: smooth; }
 }
 .invite-modal-more { align-self: flex-start; }
 
+/* ---- Email verification: app banner + token landing ---- */
+
+.verify-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--warning-border, var(--border));
+  background: var(--warning-soft, var(--surface-2, var(--panel)));
+  color: var(--text);
+  font-size: var(--fs-sm, 13.5px);
+  flex-shrink: 0;
+}
+.verify-banner svg { color: var(--warning, var(--accent)); flex-shrink: 0; }
+.verify-banner span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.verify-banner .linkbtn { flex-shrink: 0; }
+.verify-banner-close { margin-left: auto; flex-shrink: 0; }
+
+.verify-result {
+  display: flex; flex-direction: column; align-items: center;
+  gap: var(--sp-3, 14px); text-align: center;
+}
+.verify-result h1 { margin: 0; font-size: var(--fs-xl, 22px); font-weight: 700; }
+.verify-result .settings-sub { margin: 0; }
+.verify-icon { color: var(--success, var(--accent)); }
+.verify-icon.is-error { color: var(--warning, var(--text-secondary)); }
+
 /* ---- Chunk 4: billing banner + plans ---- */
 
 .plan-card {

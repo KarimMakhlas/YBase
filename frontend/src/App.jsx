@@ -24,6 +24,8 @@ import Plans from './components/Plans.jsx'
 import Account from './components/Account.jsx'
 import ReviewQueue from './components/ReviewQueue.jsx'
 import OpsDashboard from './components/OpsDashboard.jsx'
+import VerifyEmail from './components/VerifyEmail.jsx'
+import VerifyBanner from './components/VerifyBanner.jsx'
 import { ToastProvider } from './components/Toast.jsx'
 import { getBootstrapStatus, getMe, getOnboarding, getBillingStatus, logout, listProposals } from './api.js'
 
@@ -90,6 +92,7 @@ function parseHashRoute() {
   if (tab === 'join' && parts[1]) return { tab: null, payload: {}, joinToken: parts[1] }
   if (tab === 'shared' && parts[1]) return { tab: null, payload: {}, shareToken: parts[1] }
   if (tab === 'reset' && parts[1]) return { tab: null, payload: {}, resetToken: parts[1] }
+  if (tab === 'verify' && parts[1]) return { tab: null, payload: {}, verifyToken: parts[1] }
   if (tab === 'documents' && parts[1]) {
     return { tab: null, payload: {}, docModal: { docId: Number(parts[1]), highlight: params.get('highlight') || null } }
   }
@@ -177,6 +180,7 @@ export default function App() {
   const [joinToken, setJoinToken] = useState(null)
   const [shareToken, setShareToken] = useState(null)
   const [resetToken, setResetToken] = useState(null)
+  const [verifyToken, setVerifyToken] = useState(null)
   const [onboarding, setOnboarding] = useState(false)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [setup, setSetup] = useState(null)
@@ -231,6 +235,8 @@ export default function App() {
       setShareToken(null)
       if (route.resetToken) { setResetToken(route.resetToken); return }
       setResetToken(null)
+      if (route.verifyToken) { setVerifyToken(route.verifyToken); return }
+      setVerifyToken(null)
       if (route.docModal?.docId) { setDocModal(route.docModal); return }
       const nextTab = route.tab || 'chat'
       lastNonDocHash.current = routeHash(nextTab, route.payload)
@@ -373,6 +379,22 @@ export default function App() {
     )
   }
 
+  if (verifyToken) {
+    return (
+      <ToastProvider>
+        <VerifyEmail
+          token={verifyToken}
+          onDone={() => {
+            setVerifyToken(null)
+            // Re-read /me so the banner clears without a manual refresh.
+            loadAuth()
+            window.location.hash = '#/home'
+          }}
+        />
+      </ToastProvider>
+    )
+  }
+
   if (joinToken) {
     return (
       <ToastProvider>
@@ -502,6 +524,9 @@ export default function App() {
   return (
     <ToastProvider>
       <div className="wb-app">
+        {authState.user?.user?.email_verified === false && (
+          <VerifyBanner email={authState.user.user.email} />
+        )}
         <div className="split" ref={splitRef}>
           {collapsed ? (
             <div className="left-rail">

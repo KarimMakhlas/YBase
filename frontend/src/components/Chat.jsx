@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   Plus, MessageSquare, Trash2, PanelLeftClose, PanelLeftOpen, Copy, RefreshCw,
-  ChevronRight, Scale, Sparkles, FileText, Hash, SquareCheck, Calendar, ThumbsUp,
+  ChevronRight, Scale, Sparkles, FileText, SquareCheck, ThumbsUp,
 } from 'lucide-react'
 import {
   streamQuery, listSessions, createSession, getSession, saveMessage, deleteSession,
@@ -9,11 +9,10 @@ import {
 } from '../api.js'
 import Md from '../md.jsx'
 import { useToast } from './Toast.jsx'
-import { Badge, StatusBadge, SrcBadge, Spinner } from '../ybase/ui.jsx'
+import { Badge, StatusBadge, SrcBadge } from '../ybase/ui.jsx'
 import { STARTERS, startersFromStats } from '../lib/starters.js'
 import ybaseMark from '../assets/ybase-mark-exact.png'
 
-const SOURCE_ICON = { slack: Hash, notion: FileText, github: SquareCheck, jira: SquareCheck, meeting: Calendar }
 const CONF_TONE = { high: 'success', medium: 'warning', low: 'danger' }
 const ISSUE_OPTIONS = [
   ['wrong', 'Wrong answer'],

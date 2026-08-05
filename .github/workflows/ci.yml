@@ -32,7 +32,10 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          # Must match the Dockerfile's base image — testing on a different
+          # minor than the one that ships is how version-specific bugs reach
+          # production untested.
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
 
@@ -41,6 +44,13 @@ jobs:
 
       - name: Run backend tests
         run: PYTHONPATH=backend python -m pytest backend/tests
+
+      # Lint is advisory for now: it was added to a codebase that had never run
+      # one, so it reports rather than gates. Tighten to blocking once the
+      # existing backlog is cleared.
+      - name: Lint backend (advisory)
+        continue-on-error: true
+        run: python -m ruff check backend mcp-server scripts
 
       - uses: actions/setup-node@v4
         with:
@@ -51,6 +61,11 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+
+      - name: Lint frontend (advisory)
+        continue-on-error: true
+        working-directory: frontend
+        run: npm run lint
 
       - name: Build frontend
         working-directory: frontend

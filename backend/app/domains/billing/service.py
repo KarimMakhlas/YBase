@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.core import db
+from app.core import config, db
 from app.domains.auth import service as auth
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
@@ -63,7 +63,15 @@ async def billing_checkout(
     """Activate the paid plan. STUB: flips the workspace to active immediately and
     returns a Stripe-shaped contract ({activated, url}). Owner-only, and NOT
     write-gated — an expired workspace must still be able to pay. Chunk 5 swaps
-    the body to create a real Stripe Checkout session and return its url."""
+    the body to create a real Stripe Checkout session and return its url.
+
+    Gated on BILLING_STUB_CHECKOUT (default off) because activating a paid plan
+    without payment is a free-plan giveaway on any public deployment."""
+    if not config.BILLING_STUB_CHECKOUT:
+        raise HTTPException(
+            501,
+            "billing is not configured on this instance — no payment provider is wired up",
+        )
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():

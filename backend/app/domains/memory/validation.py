@@ -9,7 +9,7 @@ the worker stores the report on formation_runs.validation and the analytics
 quality endpoint aggregates it. Pure — no DB, fully unit-testable.
 """
 
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Set
 
 _DETAIL_CAP = 10  # keep per-run reports small; counts carry the signal
 

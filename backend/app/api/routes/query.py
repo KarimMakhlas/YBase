@@ -2,8 +2,9 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from app.core import config
 from app.core.ratelimit import query_limiter
 from app.domains.auth import service as auth
 from app.domains.query.streaming import stream_query
@@ -13,12 +14,16 @@ router = APIRouter(prefix="/api", tags=["query"])
 
 class HistoryTurn(BaseModel):
     role: str
-    content: str
+    # Truncated to the same cap the prompt builder applies per turn anyway.
+    content: str = Field("", max_length=config.MAX_MESSAGE_CHARS)
 
 
 class QueryRequest(BaseModel):
-    question: str
-    history: Optional[List[HistoryTurn]] = None
+    # Bounded: the question goes straight into an LLM prompt, so an unbounded
+    # field is unbounded token spend. History is capped per turn above and
+    # trimmed to the last 6 turns downstream.
+    question: str = Field(..., max_length=config.MAX_QUESTION_CHARS)
+    history: Optional[List[HistoryTurn]] = Field(None, max_length=100)
 
 
 @router.post("/query")

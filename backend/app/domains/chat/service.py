@@ -3,21 +3,21 @@
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.core import db
+from app.core import config, db
 from app.domains.auth import service as auth
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 
 
 class SessionCreate(BaseModel):
-    title: str
+    title: str = Field(..., max_length=500)
 
 
 class MessageCreate(BaseModel):
-    role: str
-    content: str
+    role: str = Field(..., max_length=32)
+    content: str = Field(..., max_length=config.MAX_MESSAGE_CHARS)
     meta: Optional[Dict[str, Any]] = None
 
 

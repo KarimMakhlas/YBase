@@ -15,7 +15,7 @@ import asyncio
 import logging
 import secrets
 import time
-from typing import Awaitable, Callable, Hashable, Iterable, Optional, Set
+from typing import Callable, Hashable, Iterable, Optional, Set
 
 from fastapi import HTTPException
 

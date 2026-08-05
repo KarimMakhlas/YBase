@@ -1,6 +1,8 @@
 """Plan-tier daily formation quotas: claim-time enforcement, parking as
 'rate_limited', janitor requeue after the UTC-day rollover, and audit."""
 
+import pytest
+
 from app.core import config
 from app.domains.documents.ingestion import IngestRequest, ingest_document
 from app.domains.memory import worker
@@ -105,11 +107,8 @@ async def test_quota_check_failure_releases_doc_and_lock(pool, workspace_id, mon
         raise RuntimeError("quota check DB error")
 
     monkeypatch.setattr(worker, "_enforce_quota", _boom)
-    try:
+    with pytest.raises(RuntimeError):
         await worker._claim()
-        assert False, "expected the quota error to propagate"
-    except RuntimeError:
-        pass
     async with pool.acquire() as conn:
         status = await conn.fetchval(
             "SELECT formation_status FROM documents WHERE id=$1", doc_id)

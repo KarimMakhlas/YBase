@@ -1,0 +1,35 @@
+# Lint config for the backend, mcp-server, and scripts.
+#
+# Added to a codebase that had never run a linter, so the rule set starts at
+# pyflakes + pycodestyle + a few high-signal bug-catchers rather than the full
+# default. CI runs this non-blocking (continue-on-error) for now — tighten to
+# blocking once the reported backlog is cleared.
+
+line-length = 100
+target-version = "py312"
+
+exclude = [".venv", "__pycache__", "dist", "node_modules"]
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes — undefined names, unused imports
+    "W",    # pycodestyle warnings
+    "B",    # flake8-bugbear — mutable defaults, loop-variable capture
+    "ASYNC",# blocking calls inside async def
+    "S",    # flake8-bandit (security)
+    "UP",   # pyupgrade
+]
+ignore = [
+    "E501",   # line length is advisory here; the codebase wraps by hand
+    "S101",   # assert is how the tests assert
+    "B008",   # FastAPI's Depends() in defaults is the framework idiom
+    # Style modernization, not defects. The codebase consistently uses
+    # typing.Optional/Dict/List and timezone.utc; rewriting ~290 call sites
+    # would bury the real findings in churn. Revisit as a standalone change.
+    "UP006", "UP035", "UP045", "UP017",
+]
+
+[lint.per-file-ignores]
+# Tests use hardcoded throwaway passwords and talk to a local DB by design.
+"tests/**" = ["S105", "S106", "S107", "S311"]

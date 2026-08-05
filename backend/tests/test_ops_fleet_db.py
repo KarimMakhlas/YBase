@@ -21,7 +21,7 @@ async def _multi_ws_client(pool, roles):
         user_id = await conn.fetchval(
             "INSERT INTO users(email, display_name, password_hash) "
             "VALUES($1, 'Fleet User', $2) RETURNING id",
-            email, auth.hash_password("correct horse battery staple"))
+            email, await auth.hash_password("correct horse battery staple"))
         ws_ids = []
         for i, role in enumerate(roles):
             wid = await conn.fetchval(

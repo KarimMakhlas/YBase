@@ -393,6 +393,34 @@ def test_sliding_window_limiter_zero_disables():
     assert all(lim.allow("k") for _ in range(1000))
 
 
+def test_sliding_window_limiter_evicts_drained_keys():
+    """auth_limiter is keyed by client IP, so without eviction the dict grew one
+    permanent entry per IP ever seen — an unbounded, attacker-drivable leak."""
+    from app.core.ratelimit import SlidingWindowLimiter
+    lim = SlidingWindowLimiter(max_events=5, window_s=60)
+    for i in range(500):
+        lim.allow(f"ip-{i}")
+    assert len(lim._events) == 500
+    # Jump past the window: the next call sweeps everything that has drained.
+    lim._last_sweep -= 61
+    for dq in lim._events.values():
+        dq[-1] -= 61
+    lim.allow("ip-fresh")
+    assert list(lim._events) == ["ip-fresh"]
+
+
+def test_sliding_window_limiter_sweep_keeps_live_keys():
+    """A key still inside its window must survive the sweep, or the limit resets."""
+    from app.core.ratelimit import SlidingWindowLimiter
+    lim = SlidingWindowLimiter(max_events=2, window_s=60)
+    lim.allow("busy")
+    lim.allow("busy")
+    lim._last_sweep -= 61
+    lim.allow("other")
+    assert "busy" in lim._events
+    assert lim.allow("busy") is False  # still over budget, not reset by the sweep
+
+
 def test_json_log_formatter_emits_valid_json_with_request_id():
     import json
     import logging
