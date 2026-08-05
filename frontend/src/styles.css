@@ -295,7 +295,6 @@ html { scroll-behavior: smooth; }
 .src-slack { color: var(--src-slack); }
 .src-notion { color: var(--src-notion); }
 .src-github { color: var(--src-github); }
-.src-jira { color: var(--src-jira); }
 .src-meeting { color: var(--src-meeting); }
 
 .status-pill {
