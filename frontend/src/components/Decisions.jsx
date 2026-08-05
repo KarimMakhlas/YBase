@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Search, ChevronRight, ArrowRight, Link2, Download } from 'lucide-react'
-import { createDecisionShare, getJSON, revokeDecisionShare } from '../api.js'
+import { Search, ChevronRight, ArrowRight, Download } from 'lucide-react'
+import { getJSON } from '../api.js'
 import { decisionsToCSV, decisionsToMarkdown, downloadFile } from '../export.js'
 import { useToast } from './Toast.jsx'
 import { StatusBadge } from '../ybase/ui.jsx'
@@ -10,71 +10,6 @@ const REL_LABEL = {
   revisits: { out: 'revisits', in: 'revisited by' },
   resolves: { out: 'resolves', in: 'resolved by' },
   relates_to: { out: 'related to', in: 'related to' },
-}
-
-// Per-decision public share link: create (idempotent), copy, revoke.
-function ShareControl({ decision }) {
-  const [share, setShare] = useState(null)
-  const [open, setOpen] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const toast = useToast()
-  const fullUrl = share ? `${window.location.origin}${share.path}` : ''
-
-  const ensure = async () => {
-    if (busy) return
-    setBusy(true)
-    try {
-      setShare(await createDecisionShare(decision.id))
-      setOpen(true)
-    } catch (e) {
-      toast(`Could not create link: ${e.message}`)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(fullUrl)
-      toast('Share link copied', 'success')
-    } catch {
-      toast('Copy failed — select and copy manually')
-    }
-  }
-
-  const revoke = async () => {
-    try {
-      await revokeDecisionShare(decision.id)
-      setShare(null)
-      setOpen(false)
-      toast('Share link revoked', 'success')
-    } catch (e) {
-      toast(`Revoke failed: ${e.message}`)
-    }
-  }
-
-  if (!open) {
-    return (
-      <button className="wb-btn wb-btn--ghost wb-btn--sm" onClick={ensure} disabled={busy}>
-        <Link2 size={14} strokeWidth={1.8} /> {busy ? 'Creating…' : 'Share'}
-      </button>
-    )
-  }
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-      <input
-        className="wb-input wb-input--sm"
-        style={{ flex: 1, minWidth: 240 }}
-        readOnly
-        value={fullUrl}
-        onFocus={(e) => e.target.select()}
-        aria-label="Public share link"
-      />
-      <button className="wb-btn wb-btn--secondary wb-btn--sm" onClick={copy}>Copy</button>
-      <button className="wb-btn wb-btn--ghost wb-btn--sm" onClick={revoke}>Revoke</button>
-      {share?.view_count > 0 && <span className="tnum" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-tertiary)' }}>{share.view_count} views</span>}
-    </div>
-  )
 }
 
 // Oldest → newest: decisions this one revisits come before it, those that revisit it come after.
@@ -303,9 +238,6 @@ export default function Decisions({ focus, onOpenDoc }) {
                     ))}
                   </div>
                 )}
-                <div style={{ marginTop: 'var(--sp-4)' }}>
-                  <ShareControl decision={d} />
-                </div>
               </div>
             )}
           </article>

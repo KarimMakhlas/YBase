@@ -68,13 +68,6 @@ REAL_IP_HEADER = os.getenv("REAL_IP_HEADER", "")
 ALLOW_PUBLIC_SIGNUP = os.getenv("ALLOW_PUBLIC_SIGNUP", "true").lower() in (
     "1", "true", "yes", "on",
 )
-# Pre-load a fresh workspace with the demo corpus on signup so the first visit
-# has something to query (cold-start "wow moment"). Seeded in the background.
-SEED_DEMO_ON_SIGNUP = os.getenv("SEED_DEMO_ON_SIGNUP", "true").lower() in (
-    "1", "true", "yes", "on",
-)
-# How long a workspace invite link stays valid.
-INVITE_TTL_DAYS = int(os.getenv("INVITE_TTL_DAYS", "14"))
 LOGIN_MAX_FAILURES = int(os.getenv("LOGIN_MAX_FAILURES", "5"))
 LOGIN_WINDOW_MINUTES = int(os.getenv("LOGIN_WINDOW_MINUTES", "15"))
 # How long a password-reset link stays valid.
@@ -258,11 +251,6 @@ LEADER_TTL_S = int(os.getenv("LEADER_TTL_S", "60"))
 # Open questions older than this are surfaced as "still unanswered" on Home.
 STALE_QUESTION_DAYS = int(os.getenv("STALE_QUESTION_DAYS", "21"))
 
-# Periodic per-workspace digest (new decisions, resolved/open questions). Stored
-# in-app always; emailed too when an email provider is configured. 0 disables.
-DIGEST_ENABLED = os.getenv("DIGEST_ENABLED", "true").lower() in ("1", "true", "yes", "on")
-DIGEST_INTERVAL_S = int(os.getenv("DIGEST_INTERVAL_S", "604800"))  # weekly
-# Optional email channel (Resend). Without a key, digests are in-app only.
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 DIGEST_FROM_EMAIL = os.getenv("DIGEST_FROM_EMAIL", "")
 # Base URL used for links inside digests/emails (the frontend origin).
