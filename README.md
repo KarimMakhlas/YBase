@@ -379,8 +379,7 @@ flowchart TD
 | `FORMATION_CONCURRENCY` | Parallel workspace formation workers | Auto |
 | `SENTRY_DSN` | Enables Sentry error reporting | Disabled |
 
-See [.env.example](.env.example) and
-[backend/.env.example](backend/.env.example) for the full configuration surface.
+See [backend/.env.example](backend/.env.example) for the full configuration surface.
 
 ## Integrations
 
