@@ -21,7 +21,7 @@ async def schedule_formation(doc_id: int) -> None:
 
 
 class IngestRequest(BaseModel):
-    source: str = Field(..., description="slack | notion | github | meeting | other",
+    source: str = Field(..., description="slack | notion | github | jira | meeting | other",
                         max_length=64)
     title: str = Field(..., max_length=1000)
     # Bounded so one request can't buffer an arbitrarily large document through

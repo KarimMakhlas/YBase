@@ -14,6 +14,7 @@ from app.domains.memory.formation import fallback_topics
 from app.domains.memory.scoring import node_score
 from app.providers.embeddings import _local_embed
 from app.domains.connectors.slack.events import clean_text, thread_document, verify_signature, wanted_event
+from app.domains.connectors.jira.client import issue_to_doc as jira_issue_to_doc
 from app.domains.connectors.github.client import issue_to_doc as github_issue_to_doc
 from app.domains.connectors.service import _frontend_from_request
 from starlette.requests import Request
@@ -277,6 +278,36 @@ def test_slack_thread_document_shape():
 
 
 # ---- connector document mapping ----
+
+def test_jira_issue_to_doc_shape():
+    connection = {"id": 10, "external_workspace_id": "cloud-1"}
+    stream = {"id": 20, "name": "Platform"}
+    issue = {
+        "key": "PLAT-42",
+        "fields": {
+            "summary": "Move billing jobs to the worker queue",
+            "description": {
+                "type": "doc",
+                "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "Queueing avoids API timeouts."}]}
+                ],
+            },
+            "comment": {"comments": []},
+            "reporter": {"displayName": "Maya"},
+            "status": {"name": "Done"},
+            "issuetype": {"name": "Task"},
+            "priority": {"name": "High"},
+            "labels": ["billing"],
+            "created": "2026-01-15T09:30:00.000+0000",
+        },
+    }
+    doc = jira_issue_to_doc(connection, stream, issue)
+    assert doc.source == "jira"
+    assert doc.title.startswith("[PLAT-42]")
+    assert "Queueing avoids API timeouts." in doc.text
+    assert doc.author == "Maya"
+    assert doc.external_ref == "jira:cloud-1:PLAT-42"
+
 
 async def test_github_issue_to_doc_shape_without_comments():
     connection = {"id": 11}

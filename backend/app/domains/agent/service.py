@@ -551,7 +551,7 @@ async def agent_propose(
 
     This is the one write on the agent API, so unlike the read routes it honours
     the same billing gate as the session write routes."""
-    from app.domains.memory import proposals
+    from app.domains.memory import review_service
 
     await auth.assert_workspace_writable(current.workspace_id)
 
@@ -568,8 +568,8 @@ async def agent_propose(
         raise HTTPException(400, f"summary exceeds {MAX_SUMMARY_LEN} characters")
     status = (req.status or "").strip() or None
     if status is not None:
-        allowed = (proposals.DECISION_STATUSES if kind == "decision"
-                   else proposals.QUESTION_STATUSES)
+        allowed = (review_service.DECISION_STATUSES if kind == "decision"
+                   else review_service.QUESTION_STATUSES)
         if status not in allowed:
             raise HTTPException(400, f"invalid {kind} status '{status}'")
     topics = [t.strip().lower() for t in (req.topics or []) if t and t.strip()]

@@ -14,8 +14,20 @@ from app.core import config, db
 from app.core.crypto import decrypt_secret as _decrypt_secret
 from app.domains.connectors import slack_reconcile_days
 from app.domains.auth import service as auth
+from app.domains.connectors.confluence import client as confluence
+from app.domains.connectors.confluence import routes as confluence_routes
+from app.domains.connectors.discord import client as discord
+from app.domains.connectors.discord import routes as discord_routes
+from app.domains.connectors.figma import client as figma
+from app.domains.connectors.figma import routes as figma_routes
 from app.domains.connectors.github import client as github
 from app.domains.connectors.github import routes as github_routes
+from app.domains.connectors.googledocs import client as googledocs
+from app.domains.connectors.googledocs import routes as googledocs_routes
+from app.domains.connectors.jira import client as jira
+from app.domains.connectors.jira import routes as jira_routes
+from app.domains.connectors.linear import client as linear
+from app.domains.connectors.linear import routes as linear_routes
 from app.domains.connectors.notion import client as notion
 from app.domains.connectors.notion import routes as notion_routes
 from app.domains.connectors.slack import events as slack
@@ -24,13 +36,18 @@ from app.domains.documents.ingestion import IngestRequest, ingest_document
 
 router = APIRouter(prefix="/api", tags=["sources"])
 router.include_router(slack_routes.router)
+router.include_router(jira_routes.router)
 router.include_router(github_routes.router)
+router.include_router(linear_routes.router)
+router.include_router(confluence_routes.router)
+router.include_router(discord_routes.router)
+router.include_router(googledocs_routes.router)
 router.include_router(notion_routes.router)
+router.include_router(figma_routes.router)
 
 log = logging.getLogger("ybase.connectors")
 
 SLACK_API = "https://slack.com/api"
-SUPPORTED_PROVIDERS = frozenset({"slack", "github", "notion"})
 _sync_tasks: Dict[asyncio.Task, Tuple[str, int]] = {}
 
 
@@ -117,15 +134,12 @@ async def _connection(conn, workspace_id: int, connection_id: int):
 def _dispatch_sync(provider: str, job_id: int) -> None:
     """Run a sync job on the right connector's background coroutine, then chain a
     follow-up full backfill if this job requested one (the onboarding fast-slice)."""
-    runners = {
-        "slack": run_slack_sync_job,
-        "github": github.run_sync_job,
-        "notion": notion.run_sync_job,
-    }
-    runner = runners.get(provider)
-    if runner is None:
-        log.error("refusing to dispatch unsupported connector %s for job %d", provider, job_id)
-        return
+    runner = {
+        "jira": jira.run_sync_job, "github": github.run_sync_job,
+        "linear": linear.run_sync_job, "confluence": confluence.run_sync_job,
+        "discord": discord.run_sync_job, "googledocs": googledocs.run_sync_job,
+        "notion": notion.run_sync_job, "figma": figma.run_sync_job,
+    }.get(provider, run_slack_sync_job)
     task = asyncio.create_task(_run_then_chain(runner, provider, job_id))
     _sync_tasks[task] = (provider, job_id)
 
@@ -214,15 +228,7 @@ async def recover_stuck_sync_jobs() -> int:
                 )
                 recovered.append((row["provider"], row["id"]))
     for provider, job_id in recovered:
-        if provider in SUPPORTED_PROVIDERS:
-            _dispatch_sync(provider, job_id)
-        else:
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    "UPDATE sync_jobs SET status='failed', error='unsupported source provider', "
-                    "completed_at=now(), updated_at=now() WHERE id=$1",
-                    job_id,
-                )
+        _dispatch_sync(provider, job_id)
     if recovered:
         log.warning("recovered %d abandoned connector job(s)", len(recovered))
     return len(recovered)
@@ -354,15 +360,16 @@ async def list_sources(
             "(SELECT count(*) FROM sync_jobs j WHERE j.connection_id=c.id AND j.status IN ('pending','running','paused')) AS active_jobs, "
             "(SELECT (j.stats->>'documents')::int FROM sync_jobs j WHERE j.connection_id=c.id "
             " AND j.status='complete' ORDER BY j.completed_at DESC NULLS LAST LIMIT 1) AS last_sync_documents "
-            "FROM source_connections c WHERE c.workspace_id=$1 AND c.provider = ANY($2::text[]) "
-            "ORDER BY c.created_at DESC",
-            current.workspace_id, list(SUPPORTED_PROVIDERS),
+            "FROM source_connections c WHERE c.workspace_id=$1 ORDER BY c.created_at DESC",
+            current.workspace_id,
         )
     return {
         "configured": {
-            "slack": slack_routes.configured(),
-            "github": github.configured(),
-            "notion": notion.configured(),
+            "slack": slack_routes.configured(), "jira": jira.configured(),
+            "github": github.configured(), "linear": linear.configured(),
+            "confluence": confluence.configured(), "discord": discord.configured(),
+            "googledocs": googledocs.configured(), "notion": notion.configured(),
+            "figma": figma.configured(),
         },
         "connections": [dict(r) for r in rows],
     }
@@ -377,8 +384,6 @@ async def list_streams(
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         connection = await _connection(conn, current.workspace_id, connection_id)
-        if connection["provider"] not in SUPPORTED_PROVIDERS:
-            raise HTTPException(400, "unsupported source provider")
         if connection["provider"] == "slack" and refresh:
             try:
                 await _refresh_slack_streams(conn, connection)
@@ -387,6 +392,15 @@ async def list_streams(
                     "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
                     connection_id, f"Slack rate limited stream refresh; retry after {e.retry_after}s",
                 )
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
+        elif connection["provider"] == "jira" and refresh:
+            try:
+                token = await jira.valid_access_token(conn, connection)
+                await jira.refresh_streams(conn, connection, token)
             except Exception as e:
                 await conn.execute(
                     "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
@@ -401,10 +415,55 @@ async def list_streams(
                     "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
                     connection_id, str(e)[:500],
                 )
+        elif connection["provider"] == "linear" and refresh:
+            try:
+                token = await linear.valid_access_token(conn, connection)
+                await linear.refresh_streams(conn, connection, token)
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
+        elif connection["provider"] == "confluence" and refresh:
+            try:
+                token = await confluence.valid_access_token(conn, connection)
+                await confluence.refresh_streams(conn, connection, token)
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
+        elif connection["provider"] == "discord" and refresh:
+            try:
+                token = _decrypt_secret(connection["access_token_enc"])
+                await discord.refresh_streams(conn, connection, token)
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
+        elif connection["provider"] == "googledocs" and refresh:
+            try:
+                token = await googledocs.valid_access_token(conn, connection)
+                await googledocs.refresh_streams(conn, connection, token)
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
         elif connection["provider"] == "notion" and refresh:
             try:
                 token = _decrypt_secret(connection["access_token_enc"])
                 await notion.refresh_streams(conn, connection, token)
+            except Exception as e:
+                await conn.execute(
+                    "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
+                    connection_id, str(e)[:500],
+                )
+        elif connection["provider"] == "figma" and refresh:
+            try:
+                token = await figma.valid_access_token(conn, connection)
+                await figma.refresh_streams(conn, connection, token)
             except Exception as e:
                 await conn.execute(
                     "UPDATE source_connections SET last_error=$2, updated_at=now() WHERE id=$1",
@@ -454,8 +513,6 @@ async def start_sync(
     async with pool.acquire() as conn:
         async with conn.transaction():
             connection = await _connection(conn, current.workspace_id, connection_id)
-            if connection["provider"] not in SUPPORTED_PROVIDERS:
-                raise HTTPException(400, "unsupported source provider")
             selected = await conn.fetchval(
                 "SELECT count(*) FROM source_streams "
                 "WHERE workspace_id=$1 AND connection_id=$2 AND selected",
@@ -507,8 +564,6 @@ async def retry_job(
     async with pool.acquire() as conn:
         async with conn.transaction():
             connection = await _connection(conn, current.workspace_id, connection_id)
-            if connection["provider"] not in SUPPORTED_PROVIDERS:
-                raise HTTPException(400, "unsupported source provider")
             job = await conn.fetchrow(
                 "SELECT id, status FROM sync_jobs "
                 "WHERE id=$1 AND workspace_id=$2 AND connection_id=$3",
@@ -713,8 +768,14 @@ async def resync_tick() -> int:
         specs.append(("slack", config.SLACK_RECONCILE_INTERVAL_S,
                       {"days": config.SLACK_RECONCILE_WINDOW_DAYS}, False))
     if config.CONNECTOR_RESYNC_INTERVAL_S:
+        specs.append(("jira", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
         specs.append(("github", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("linear", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("confluence", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("discord", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("googledocs", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
         specs.append(("notion", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
+        specs.append(("figma", config.CONNECTOR_RESYNC_INTERVAL_S, {}, True))
     if not specs:
         return 0
     pool = await db.get_pool()
