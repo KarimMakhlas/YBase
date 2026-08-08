@@ -81,7 +81,6 @@ async def _build_decision(conn, row, workspace_id: int) -> Dict[str, Any]:
     }
 
 
-
 @router.get("/decisions")
 async def list_decisions(
     topic: Optional[str] = None,
@@ -668,6 +667,3 @@ async def stats(
         "sources": [dict(s) for s in sources],
         "digest": digest,
     }
-
-
-router.routes[:] = [route for route in router.routes if "/share" not in route.path and "/shared/" not in route.path]

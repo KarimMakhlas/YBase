@@ -1269,6 +1269,3 @@ async def google_callback(request: Request, code: str = "", state: str = ""):
             await create_session(conn, user_id, workspace_id, request, redirect)
             await audit(conn, "google_login", workspace_id, user_id, "user", user_id)
     return redirect
-
-
-router.routes[:] = [route for route in router.routes if route.path not in {"/api/auth/invite/{token}", "/api/auth/join"}]
