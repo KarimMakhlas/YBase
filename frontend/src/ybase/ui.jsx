@@ -100,7 +100,9 @@ export function Avatar({ name = '', src = null, size = 'md', className = '', ...
 
 // Normalise raw source strings to the reserved hues.
 const SRC_ALIAS = {
-  github: 'github', slack: 'slack', notion: 'notion', meeting: 'meeting',
+  github: 'github', slack: 'slack', notion: 'notion', jira: 'jira', meeting: 'meeting',
+  linear: 'linear', discord: 'discord', confluence: 'confluence',
+  googledocs: 'googledocs', figma: 'figma',
 }
 
 /** Provenance pill — dot coloured by knowledge source (Slack/Notion/GitHub/Jira/Meeting). */

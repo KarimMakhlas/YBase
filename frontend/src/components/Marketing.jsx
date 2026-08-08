@@ -14,7 +14,8 @@ import '../ybase/marketing.css'
 // ---- Content -----------------------------------------------------------
 
 const SRC = {
-  Slack: 'var(--mk-slack)', Notion: 'var(--mk-notion)', GitHub: 'var(--mk-github)', Meeting: 'var(--mk-meeting)',
+  Slack: 'var(--mk-slack)', Notion: 'var(--mk-notion)', GitHub: 'var(--mk-github)',
+  Jira: 'var(--mk-jira)', Meeting: 'var(--mk-meeting)',
 }
 
 // Answers are segment lists: text runs (optionally bold) and citation chips.
@@ -27,7 +28,7 @@ const DEMOS = [
   {
     q: 'Why did we choose Postgres over MongoDB?',
     conf: 'high',
-    srcs: ['Slack', 'Notion', 'GitHub'],
+    srcs: ['Slack', 'Notion', 'Jira'],
     a: [
       { t: 'The team chose ' }, { t: 'PostgreSQL', b: true },
       { t: ' as the single datastore for v1 — for transactional integrity in billing' }, { cite: 'C1' },
@@ -51,7 +52,7 @@ const DEMOS = [
 ].map((d) => ({ ...d, words: tokenize(d.a) }))
 
 const STEPS = [
-  { Icon: Download, n: '01', title: 'Ingest & dedup', body: 'Connect Slack, Notion, and GitHub. Threads become documents; near-duplicates merge by content hash before anything is stored.' },
+  { Icon: Download, n: '01', title: 'Ingest & dedup', body: 'Connect Slack, Notion, GitHub and Jira. Threads become documents; near-duplicates merge by content hash before anything is stored.' },
   { Icon: GitFork, n: '02', title: 'Form memory', body: 'An LLM extracts decisions, reasoning, advocates and alternatives — then links them into a typed graph: revisits, resolves, involves, about.' },
   { Icon: MessageSquareQuote, n: '03', title: 'Answer with provenance', body: 'Hybrid retrieval plus 2-hop graph expansion finds evidence others miss — and every claim is cited back to the source that settled it.' },
 ]
@@ -66,13 +67,13 @@ const CELLS = [
 const G_NODES = [
   { id: 'dec', x: 50, y: 40, Icon: GitCommitHorizontal, label: 'Postgres for v1', lead: true, color: 'var(--mk-violet)' },
   { id: 'debate', x: 18, y: 12, Icon: MessageSquare, label: '#engineering debate', color: 'var(--mk-slack)' },
-  { id: 'github', x: 79, y: 15, Icon: SquareCheck, label: 'PR-481 near-reversal', color: 'var(--mk-github)' },
+  { id: 'jira', x: 79, y: 15, Icon: SquareCheck, label: 'ENG-481 near-reversal', color: 'var(--mk-jira)' },
   { id: 'rfc', x: 16, y: 67, Icon: FileText, label: 'RFC: datastore for v1', color: 'var(--mk-notion)' },
   { id: 'dev', x: 83, y: 64, Icon: User, label: 'Dev Patel', color: 'var(--mk-green)' },
   { id: 'open', x: 50, y: 88, Icon: CircleHelp, label: 'Read replicas before launch?', color: 'var(--mk-amber)' },
 ]
 const G_EDGES = [
-  ['debate', 'dec', 'revisits'], ['github', 'dec', 'revisits'], ['rfc', 'dec', 'resolves'],
+  ['debate', 'dec', 'revisits'], ['jira', 'dec', 'revisits'], ['rfc', 'dec', 'resolves'],
   ['dev', 'dec', 'involves'], ['dec', 'open', 'opens'],
 ]
 

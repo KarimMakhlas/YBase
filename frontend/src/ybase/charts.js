@@ -42,5 +42,6 @@ export const SOURCE_VARS = {
   slack: '--src-slack',
   notion: '--src-notion',
   github: '--src-github',
+  jira: '--src-jira',
   meeting: '--src-meeting',
 }

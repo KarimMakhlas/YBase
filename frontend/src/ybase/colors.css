@@ -53,7 +53,13 @@
   --src-slack:      #d9962e;
   --src-notion:     #8a8798;
   --src-github:     #8b7cff;
+  --src-jira:       #5a8bf0;
   --src-meeting:    #2eb896;
+  --src-linear:     #5e6ad2;
+  --src-discord:    #5865f2;
+  --src-confluence: #2684ff;
+  --src-googledocs: #4285f4;
+  --src-figma:      #f24e1e;
 
   /* ============================================================
      Semantic aliases — light
@@ -175,7 +181,13 @@
   --src-slack:      #f0bc62;
   --src-notion:     #b3aec7;
   --src-github:     #b39aff;
+  --src-jira:       #7fa5f7;
   --src-meeting:    #55d2b4;
+  --src-linear:     #8b93e8;
+  --src-discord:    #8790fa;
+  --src-confluence: #5fa8ff;
+  --src-googledocs: #7ba7f7;
+  --src-figma:      #f57c58;
 
   --code-bg:          #0a0815;
   --code-text:        #e0dcf0;

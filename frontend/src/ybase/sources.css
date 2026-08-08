@@ -110,6 +110,9 @@
 }
 
 /* ---- Figma manual team-id prompt ---- */
+.wb-sources .figma-team-prompt { align-items: center; }
+.wb-sources .figma-team-prompt span { flex: 1 1 260px; }
+.wb-sources .figma-team-prompt .wb-input { flex: 0 1 220px; min-width: 150px; }
 
 /* ---- Add-connector picker modal ---- */
 .connector-modal {

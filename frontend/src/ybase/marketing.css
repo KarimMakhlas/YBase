@@ -31,6 +31,7 @@
   --mk-slack:   #f0bc62;
   --mk-notion:  #b3aec7;
   --mk-github:  #b39aff;
+  --mk-jira:    #7fa5f7;
   --mk-meeting: #55d2b4;
 
   background: var(--mk-bg);
