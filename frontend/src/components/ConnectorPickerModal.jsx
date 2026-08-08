@@ -2,11 +2,23 @@ import React, { useEffect } from 'react'
 import { X, Check } from 'lucide-react'
 import { SrcBadge } from '../ybase/ui.jsx'
 
+// All connectors YBase can sync from, in display order. `unit` matches
+// Sources.jsx's PROVIDERS map (what one "stream" is called for that provider).
 export const CONNECTOR_DEFS = [
   { provider: 'slack', label: 'Slack' },
+  { provider: 'jira', label: 'Jira' },
   { provider: 'github', label: 'GitHub' },
+  { provider: 'linear', label: 'Linear' },
   { provider: 'notion', label: 'Notion' },
+  { provider: 'discord', label: 'Discord' },
+  { provider: 'confluence', label: 'Confluence' },
+  { provider: 'googledocs', label: 'Google Docs' },
+  { provider: 'figma', label: 'Figma' },
 ]
+
+// Modal listing every connector YBase supports — connected ones show a green
+// check, unconnected-but-ready ones start the existing OAuth flow, and ones
+// missing backend config show why they can't be clicked yet.
 export default function ConnectorPickerModal({ connectedProviders, ready, setupHints, onClose, onConnect }) {
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()

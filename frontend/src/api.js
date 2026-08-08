@@ -59,10 +59,24 @@ export const saveMessage = (sessionId, role, content, meta = null) =>
   postJSON(`/api/sessions/${sessionId}/messages`, { role, content, meta })
 export const deleteSession = (id) => deleteJSON(`/api/sessions/${id}`)
 
+export const createDecisionShare = (nodeId) => postJSON(`/api/decisions/${nodeId}/share`, {})
+export const revokeDecisionShare = (nodeId) => deleteJSON(`/api/decisions/${nodeId}/share`)
+export const getSharedDecision = (token) =>
+  getJSON(`/api/shared/decisions/${encodeURIComponent(token)}`)
+
 export const searchMemory = (q) => getJSON(`/api/search?q=${encodeURIComponent(q)}`)
 export const getDocument = (id, full = false) =>
   getJSON(`/api/documents/${id}${full ? '?full=true' : ''}`)
+export const listPeople = () => getJSON('/api/people')
+export const getPerson = (id) => getJSON(`/api/people/${id}`)
+export const getStats = (since = null) =>
+  getJSON(`/api/stats${since ? `?since=${encodeURIComponent(since)}` : ''}`)
 export const getHealthDetails = () => getJSON('/api/health/details')
+export const seedDemoData = () => postJSON('/api/ops/demo-seed', {})
+
+export const listDigests = () => getJSON('/api/digests')
+export const getLatestDigest = () => getJSON('/api/digests/latest')
+export const runDigest = () => postJSON('/api/digests/run', {})
 
 export const getBootstrapStatus = () => getJSON('/api/auth/bootstrap-status')
 export const getAuthProviders = () => getJSON('/api/auth/providers')
@@ -83,6 +97,8 @@ export const verifyEmail = (token) => postJSON('/api/auth/verify', { token })
 export const resendVerification = () => postJSON('/api/auth/resend-verification', {})
 export const switchWorkspace = (workspaceId) =>
   postJSON('/api/auth/switch-workspace', { workspace_id: workspaceId })
+export const getInvite = (token) => getJSON(`/api/auth/invite/${encodeURIComponent(token)}`)
+export const joinWorkspace = (body) => postJSON('/api/auth/join', body)
 export const createWorkspace = (name) => postJSON('/api/workspace/create', { name })
 export const getOnboarding = () => getJSON('/api/workspace/onboarding')
 export const completeOnboarding = () => postJSON('/api/workspace/onboarding/complete', {})
@@ -91,6 +107,9 @@ export const transferOwnership = (userId) =>
 export const listWorkspaceUsers = () => getJSON('/api/workspace/users')
 export const createWorkspaceUser = (body) => postJSON('/api/workspace/users', body)
 export const patchWorkspaceUser = (id, body) => patchJSON(`/api/workspace/users/${id}`, body)
+export const listWorkspaceInvites = () => getJSON('/api/workspace/invites')
+export const createWorkspaceInvite = (body) => postJSON('/api/workspace/invites', body)
+export const revokeWorkspaceInvite = (id) => deleteJSON(`/api/workspace/invites/${id}`)
 export const listApiKeys = () => getJSON('/api/workspace/api-keys')
 export const createApiKey = (name, allowedTopics = null) =>
   postJSON('/api/workspace/api-keys', { name, allowed_topics: allowedTopics })
@@ -100,9 +119,17 @@ export const revokeApiKey = (id) => deleteJSON(`/api/workspace/api-keys/${id}`)
 
 export const listSources = () => getJSON('/api/sources')
 export const getSlackInstallUrl = () => getJSON('/api/sources/slack/install-url')
+export const getJiraInstallUrl = () => getJSON('/api/sources/jira/install-url')
 export const getGitHubInstallUrl = () => getJSON('/api/sources/github/install-url')
+export const getLinearInstallUrl = () => getJSON('/api/sources/linear/install-url')
 export const getNotionInstallUrl = () => getJSON('/api/sources/notion/install-url')
+export const getDiscordInstallUrl = () => getJSON('/api/sources/discord/install-url')
+export const getConfluenceInstallUrl = () => getJSON('/api/sources/confluence/install-url')
+export const getGoogleDocsInstallUrl = () => getJSON('/api/sources/googledocs/install-url')
+export const getFigmaInstallUrl = () => getJSON('/api/sources/figma/install-url')
 export const ingestDocument = (body) => postJSON('/api/ingest', body)
+export const setFigmaTeam = (connectionId, teamId) =>
+  postJSON(`/api/sources/${connectionId}/figma/team`, { team_id: teamId })
 export const listSourceStreams = (connectionId) =>
   getJSON(`/api/sources/${connectionId}/streams`)
 export const patchSourceStream = (connectionId, streamId, body) =>
@@ -115,12 +142,26 @@ export const retrySourceJob = (connectionId, jobId) =>
   postJSON(`/api/sources/${connectionId}/jobs/${jobId}/retry`, {})
 export const deleteSource = (connectionId) => deleteJSON(`/api/sources/${connectionId}`)
 
+export const getOpsFleet = () => getJSON('/api/ops/fleet')
+export const getOpsActivity = (workspaceId = null, limit = 50) =>
+  getJSON(`/api/ops/fleet/activity?limit=${limit}${workspaceId ? `&workspace_id=${workspaceId}` : ''}`)
+
 export const listProposals = (status = 'pending') =>
-  getJSON(`/api/proposals?status=${encodeURIComponent(status)}`)
+  getJSON(`/api/memory-review/proposals?status=${encodeURIComponent(status)}`)
 export const approveProposal = (id, body = {}) =>
-  postJSON(`/api/proposals/${id}/approve`, body)
+  postJSON(`/api/memory-review/proposals/${id}/approve`, body)
 export const rejectProposal = (id, note = null) =>
-  postJSON(`/api/proposals/${id}/reject`, { note })
+  postJSON(`/api/memory-review/proposals/${id}/reject`, { note })
+export const listReviewNodes = (state = 'needs_review') =>
+  getJSON(`/api/memory-review?state=${encodeURIComponent(state)}`)
+export const patchReviewNode = (id, body = {}) => patchJSON(`/api/memory-review/${id}`, body)
+export const archiveReviewNode = (id, reason = null) =>
+  postJSON(`/api/memory-review/${id}/archive`, { reason })
+export const unarchiveReviewNode = (id) => postJSON(`/api/memory-review/${id}/unarchive`, {})
+
+export const submitAnswerFeedback = (body) => postJSON('/api/answer-feedback', body)
+export const getMyAnswerFeedback = (chatMessageId) =>
+  getJSON(`/api/answer-feedback/mine?chat_message_id=${encodeURIComponent(chatMessageId)}`)
 
 // POST /api/query and dispatch SSE events to handlers:
 // { status, delta, metadata, error, done }

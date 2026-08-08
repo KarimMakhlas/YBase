@@ -549,6 +549,7 @@ async def _run_one(doc_id: int) -> None:
 async def _tick_integrations() -> None:
     from app.domains.connectors import service as sources  # lazy: slack -> ingest -> worker
     from app.domains.connectors.slack import events as slack
+    from app.domains.digest import service as digest
 
     try:
         await slack.rollup_quiet_threads()
@@ -558,6 +559,10 @@ async def _tick_integrations() -> None:
         await sources.resync_tick()
     except Exception:
         log.exception("source resync tick failed")
+    try:
+        await digest.run_digest_tick()
+    except Exception:
+        log.exception("digest tick failed")
     try:
         await janitor_tick()
     except Exception:

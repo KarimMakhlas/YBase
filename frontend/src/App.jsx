@@ -1,14 +1,20 @@
 import React, { useEffect, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
-  MessageSquare, GitCommitHorizontal, Plug, Settings as SettingsIcon,
-  PanelLeftClose, PanelLeftOpen, Sun, Moon,
+  Activity, GitCommitHorizontal, Users, Plug, Settings as SettingsIcon,
+  PanelLeftClose, PanelLeftOpen, Sun, Moon, Inbox, Gauge,
 } from 'lucide-react'
+import LeftPanel from './components/LeftPanel.jsx'
 import Chat from './components/Chat.jsx'
 import Decisions from './components/Decisions.jsx'
+import People from './components/People.jsx'
 import Auth from './components/Auth.jsx'
 import Onboarding from './components/Onboarding.jsx'
 import AccountMenu from './components/AccountMenu.jsx'
+import InviteModal from './components/InviteModal.jsx'
+import Join from './components/Join.jsx'
+import SharedDecision from './components/SharedDecision.jsx'
+import Notifications from './components/Notifications.jsx'
 import Marketing from './components/Marketing.jsx'
 import Settings from './components/Settings.jsx'
 import Sources from './components/Sources.jsx'
@@ -16,26 +22,37 @@ import CmdK from './components/CmdK.jsx'
 import DocModal from './components/DocModal.jsx'
 import Plans from './components/Plans.jsx'
 import Account from './components/Account.jsx'
+import ReviewQueue from './components/ReviewQueue.jsx'
+import OpsDashboard from './components/OpsDashboard.jsx'
 import VerifyEmail from './components/VerifyEmail.jsx'
 import VerifyBanner from './components/VerifyBanner.jsx'
 import { ToastProvider } from './components/Toast.jsx'
-import { getBootstrapStatus, getMe, getOnboarding, getBillingStatus, logout } from './api.js'
+import { getBootstrapStatus, getMe, getOnboarding, getBillingStatus, logout, listProposals } from './api.js'
 
+// Two self-contained panels, no surrounding chrome bands. Right half = Chat
+// (open by default, expandable). Left half = a tiny set of workspace pages —
+// just the few that matter: members get Pulse + Decisions; admins also get
+// People, Sources and Settings. Everything else (account, billing, invites,
+// theme) lives in the workspace menu so the surface stays calm.
 const PAGE_DEFS = {
-  pulse: { label: 'Ask', Icon: MessageSquare },
+  pulse: { label: 'Pulse', Icon: Activity },
   decisions: { label: 'Decisions', Icon: GitCommitHorizontal },
+  review: { label: 'Review', Icon: Inbox },
+  people: { label: 'People', Icon: Users },
   sources: { label: 'Sources', Icon: Plug },
+  ops: { label: 'Ops', Icon: Gauge },
   settings: { label: 'Settings', Icon: SettingsIcon },
 }
 const MEMBER_PAGES = ['pulse', 'decisions']
-const ADMIN_PAGES = ['pulse', 'decisions', 'sources', 'settings']
+const ADMIN_PAGES = ['pulse', 'decisions', 'review', 'people', 'sources', 'ops', 'settings']
 // Reachable from the menu but never shown as a nav pill.
 const EXTRA_PAGES = new Set(['account', 'plans'])
-const ADMIN_ONLY = new Set(['sources', 'settings'])
+const ADMIN_ONLY = new Set(['review', 'people', 'sources', 'ops', 'settings'])
 const ALL_RENDERABLE = new Set([...ADMIN_PAGES, ...EXTRA_PAGES])
 
+// Hash tabs we still parse (some are legacy and get rerouted to a surviving page).
 const TAB_IDS = new Set([
-  'pulse', 'chat', 'home', 'decisions', 'sources',
+  'pulse', 'chat', 'home', 'decisions', 'review', 'people', 'sources', 'ops',
   'settings', 'account', 'plans', 'timeline', 'graph', 'add',
 ])
 const ROLE_RANK = { member: 1, admin: 2, owner: 3 }
@@ -72,6 +89,8 @@ function parseHashRoute() {
   const params = new URLSearchParams(query)
   const tab = parts[0] || 'chat'
 
+  if (tab === 'join' && parts[1]) return { tab: null, payload: {}, joinToken: parts[1] }
+  if (tab === 'shared' && parts[1]) return { tab: null, payload: {}, shareToken: parts[1] }
   if (tab === 'reset' && parts[1]) return { tab: null, payload: {}, resetToken: parts[1] }
   if (tab === 'verify' && parts[1]) return { tab: null, payload: {}, verifyToken: parts[1] }
   if (tab === 'documents' && parts[1]) {
@@ -83,6 +102,8 @@ function parseHashRoute() {
   if (tab === 'decisions') {
     if (parts[1]) payload.decisionId = Number(parts[1])
     if (params.get('topic')) payload.topic = params.get('topic')
+  } else if (tab === 'people' && parts[1]) {
+    payload.personId = Number(parts[1])
   }
   return { tab, payload }
 }
@@ -90,6 +111,7 @@ function parseHashRoute() {
 function routeHash(toTab, payload = {}) {
   if (toTab === 'decisions' && payload.decisionId) return `#/decisions/${payload.decisionId}`
   if (toTab === 'decisions' && payload.topic) return `#/decisions?topic=${encodeURIComponent(payload.topic)}`
+  if (toTab === 'people' && payload.personId) return `#/people/${payload.personId}`
   return `#/${TAB_IDS.has(toTab) ? toTab : 'chat'}`
 }
 
@@ -155,9 +177,12 @@ export default function App() {
   const [focus, setFocus] = useState({ tab: null, n: 0 })
   const [cmdkOpen, setCmdkOpen] = useState(false)
   const [docModal, setDocModal] = useState(null)
+  const [joinToken, setJoinToken] = useState(null)
+  const [shareToken, setShareToken] = useState(null)
   const [resetToken, setResetToken] = useState(null)
   const [verifyToken, setVerifyToken] = useState(null)
   const [onboarding, setOnboarding] = useState(false)
+  const [inviteOpen, setInviteOpen] = useState(false)
   const [setup, setSetup] = useState(null)
   const [billing, setBilling] = useState(null)
 
@@ -204,6 +229,10 @@ export default function App() {
     loadAuth()
     const applyRoute = () => {
       const route = parseHashRoute()
+      if (route.joinToken) { setJoinToken(route.joinToken); return }
+      setJoinToken(null)
+      if (route.shareToken) { setShareToken(route.shareToken); return }
+      setShareToken(null)
       if (route.resetToken) { setResetToken(route.resetToken); return }
       setResetToken(null)
       if (route.verifyToken) { setVerifyToken(route.verifyToken); return }
@@ -246,7 +275,13 @@ export default function App() {
     else { setSetup(null); setBilling(null) }
   }, [workspaceId, loadSetup, loadBilling])
 
+  // Agent-proposal queue depth for the Review nav badge (admins only).
+  const [pendingReviews, setPendingReviews] = useState(0)
   const userRole = authState.user?.workspace?.role
+  useEffect(() => {
+    if (!workspaceId || !(ROLE_RANK[userRole] >= ROLE_RANK.admin)) { setPendingReviews(0); return }
+    listProposals('pending').then((rows) => setPendingReviews(rows.length)).catch(() => {})
+  }, [workspaceId, userRole])
 
   useEffect(() => {
     const onReadonly = () => {
@@ -318,6 +353,14 @@ export default function App() {
     window.addEventListener('pointerup', onUp)
   }
 
+  if (shareToken) {
+    return (
+      <ToastProvider>
+        <SharedDecision token={shareToken} />
+      </ToastProvider>
+    )
+  }
+
   if (resetToken) {
     return (
       <ToastProvider>
@@ -345,6 +388,25 @@ export default function App() {
             setVerifyToken(null)
             // Re-read /me so the banner clears without a manual refresh.
             loadAuth()
+            window.location.hash = '#/home'
+          }}
+        />
+      </ToastProvider>
+    )
+  }
+
+  if (joinToken) {
+    return (
+      <ToastProvider>
+        <Join
+          token={joinToken}
+          onJoined={(user) => {
+            setAuthState({ loading: false, needsBootstrap: false, user })
+            setJoinToken(null)
+            navigate('home')
+          }}
+          onCancel={() => {
+            setJoinToken(null)
             window.location.hash = '#/home'
           }}
         />
@@ -421,6 +483,7 @@ export default function App() {
   const onPick = (item) => {
     if (item.type === 'decision') navigate('decisions', { decisionId: item.id })
     else if (item.type === 'topic') navigate('decisions', { topic: item.title })
+    else if (item.type === 'entity') navigate(isAdmin ? 'people' : 'decisions', isAdmin ? { personId: item.id } : {})
     else if (item.type === 'question') askFromHome(`What's the latest on “${item.title}”?`)
     else if (item.type === 'document') openDoc(item.id)
   }
@@ -429,6 +492,12 @@ export default function App() {
     switch (activePage) {
       case 'decisions':
         return <Decisions focus={focus.tab === 'decisions' ? focus : null} onOpenDoc={openDoc} onNavigate={navigate} />
+      case 'people':
+        return <People focus={focus.tab === 'people' ? focus : null} onNavigate={navigate} onOpenDoc={openDoc} />
+      case 'review':
+        return <ReviewQueue onNavigate={navigate} onPendingChange={setPendingReviews} />
+      case 'ops':
+        return <OpsDashboard onNavigate={navigate} />
       case 'sources':
         return <Sources />
       case 'settings':
@@ -439,10 +508,15 @@ export default function App() {
         return <Plans billing={billing} canPay={role === 'owner'} onUpgraded={() => { loadBilling(); loadAuth() }} onBack={() => navigate('pulse')} />
       default:
         return (
-          <div className="page-shell">
-            <h1>Ask your workspace</h1>
-            <p className="settings-sub">Use the chat to search cited context from your connected sources.</p>
-          </div>
+          <LeftPanel
+            canAdmin={isAdmin}
+            user={authState.user}
+            setup={setup}
+            onAsk={askFromHome}
+            onNavigate={navigate}
+            onSelectView={navigate}
+            onInvite={() => setInviteOpen(true)}
+          />
         )
     }
   }
@@ -485,11 +559,13 @@ export default function App() {
                   role={role}
                   isAdmin={isAdmin}
                   onNavigate={navigate}
+                  onInvite={() => setInviteOpen(true)}
                   onSearch={() => setCmdkOpen(true)}
                   onLogout={onLogout}
                 />
                 <div className="panel-head-actions">
                   <ThemeToggle />
+                  <Notifications isAdmin={isAdmin} />
                   {!isNarrow && (
                     <button className="wb-iconbtn wb-iconbtn--sm" title="Collapse panel" aria-label="Collapse panel" onClick={() => setLeftCollapsed(true)}>
                       <PanelLeftClose size={16} strokeWidth={1.8} />
@@ -507,6 +583,9 @@ export default function App() {
                       onClick={() => navigate(id)}
                     >
                       <Icon size={15} strokeWidth={1.9} /> {label}
+                      {id === 'review' && pendingReviews > 0 && (
+                        <span className="leftnav-count tnum">{pendingReviews}</span>
+                      )}
                     </button>
                   )
                 })}
@@ -537,6 +616,14 @@ export default function App() {
             />
           </section>
         </div>
+
+        {inviteOpen && (
+          <InviteModal
+            workspaceName={workspace.name}
+            onClose={() => { setInviteOpen(false); loadSetup() }}
+            onNavigateSettings={() => navigate('settings')}
+          />
+        )}
 
         <CmdK open={cmdkOpen} onClose={() => setCmdkOpen(false)} onPick={onPick} />
         {docModal && (
