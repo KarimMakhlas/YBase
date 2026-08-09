@@ -5,9 +5,7 @@ import {
 } from 'lucide-react'
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion'
 import {
-  deleteSource, getConfluenceInstallUrl, getDiscordInstallUrl, getFigmaInstallUrl,
-  getGitHubInstallUrl, getGoogleDocsInstallUrl, getJiraInstallUrl, getLinearInstallUrl,
-  getNotionInstallUrl, getSlackInstallUrl,
+  deleteSource, getGitHubInstallUrl, getJiraInstallUrl, getNotionInstallUrl,
   ingestDocument,
   listSourceJobs, listSources, listSourceStreams, patchSourceStream, startSourceSync,
   retrySourceJob, setFigmaTeam,
@@ -29,13 +27,9 @@ const RingFallback = () => <div className="wb-skeleton" style={{ width: 150, hei
 const JOB_TONE = { complete: 'ok', failed: 'bad', paused: 'warn', running: 'run', pending: 'run' }
 
 const ACTIVE_STATUSES = new Set(['pending', 'running', 'paused'])
-const ALL_PROVIDERS = [
-  'slack', 'jira', 'github', 'linear', 'notion', 'discord', 'confluence', 'googledocs', 'figma',
-]
+const ALL_PROVIDERS = ['jira', 'github', 'notion']
 const PROVIDERS = {
-  slack: { unit: 'channels' }, jira: { unit: 'projects' }, github: { unit: 'repos' },
-  linear: { unit: 'teams' }, notion: { unit: 'pages' }, discord: { unit: 'channels' },
-  confluence: { unit: 'spaces' }, googledocs: { unit: 'docs' }, figma: { unit: 'projects' },
+  jira: { unit: 'projects' }, github: { unit: 'repos' }, notion: { unit: 'pages' },
 }
 const unitFor = (provider) => PROVIDERS[provider]?.unit || 'streams'
 const shortDate = (iso) => { try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) } catch { return '' } }
@@ -163,7 +157,7 @@ export default function Sources() {
 
   const tc = useThemeColors({ accent: '--accent', track: '--border' })
 
-  const connections = sources?.connections || []
+  const connections = (sources?.connections || []).filter((connection) => ALL_PROVIDERS.includes(connection.provider))
   const active = connections.find((c) => c.id === activeId) || connections[0] || null
   const missingConnectors = sources
     ? ALL_PROVIDERS.filter((p) => sources.configured?.[p] === false)
@@ -188,9 +182,7 @@ export default function Sources() {
     const params = new URLSearchParams(window.location.search)
     let touched = false
     const providerLabels = [
-      ['slack', 'Slack'], ['jira', 'Jira'], ['github', 'GitHub'], ['linear', 'Linear'],
-      ['notion', 'Notion'], ['discord', 'Discord'], ['confluence', 'Confluence'],
-      ['googledocs', 'Google Docs'], ['figma', 'Figma'],
+      ['jira', 'Jira'], ['github', 'GitHub'], ['notion', 'Notion'],
     ]
     for (const [provider, label] of providerLabels) {
       const status = params.get(provider)
@@ -228,15 +220,9 @@ export default function Sources() {
   const selectedStreams = useMemo(() => (streams || []).filter((s) => s.selected), [streams])
 
   const INSTALL = {
-    slack: { label: 'Slack', get: getSlackInstallUrl },
     jira: { label: 'Jira', get: getJiraInstallUrl },
     github: { label: 'GitHub', get: getGitHubInstallUrl },
-    linear: { label: 'Linear', get: getLinearInstallUrl },
     notion: { label: 'Notion', get: getNotionInstallUrl },
-    discord: { label: 'Discord', get: getDiscordInstallUrl },
-    confluence: { label: 'Confluence', get: getConfluenceInstallUrl },
-    googledocs: { label: 'Google Docs', get: getGoogleDocsInstallUrl },
-    figma: { label: 'Figma', get: getFigmaInstallUrl },
   }
   const connect = async (provider) => {
     if (busy) return
