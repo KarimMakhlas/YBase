@@ -42,6 +42,20 @@ async def test_chunk_workspace_schema_is_enforced(pool):
     assert validated is True
 
 
+async def test_source_revision_schema_is_enforced(pool):
+    async with pool.acquire() as conn:
+        revision_unique = await conn.fetchval(
+            "SELECT 1 FROM pg_constraint "
+            "WHERE conname='document_revisions_source_content_key'"
+        )
+        active = await conn.fetchval(
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_name='documents' AND column_name='is_active'"
+        )
+    assert revision_unique == 1
+    assert active == "NO"
+
+
 async def test_ingest_exact_duplicate_is_skipped(pool, workspace_id):
     a, dup_a = await ingest_document(_req(), workspace_id=workspace_id)
     b, dup_b = await ingest_document(_req(), workspace_id=workspace_id)

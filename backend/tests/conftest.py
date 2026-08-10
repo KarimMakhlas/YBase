@@ -66,7 +66,7 @@ async def pool():
     await migrate.run()
     async with p.acquire() as conn:
         await conn.execute(
-            "TRUNCATE answer_feedback, sync_jobs, source_streams, source_connections, "
+            "TRUNCATE answer_feedback, document_revisions, source_objects, sync_jobs, source_streams, source_connections, "
             "oauth_states, oauth_login_states, documents, chunks, chunk_links, "
             "memory_nodes, memory_edges, slack_events, chat_sessions, chat_messages, "
             "formation_runs, audit_events, usage_events, consolidation_queue "
