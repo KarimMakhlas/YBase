@@ -2,7 +2,7 @@
 
 import hashlib
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -35,6 +35,12 @@ class IngestRequest(BaseModel):
     source_stream_id: Optional[int] = None
     external_ref: Optional[str] = None
     idempotency_key: Optional[str] = Field(None, max_length=256)
+
+
+class ClaimedMaterialization(NamedTuple):
+    document_id: int
+    revision_id: int
+    workspace_id: int
 
 
 def content_hash(source: str, title: str, text: str) -> str:
@@ -157,8 +163,8 @@ async def accept_revision(
             doc_id = await conn.fetchval(
                 "INSERT INTO documents("
                 "workspace_id, source, title, author, doc_created_at, raw_text, tags, content_hash, "
-                "source_connection_id, source_stream_id, external_ref, source_object_id, revision_id"
-                ") VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
+                "source_connection_id, source_stream_id, external_ref, source_object_id, revision_id, formation_status"
+                ") VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'materializing') RETURNING id",
                 workspace_id,
                 req.source,
                 req.title,
@@ -180,6 +186,40 @@ async def accept_revision(
                 revision_id,
             )
     return doc_id, revision_id, False
+
+
+async def claim_materialization() -> Optional[ClaimedMaterialization]:
+    """Claim one accepted revision fairly before any provider work begins."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "WITH candidate_workspace AS ("
+                "  SELECT w.id FROM workspaces w WHERE EXISTS ("
+                "    SELECT 1 FROM document_revisions r JOIN documents d ON d.revision_id=r.id "
+                "    WHERE r.workspace_id=w.id AND d.workspace_id=w.id AND d.is_active "
+                "    AND r.status='accepted' AND (r.materialization_next_attempt_at IS NULL "
+                "      OR r.materialization_next_attempt_at <= now())"
+                "  ) ORDER BY w.last_materialization_served_at ASC NULLS FIRST, w.id "
+                "  FOR UPDATE SKIP LOCKED LIMIT 1"
+                "), candidate_revision AS ("
+                "  SELECT r.id AS revision_id, d.id AS document_id, r.workspace_id "
+                "  FROM document_revisions r JOIN documents d ON d.revision_id=r.id "
+                "  JOIN candidate_workspace w ON w.id=r.workspace_id "
+                "  WHERE d.is_active AND r.status='accepted' "
+                "  AND (r.materialization_next_attempt_at IS NULL OR r.materialization_next_attempt_at <= now()) "
+                "  ORDER BY r.id FOR UPDATE SKIP LOCKED LIMIT 1"
+                "), claimed AS ("
+                "  UPDATE document_revisions r SET status='materializing', "
+                "  materialization_claimed_at=now(), materialization_attempts=materialization_attempts+1 "
+                "  FROM candidate_revision c WHERE r.id=c.revision_id "
+                "  RETURNING c.document_id, r.id AS revision_id, r.workspace_id"
+                "), served AS ("
+                "  UPDATE workspaces w SET last_materialization_served_at=now() "
+                "  FROM claimed c WHERE w.id=c.workspace_id"
+                ") SELECT document_id, revision_id, workspace_id FROM claimed"
+            )
+    return ClaimedMaterialization(**dict(row)) if row is not None else None
 
 
 async def _mark_materialization_failed(
