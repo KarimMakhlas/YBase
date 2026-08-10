@@ -71,6 +71,22 @@ async def health_details(
             "WHERE ce.workspace_id=$1 ORDER BY 1",
             current.workspace_id,
         )
+        provenance = await conn.fetchrow(
+            "WITH required_fields AS ("
+            "  SELECT n.id AS node_id, 'label'::text AS field_name FROM memory_nodes n "
+            "  WHERE n.workspace_id=$1 AND n.archived_at IS NULL AND n.curated_at IS NULL "
+            "  UNION ALL SELECT n.id, f.field_name FROM memory_nodes n "
+            "  CROSS JOIN (VALUES ('summary'::text), ('status'::text), ('data'::text)) f(field_name) "
+            "  WHERE n.workspace_id=$1 AND n.kind IN ('decision','question') "
+            "  AND n.archived_at IS NULL AND n.curated_at IS NULL"
+            ") SELECT count(*)::int AS required_fields, count(*) FILTER (WHERE NOT EXISTS ("
+            "  SELECT 1 FROM memory_field_projections fp JOIN memory_observations o "
+            "  ON o.id=fp.observation_id JOIN formation_runs r ON r.id=o.formation_run_id "
+            "  WHERE fp.node_id=required_fields.node_id AND fp.field_name=required_fields.field_name "
+            "  AND o.status='valid' AND r.is_active"
+            "))::int AS untraced_fields FROM required_fields",
+            current.workspace_id,
+        )
     return {
         "status": "ok" if ok == 1 else "degraded",
         "db": ok == 1,
@@ -96,6 +112,11 @@ async def health_details(
                 "complete": active_node_coverage.complete,
             } if active_node_coverage is not None else None
         ),
+        "automated_memory_provenance": {
+            "required_fields": provenance["required_fields"],
+            "untraced_fields": provenance["untraced_fields"],
+            "complete": provenance["untraced_fields"] == 0,
+        },
         "embedding_space_consistent": all(
             r["embed_model"] == embed_model for r in corpus_models
         ) and active_model_key == embed_model and (

@@ -1552,3 +1552,6 @@ async def test_health_details_reports_active_embedding_version_coverage(pool, wo
     assert body["active_decision_embedding_coverage"] == {
         "active_nodes": 0, "embedded_nodes": 0, "complete": True,
     }
+    assert body["automated_memory_provenance"] == {
+        "required_fields": 0, "untraced_fields": 0, "complete": True,
+    }

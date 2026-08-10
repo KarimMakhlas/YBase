@@ -43,15 +43,19 @@ async def _retire_projection(conn: asyncpg.Connection, old_run_id: int) -> None:
     if not old_ids:
         return
     node_ids = [r["node_id"] for r in await conn.fetch(
-        "SELECT DISTINCT node_id FROM observation_projections WHERE observation_id = ANY($1::bigint[])",
+        "SELECT DISTINCT node_id FROM ("
+        "  SELECT node_id FROM observation_projections WHERE observation_id = ANY($1::bigint[]) "
+        "  UNION SELECT node_id FROM observation_support_projections "
+        "  WHERE observation_id = ANY($1::bigint[])"
+        ") projected_nodes",
         old_ids,
     )]
     await conn.execute(
-        "DELETE FROM chunk_links cl USING observation_projections op "
+        "DELETE FROM chunk_links cl USING observation_support_projections op "
         "JOIN observation_evidence oe ON oe.observation_id=op.observation_id "
         "WHERE op.observation_id = ANY($1::bigint[]) AND cl.node_id=op.node_id "
         "AND cl.chunk_id=oe.chunk_id AND NOT EXISTS ("
-        "  SELECT 1 FROM observation_projections active_op "
+        "  SELECT 1 FROM observation_support_projections active_op "
         "  JOIN observation_evidence active_oe ON active_oe.observation_id=active_op.observation_id "
         "  JOIN memory_observations active_obs ON active_obs.id=active_op.observation_id "
         "  JOIN formation_runs active_run ON active_run.id=active_obs.formation_run_id "

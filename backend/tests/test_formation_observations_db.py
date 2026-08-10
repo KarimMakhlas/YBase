@@ -149,6 +149,46 @@ async def test_observation_projects_only_edges_it_asserted(
     assert [row["label"] for row in edges] == ["fresh"]
 
 
+async def test_decision_supporting_entity_is_not_rebuilt_as_a_decision(
+    pool, workspace_id, fake_llm
+):
+    """A decision can evidence a person/topic relationship without becoming
+    that supporting node's primary field projection."""
+    doc_id, _ = await ingest_document(_req(title="Entity support"), workspace_id)
+    await run_formation(doc_id)
+
+    async with pool.acquire() as conn:
+        entity = await conn.fetchrow(
+            "SELECT summary, status, data FROM memory_nodes "
+            "WHERE workspace_id=$1 AND kind='entity' AND label='Alice Chen'",
+            workspace_id,
+        )
+
+    assert entity["summary"] is None
+    assert entity["status"] is None
+    assert entity["data"] == {"entity_kind": "person"}
+
+
+async def test_primary_automated_fields_have_active_observation_lineage(
+    pool, workspace_id, fake_llm
+):
+    doc_id, _ = await ingest_document(_req(title="Field lineage"), workspace_id)
+    await run_formation(doc_id)
+
+    async with pool.acquire() as conn:
+        fields = await conn.fetch(
+            "SELECT fp.field_name FROM memory_field_projections fp "
+            "JOIN memory_observations o ON o.id=fp.observation_id "
+            "JOIN formation_runs r ON r.id=o.formation_run_id "
+            "JOIN memory_nodes n ON n.id=fp.node_id "
+            "WHERE o.document_id=$1 AND o.status='valid' AND r.is_active "
+            "AND n.kind='decision' ORDER BY fp.field_name",
+            doc_id,
+        )
+
+    assert [row["field_name"] for row in fields] == ["data", "label", "status", "summary"]
+
+
 async def test_invalid_evidence_is_quarantined_without_a_chunk_link(
     pool, workspace_id, fake_llm
 ):

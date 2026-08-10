@@ -222,11 +222,13 @@ async def _persist(
     observation instead of inferring provenance later from all current edges.
     """
 
-    async def project_node(observation_id: Optional[int], node_id: int) -> None:
+    async def link_observation_evidence(
+        observation_id: Optional[int], node_id: int
+    ) -> None:
         if observation_id is None:
             return
         await conn.execute(
-            "INSERT INTO observation_projections(workspace_id, observation_id, node_id) "
+            "INSERT INTO observation_support_projections(workspace_id, observation_id, node_id) "
             "VALUES($1, $2, $3) ON CONFLICT DO NOTHING",
             workspace_id, observation_id, node_id,
         )
@@ -236,6 +238,33 @@ async def _persist(
             "WHERE observation_id=$1 ON CONFLICT DO NOTHING",
             observation_id, node_id,
         )
+
+    async def record_fields(
+        observation_id: Optional[int], node_id: int, fields: tuple[str, ...]
+    ) -> None:
+        if observation_id is None:
+            return
+        for field_name in fields:
+            await conn.execute(
+                "INSERT INTO memory_field_projections("
+                "workspace_id, observation_id, node_id, field_name) "
+                "VALUES($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+                workspace_id, observation_id, node_id, field_name,
+            )
+
+    async def project_node(
+        observation_id: Optional[int], node_id: int, fields: tuple[str, ...]
+    ) -> None:
+        """Record the primary identity/field projection for one observation."""
+        if observation_id is None:
+            return
+        await conn.execute(
+            "INSERT INTO observation_projections(workspace_id, observation_id, node_id) "
+            "VALUES($1, $2, $3) ON CONFLICT DO NOTHING",
+            workspace_id, observation_id, node_id,
+        )
+        await record_fields(observation_id, node_id, fields)
+        await link_observation_evidence(observation_id, node_id)
 
     async def project_edge(
         observation_id: Optional[int], src: int, dst: int, relation: str
@@ -257,7 +286,7 @@ async def _persist(
 
     async def ensure_entity(
         name: str, kind: str = "person", description: str = "",
-        observation_id: Optional[int] = None,
+        observation_id: Optional[int] = None, *, primary_projection: bool = False,
     ) -> int:
         key = name.strip().lower()
         if key not in entity_ids:
@@ -265,18 +294,25 @@ async def _persist(
                 conn, workspace_id, "entity", name, summary=description or None,
                 data={"entity_kind": kind},
             )
-        await project_node(observation_id, entity_ids[key])
+        if primary_projection:
+            await project_node(observation_id, entity_ids[key], ("label", "summary", "data"))
+        else:
+            await record_fields(observation_id, entity_ids[key], ("label",))
+            await link_observation_evidence(observation_id, entity_ids[key])
         return entity_ids[key]
 
     async def ensure_topic(name: str, observation_id: Optional[int] = None) -> int:
         node_id = await graph.upsert_node(conn, workspace_id, "topic", name.strip().lower())
-        await project_node(observation_id, node_id)
+        # Topics are deterministic support nodes derived from a decision or
+        # question relation, never the primary field target of that observation.
+        await record_fields(observation_id, node_id, ("label",))
+        await link_observation_evidence(observation_id, node_id)
         return node_id
 
     for ent in result.get("entities", []):
         await ensure_entity(
             ent["name"], ent["kind"], ent.get("description", ""),
-            ent.get("_observation_id"),
+            ent.get("_observation_id"), primary_projection=True,
         )
 
     for dec in result.get("decisions", []):
@@ -293,7 +329,7 @@ async def _persist(
                 "date": dec.get("date"),
             },
         )
-        await project_node(observation_id, node_id)
+        await project_node(observation_id, node_id, ("label", "summary", "status", "data"))
         for person in dec.get("made_by", []):
             pid = await ensure_entity(person, observation_id=observation_id)
             await project_edge(observation_id, node_id, pid, "involves")
@@ -329,7 +365,7 @@ async def _persist(
                 conn, workspace_id, "question", q["question"], status=q["status"],
                 data={"resolution": q.get("resolution"), "raised_by": q.get("raised_by", [])},
             )
-        await project_node(observation_id, node_id)
+        await project_node(observation_id, node_id, ("label", "summary", "status", "data"))
         for person in q.get("raised_by", []):
             pid = await ensure_entity(person, observation_id=observation_id)
             await project_edge(observation_id, node_id, pid, "raised_by")
