@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from app.core import config
 from app.domains.documents.ingestion import IngestRequest, ingest_document
 from app.domains.memory import worker
@@ -130,6 +132,58 @@ async def test_same_source_content_retry_reuses_the_active_revision(pool, worksp
     assert document["source_object_id"] is not None
     assert document["revision_id"] is not None
     assert document["is_active"] is True
+
+
+async def test_concurrent_identical_ingests_create_one_active_revision(pool, workspace_id):
+    req = _req(idempotency_key="concurrent-upload", text="same concurrent payload")
+
+    first, second = await asyncio.gather(
+        ingest_document(req, workspace_id=workspace_id),
+        ingest_document(req, workspace_id=workspace_id),
+    )
+
+    assert {first[0], second[0]} == {first[0]}
+    assert sorted([first[1], second[1]]) == [False, True]
+    async with pool.acquire() as conn:
+        active = await conn.fetchval(
+            "SELECT count(*) FROM documents WHERE workspace_id=$1 AND is_active",
+            workspace_id,
+        )
+        revisions = await conn.fetchval(
+            "SELECT count(*) FROM document_revisions WHERE workspace_id=$1",
+            workspace_id,
+        )
+    assert active == 1
+    assert revisions == 1
+
+
+async def test_embedding_failure_keeps_a_reviewable_accepted_revision(
+    pool, workspace_id, monkeypatch
+):
+    async def fail_embedding(_texts):
+        raise RuntimeError("embedding provider unavailable")
+
+    monkeypatch.setattr(
+        "app.domains.documents.ingestion.embed_texts", fail_embedding
+    )
+    with pytest.raises(RuntimeError, match="embedding provider unavailable"):
+        await ingest_document(_req(idempotency_key="provider-failure"), workspace_id)
+
+    async with pool.acquire() as conn:
+        revision = await conn.fetchrow(
+            "SELECT status, error FROM document_revisions WHERE workspace_id=$1",
+            workspace_id,
+        )
+        document = await conn.fetchrow(
+            "SELECT formation_status, formation_error FROM documents WHERE workspace_id=$1",
+            workspace_id,
+        )
+        chunks = await conn.fetchval("SELECT count(*) FROM chunks WHERE workspace_id=$1", workspace_id)
+    assert revision["status"] == "failed"
+    assert "embedding provider unavailable" in revision["error"]
+    assert document["formation_status"] == "failed"
+    assert "embedding provider unavailable" in document["formation_error"]
+    assert chunks == 0
 
 
 async def test_worker_claim_and_success_path(pool, workspace_id):
