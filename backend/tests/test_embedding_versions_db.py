@@ -32,8 +32,9 @@ async def test_chunk_embedding_rejects_cross_workspace_provenance(pool, workspac
             workspace_id,
         )
         chunk_id = await conn.fetchval(
-            "INSERT INTO chunks(workspace_id, document_id, chunk_index, text, embedding, embed_model) "
-            "VALUES($1,$2,0,'text',$3::vector,'legacy:test') RETURNING id",
+            "INSERT INTO chunks(workspace_id, document_id, chunk_index, text, embedding, embed_model, "
+            "section_path, source_start, source_end, content_type, token_count) "
+            "VALUES($1,$2,0,'text',$3::vector,'legacy:test',ARRAY['test'],0,4,'text/plain',1) RETURNING id",
             workspace_id, document_id, to_pgvector([0.0] * 512),
         )
         model_id = await embedding_versions.ensure_model(conn, "test:cross:512")

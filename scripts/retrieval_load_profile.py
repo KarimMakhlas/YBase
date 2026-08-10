@@ -76,9 +76,11 @@ async def main() -> int:
             for start in range(0, args.chunks, args.batch):
                 count = min(args.batch, args.chunks - start)
                 await conn.execute(
-                    "INSERT INTO chunks(workspace_id, document_id, chunk_index, text, embedding, embed_model) "
+                    "INSERT INTO chunks(workspace_id, document_id, chunk_index, text, embedding, embed_model, "
+                    "section_path, source_start, source_end, content_type, token_count) "
                     "SELECT $1, $2, g - 1, 'synthetic retrieval profile chunk ' || g, "
-                    "$3::vector, 'load-profile:synthetic:512' "
+                    "$3::vector, 'load-profile:synthetic:512', ARRAY['synthetic'], 0, "
+                    "char_length('synthetic retrieval profile chunk ' || g), 'text/plain', 5 "
                     "FROM generate_series($4::int, $5::int) AS g",
                     workspace_id, document_id, vector, start + 1, start + count,
                 )

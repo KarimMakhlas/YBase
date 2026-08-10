@@ -1,6 +1,7 @@
 """Ingestion pipeline: dedup → chunk → embed → store → enqueue formation."""
 
 import hashlib
+import re
 from datetime import datetime, timezone
 from typing import List, NamedTuple, Optional, Tuple
 
@@ -31,6 +32,7 @@ class IngestRequest(BaseModel):
     author: Optional[str] = Field(None, max_length=500)
     created_at: Optional[str] = None  # ISO 8601 — when the content was originally written
     updated_at: Optional[str] = None  # ISO 8601 — provider's last source-content update
+    content_type: str = Field("text/plain", max_length=128)
     tags: List[str] = Field(default_factory=list)
     source_connection_id: Optional[int] = None
     source_stream_id: Optional[int] = None
@@ -60,26 +62,70 @@ def source_identity(req: IngestRequest, digest: str) -> str:
 def chunk_text(text: str, target: int = 900, hard_max: int = 1500) -> List[str]:
     """Paragraph-aware chunking: greedily pack paragraphs up to ~target chars,
     hard-splitting any single paragraph longer than hard_max."""
-    paras = [p.strip() for p in text.split("\n\n") if p.strip()]
-    chunks: List[str] = []
-    cur = ""
-    for p in paras:
-        while len(p) > hard_max:
-            if cur:
-                chunks.append(cur)
-                cur = ""
-            chunks.append(p[:hard_max])
-            p = p[hard_max:].strip()
-        if not p:
+    return [piece.text for piece in chunk_structure(text, target, hard_max)]
+
+
+class ChunkPiece(NamedTuple):
+    text: str
+    section_path: List[str]
+    source_start: int
+    source_end: int
+    token_count: int
+
+
+def chunk_structure(text: str, target: int = 900, hard_max: int = 1500) -> List[ChunkPiece]:
+    """Return paragraph-aware chunks together with stable source spans.
+
+    The text stored for a multi-paragraph chunk is the exact raw substring
+    between its first and last paragraph, so its offsets always point back to
+    the immutable revision without lossy whitespace reconstruction.
+    """
+    paragraphs = []
+    cursor = 0
+    for index, raw in enumerate(text.split("\n\n"), start=1):
+        value = raw.strip()
+        if not value:
+            cursor += len(raw) + 2
             continue
-        if cur and len(cur) + len(p) + 2 > target:
-            chunks.append(cur)
-            cur = p
-        else:
-            cur = f"{cur}\n\n{p}" if cur else p
-    if cur:
-        chunks.append(cur)
-    return chunks or [text[:hard_max]]
+        start = text.find(value, cursor)
+        end = start + len(value)
+        paragraphs.append((value, start, end, index))
+        cursor = end
+
+    def build(start: int, end: int, paths: List[str]) -> ChunkPiece:
+        value = text[start:end]
+        return ChunkPiece(
+            value,
+            paths,
+            start,
+            end,
+            len(re.findall(r"\S+", value)),
+        )
+
+    chunks: List[ChunkPiece] = []
+    current_start: Optional[int] = None
+    current_end: Optional[int] = None
+    current_paths: List[str] = []
+    for value, start, end, paragraph_index in paragraphs:
+        while len(value) > hard_max:
+            if current_start is not None:
+                chunks.append(build(current_start, current_end or current_start, current_paths))
+                current_start, current_end, current_paths = None, None, []
+            split_end = start + hard_max
+            chunks.append(build(start, split_end, [f"paragraph:{paragraph_index}"]))
+            value = value[hard_max:]
+            start = split_end
+        if current_start is not None and end - current_start > target:
+            chunks.append(build(current_start, current_end or current_start, current_paths))
+            current_start, current_end, current_paths = None, None, []
+        if current_start is None:
+            current_start = start
+        current_end = end
+        current_paths.append(f"paragraph:{paragraph_index}")
+    if current_start is not None:
+        chunks.append(build(current_start, current_end or current_start, current_paths))
+    return chunks or [ChunkPiece(text[:hard_max], ["document"], 0, min(len(text), hard_max),
+                                 len(re.findall(r"\S+", text[:hard_max])))]
 
 
 def _parse_date(value: Optional[str]) -> Optional[datetime]:
@@ -145,8 +191,8 @@ async def accept_revision(
             revision_id = await conn.fetchval(
                 "INSERT INTO document_revisions("
                 "workspace_id, source_object_id, revision_number, content_hash, source, "
-                "title, author, doc_created_at, external_updated_at, raw_text, tags"
-                ") VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id",
+                "title, author, doc_created_at, external_updated_at, raw_text, tags, content_type"
+                ") VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
                 workspace_id,
                 source_object_id,
                 revision_number,
@@ -158,6 +204,7 @@ async def accept_revision(
                 _parse_date(req.updated_at),
                 req.text,
                 req.tags,
+                req.content_type,
             )
             await conn.execute(
                 "UPDATE documents SET is_active=false "
@@ -312,10 +359,10 @@ async def _materialize_revision(
                 revision_id,
             )
 
-        pieces = chunk_text(req.text)
+        pieces = chunk_structure(req.text)
         usage_token = usage.set_context(workspace_id=workspace_id, surface="ingest")
         try:
-            embeddings = await embed_texts(pieces)
+            embeddings = await embed_texts([piece.text for piece in pieces])
         finally:
             usage.reset_context(usage_token)
 
@@ -323,9 +370,12 @@ async def _materialize_revision(
             async with conn.transaction():
                 for i, (piece, emb) in enumerate(zip(pieces, embeddings)):
                     chunk_id = await conn.fetchval(
-                        "INSERT INTO chunks(workspace_id, document_id, chunk_index, text, embedding, embed_model) "
-                        "VALUES($1, $2, $3, $4, $5::vector, $6) RETURNING id",
-                        workspace_id, document_id, i, piece, to_pgvector(emb), embed_model,
+                        "INSERT INTO chunks(workspace_id, document_id, chunk_index, text, embedding, embed_model, "
+                        "section_path, source_start, source_end, content_type, token_count) "
+                        "VALUES($1, $2, $3, $4, $5::vector, $6, $7, $8, $9, $10, $11) RETURNING id",
+                        workspace_id, document_id, i, piece.text, to_pgvector(emb), embed_model,
+                        piece.section_path, piece.source_start, piece.source_end,
+                        req.content_type, piece.token_count,
                     )
                     await conn.execute(
                         "INSERT INTO chunk_embeddings(workspace_id, chunk_id, embedding_model_id, embedding) "
@@ -350,7 +400,7 @@ async def materialize_claimed_revision(claimed: ClaimedMaterialization) -> bool:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT d.id AS document_id, d.workspace_id, r.id AS revision_id, r.source, "
-            "r.title, r.author, r.doc_created_at, r.raw_text, r.tags "
+            "r.title, r.author, r.doc_created_at, r.raw_text, r.tags, r.content_type "
             "FROM documents d JOIN document_revisions r ON r.id=d.revision_id "
             "WHERE d.id=$1 AND d.workspace_id=$2 AND r.id=$3 "
             "AND r.status='materializing'",
@@ -363,6 +413,7 @@ async def materialize_claimed_revision(claimed: ClaimedMaterialization) -> bool:
         author=row["author"], created_at=row["doc_created_at"].isoformat()
         if row["doc_created_at"] else None,
         tags=list(row["tags"] or []),
+        content_type=row["content_type"],
     )
     try:
         await _materialize_revision(

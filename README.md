@@ -212,7 +212,9 @@ To use an existing Neon database, put its pooled `DATABASE_URL` in
 2. A retry of the same source/content returns the existing revision; a changed
    connector object creates a new active revision and retains the old one as
    history outside retrieval.
-3. Active revisions are split into evidence-sized chunks and embedded.
+3. Active revisions are split into evidence-sized chunks and embedded. Every
+   chunk retains its source offset, paragraph path, content type, and estimated
+   token count, so retrieved evidence can be traced to the original revision.
 4. A bounded worker queue processes documents sequentially per workspace while
    allowing different workspaces to run in parallel.
 5. The selected LLM extracts decisions, reasoning, alternatives, people,

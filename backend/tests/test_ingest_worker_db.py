@@ -30,6 +30,25 @@ async def test_ingest_creates_doc_chunks_and_queues(pool, workspace_id):
     assert {row["workspace_id"] for row in chunk_workspaces} == {workspace_id}
 
 
+async def test_ingest_stores_chunk_structure_and_source_offsets(pool, workspace_id):
+    text = "Opening context.\n\nDecision details live in this paragraph."
+    doc_id, _ = await ingest_document(
+        _req(text=text, content_type="text/markdown"), workspace_id=workspace_id
+    )
+    async with pool.acquire() as conn:
+        chunk = await conn.fetchrow(
+            "SELECT text, section_path, source_start, source_end, content_type, token_count "
+            "FROM chunks WHERE document_id=$1 ORDER BY chunk_index LIMIT 1",
+            doc_id,
+        )
+
+    assert chunk["text"] == text
+    assert chunk["section_path"] == ["paragraph:1", "paragraph:2"]
+    assert (chunk["source_start"], chunk["source_end"]) == (0, len(text))
+    assert chunk["content_type"] == "text/markdown"
+    assert chunk["token_count"] == 8
+
+
 async def test_chunk_workspace_schema_is_enforced(pool):
     async with pool.acquire() as conn:
         nullable = await conn.fetchval(
