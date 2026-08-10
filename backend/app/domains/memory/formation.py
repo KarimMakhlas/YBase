@@ -14,6 +14,7 @@ import asyncpg
 
 from app.core import config, db
 from app.core.observability import StageTimer
+from app.domains.query import embedding_versions
 from app.providers import llm
 from . import graph, observations, projection, validation
 
@@ -419,17 +420,30 @@ async def _fetch_existing(
         "ORDER BY updated_at DESC LIMIT $2",
         workspace_id, _EXISTING_CAP,
     )
-    centroid = await conn.fetchval(
-        "SELECT avg(embedding)::text FROM chunks WHERE document_id=$1", document_id
-    )
+    # Relevance is meaningful only inside one embedding space. Both document
+    # centroid and decision signatures therefore come from the workspace's
+    # active model, never the legacy compatibility vector columns.
+    active_embedding_model_id = await embedding_versions.active_model(conn, workspace_id)
+    centroid = None
+    if active_embedding_model_id is not None:
+        centroid = await conn.fetchval(
+            "SELECT avg(ce.embedding)::text FROM chunk_embeddings ce "
+            "JOIN chunks c ON c.id=ce.chunk_id "
+            "WHERE c.document_id=$1 AND ce.workspace_id=$2 "
+            "AND ce.embedding_model_id=$3",
+            document_id, workspace_id, active_embedding_model_id,
+        )
     relevant: List[asyncpg.Record] = []
     if centroid:
         relevant = await conn.fetch(
-            "SELECT id, kind, label, summary, status FROM memory_nodes "
-            "WHERE workspace_id=$1 AND kind IN ('decision', 'question') "
-            "AND archived_at IS NULL AND embedding IS NOT NULL "
-            "ORDER BY embedding <=> $2::vector LIMIT $3",
-            workspace_id, centroid, _EXISTING_RELEVANT,
+            "SELECT n.id, n.kind, n.label, n.summary, n.status "
+            "FROM memory_node_embeddings ne "
+            "JOIN memory_nodes n ON n.id=ne.node_id "
+            "WHERE ne.workspace_id=$1 AND ne.embedding_model_id=$2 "
+            "AND n.workspace_id=$1 AND n.kind IN ('decision', 'question') "
+            "AND n.archived_at IS NULL "
+            "ORDER BY ne.embedding <=> $3::vector LIMIT $4",
+            workspace_id, active_embedding_model_id, centroid, _EXISTING_RELEVANT,
         )
 
     topic_ids: Set[int] = set()

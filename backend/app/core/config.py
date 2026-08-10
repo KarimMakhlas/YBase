@@ -109,6 +109,14 @@ ANSWER_CLAIM_VERIFICATION = os.getenv(
 ).lower() in ("1", "true", "yes", "on")
 ANSWER_CLAIM_MAX_COUNT = int(os.getenv("ANSWER_CLAIM_MAX_COUNT", "12"))
 ANSWER_CLAIM_EVIDENCE_CHARS = int(os.getenv("ANSWER_CLAIM_EVIDENCE_CHARS", "16000"))
+# `withhold` buffers the answer until structural and semantic grounding checks
+# finish, replacing a failed answer with a transparent evidence-only fallback.
+# `report` keeps token streaming and records failures in metadata. Production
+# defaults to the safer policy; development defaults to faster iteration.
+ANSWER_CLAIM_FAILURE_POLICY = os.getenv(
+    "ANSWER_CLAIM_FAILURE_POLICY",
+    "withhold" if DEPLOYMENT_ENV == "production" else "report",
+).lower()
 # Per-IP limit on the unauthenticated auth endpoints (register / login /
 # forgot / reset), events per minute. 0 disables.
 AUTH_RATE_PER_MINUTE = int(os.getenv("AUTH_RATE_PER_MINUTE", "10"))

@@ -9,7 +9,11 @@ from app.core import config
 from app.domains.documents.ingestion import chunk_text, content_hash
 from app.providers import llm
 from app.providers.llm import parse_loose_json
-from app.domains.query.streaming import _strip_metadata_bleed, apply_claim_verification
+from app.domains.query.streaming import (
+    _strip_metadata_bleed,
+    apply_claim_verification,
+    answer_for_claim_verification,
+)
 from app.domains.query.retrieval import rank_graph_evidence, rrf_fuse
 from app.domains.query.vector_search import recall_at_k, supports_iterative_hnsw
 from app.domains.memory.consolidate import similar_pairs, similar_pairs_against
@@ -68,6 +72,20 @@ def test_claim_verification_lowers_confidence_for_unsupported_or_contradicted_cl
         "unsupported_claim_count": 1,
         "contradicted_claim_count": 1,
     }
+
+
+def test_withhold_policy_does_not_return_an_answer_with_failed_claim_entailment():
+    """A strict production policy must not expose text after an independent
+    verifier found unsupported factual content."""
+    answer, withheld = answer_for_claim_verification(
+        "The team unanimously chose PostgreSQL.",
+        {"claim_verification": {"status": "failed"}},
+        "withhold",
+    )
+
+    assert withheld is True
+    assert answer != "The team unanimously chose PostgreSQL."
+    assert "couldn't verify" in answer
 
 
 def test_content_hash_distinguishes_and_repeats():
@@ -347,6 +365,7 @@ def test_jira_issue_to_doc_shape():
             "priority": {"name": "High"},
             "labels": ["billing"],
             "created": "2026-01-15T09:30:00.000+0000",
+            "updated": "2026-02-01T11:00:00.000+0000",
         },
     }
     doc = jira_issue_to_doc(connection, stream, issue)
@@ -354,6 +373,7 @@ def test_jira_issue_to_doc_shape():
     assert doc.title.startswith("[PLAT-42]")
     assert "Queueing avoids API timeouts." in doc.text
     assert doc.author == "Maya"
+    assert doc.updated_at == "2026-02-01T11:00:00+00:00"
     assert doc.external_ref == "jira:cloud-1:PLAT-42"
 
 
@@ -369,12 +389,14 @@ async def test_github_issue_to_doc_shape_without_comments():
         "body": "Persist sessions so Ask Memory history survives reloads.",
         "comments": 0,
         "created_at": "2026-02-01T12:00:00Z",
+        "updated_at": "2026-02-03T09:00:00Z",
     }
     doc = await github_issue_to_doc("token-unused", connection, stream, issue)
     assert doc.source == "github"
     assert doc.title == "ybase/app#7: Adopt persisted sessions"
     assert "Persist sessions" in doc.text
     assert doc.author == "mav"
+    assert doc.updated_at == "2026-02-03T09:00:00Z"
     assert doc.external_ref == "github:ybase/app:issue/7"
 
 

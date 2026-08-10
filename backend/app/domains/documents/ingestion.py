@@ -30,6 +30,7 @@ class IngestRequest(BaseModel):
     text: str = Field(..., max_length=config.MAX_DOCUMENT_CHARS)
     author: Optional[str] = Field(None, max_length=500)
     created_at: Optional[str] = None  # ISO 8601 — when the content was originally written
+    updated_at: Optional[str] = None  # ISO 8601 — provider's last source-content update
     tags: List[str] = Field(default_factory=list)
     source_connection_id: Optional[int] = None
     source_stream_id: Optional[int] = None
@@ -108,12 +109,13 @@ async def accept_revision(
         async with conn.transaction():
             source_object = await conn.fetchrow(
                 "INSERT INTO source_objects("
-                "workspace_id, identity_key, source_connection_id, source_stream_id, external_ref"
-                ") VALUES($1, $2, $3, $4, $5) "
+                "workspace_id, identity_key, source_connection_id, source_stream_id, external_ref, external_updated_at"
+                ") VALUES($1, $2, $3, $4, $5, $6) "
                 "ON CONFLICT (workspace_id, identity_key) DO UPDATE SET "
                 "source_connection_id=COALESCE(EXCLUDED.source_connection_id, source_objects.source_connection_id), "
                 "source_stream_id=COALESCE(EXCLUDED.source_stream_id, source_objects.source_stream_id), "
                 "external_ref=COALESCE(EXCLUDED.external_ref, source_objects.external_ref), "
+                "external_updated_at=GREATEST(source_objects.external_updated_at, EXCLUDED.external_updated_at), "
                 "status='active', deleted_at=NULL, updated_at=now() "
                 "RETURNING id",
                 workspace_id,
@@ -121,6 +123,7 @@ async def accept_revision(
                 req.source_connection_id,
                 req.source_stream_id,
                 req.external_ref,
+                _parse_date(req.updated_at),
             )
             source_object_id = source_object["id"]
             existing = await conn.fetchrow(
@@ -142,8 +145,8 @@ async def accept_revision(
             revision_id = await conn.fetchval(
                 "INSERT INTO document_revisions("
                 "workspace_id, source_object_id, revision_number, content_hash, source, "
-                "title, author, doc_created_at, raw_text, tags"
-                ") VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
+                "title, author, doc_created_at, external_updated_at, raw_text, tags"
+                ") VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id",
                 workspace_id,
                 source_object_id,
                 revision_number,
@@ -152,6 +155,7 @@ async def accept_revision(
                 req.title,
                 req.author,
                 _parse_date(req.created_at),
+                _parse_date(req.updated_at),
                 req.text,
                 req.tags,
             )

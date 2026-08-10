@@ -1518,6 +1518,48 @@ async def test_query_claim_verifier_lowers_confidence_for_unsupported_claim(
     }
 
 
+async def test_query_withhold_policy_never_streams_an_answer_with_failed_claim_entailment(
+    pool, workspace_id, monkeypatch
+):
+    """Strict deployments keep answer text buffered until the verifier passes,
+    so unsupported generated claims cannot reach the user first."""
+    from app.core import config
+
+    monkeypatch.setattr(config, "ANSWER_CLAIM_VERIFICATION", True)
+    monkeypatch.setattr(config, "ANSWER_CLAIM_FAILURE_POLICY", "withhold")
+
+    async def verifier(*_args, **_kwargs):
+        return {"claims": [{
+            "claim": "The choice was unanimous.",
+            "citation_ids": [1],
+            "verdict": "unsupported",
+        }]}
+
+    monkeypatch.setattr("app.providers.llm.structured_call", verifier)
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        await admin.post("/api/ingest", json={
+            "source": "meeting", "title": "DB notes",
+            "text": "The team decided to keep PostgreSQL for v1.",
+        })
+        parts = [
+            "The team unanimously chose PostgreSQL [C1].",
+            "\n<<<MEMORY_METADATA>>>\n",
+            '{"citations":[{"chunk_id":1,"quote":"keep PostgreSQL for v1"}],'
+            '"related_questions":[],"timeline":[]}',
+        ]
+        monkeypatch.setattr(
+            "app.providers.llm.stream_text", lambda *_a, **_k: _FakeStream(parts)
+        )
+        response = await admin.post("/api/query", json={"question": "what db?"})
+        assert response.status_code == 200
+        meta = _sse_event(response.text, "metadata")
+
+    assert "The team unanimously chose PostgreSQL" not in response.text
+    assert "I couldn't verify this answer" in response.text
+    assert meta["answer_withheld"] is True
+
+
 async def test_query_slo_reports_latency_and_grounding_metrics(
     pool, workspace_id, monkeypatch
 ):

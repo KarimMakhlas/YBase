@@ -164,6 +164,29 @@ def apply_claim_verification(
     return result
 
 
+def answer_for_claim_verification(
+    answer_text: str, verification: Dict[str, Any], failure_policy: str
+) -> tuple[str, bool]:
+    """Choose the text that may be displayed after grounding verification.
+
+    `withhold` is deliberately conservative: invalid citations or a failed
+    independent claim-entailment check replace the generated answer. This
+    guarantees that a strict deployment never streams a claim it subsequently
+    knows it cannot support. Other policies preserve the answer and expose the
+    outcome through metadata for low-latency or observational rollouts.
+    """
+    semantic_status = (verification.get("claim_verification") or {}).get("status")
+    invalid_citations = bool(verification.get("invalid_citation_ids"))
+    failed = semantic_status == "failed" or invalid_citations
+    if failure_policy == "withhold" and failed:
+        return (
+            "I couldn't verify this answer against the retrieved evidence. "
+            "Please review the cited sources below.",
+            True,
+        )
+    return answer_text, False
+
+
 CLAIM_VERIFIER_SYSTEM = """You verify an answer against only its cited source chunks.
 Split factual assertions in the answer into at most the requested number of claims. For
 each claim, mark it supported only when the cited text directly establishes it; mark it
@@ -591,6 +614,10 @@ async def stream_query(
     timer.lap("context")
 
     answer_text = ""
+    buffer_answer = (
+        config.ANSWER_CLAIM_VERIFICATION
+        and config.ANSWER_CLAIM_FAILURE_POLICY == "withhold"
+    )
     buf = ""
     meta_raw = ""
     in_meta = False
@@ -610,7 +637,8 @@ async def stream_query(
                     head = _strip_metadata_bleed(buf[:idx]).rstrip()
                     if head:
                         answer_text += head
-                        yield _sse("delta", {"text": head})
+                        if not buffer_answer:
+                            yield _sse("delta", {"text": head})
                     meta_raw = buf[idx + len(DELIM):]
                     buf = ""
                     in_meta = True
@@ -618,7 +646,8 @@ async def stream_query(
                     emit = buf[:-holdback]
                     buf = buf[-holdback:]
                     answer_text += emit
-                    yield _sse("delta", {"text": emit})
+                    if not buffer_answer:
+                        yield _sse("delta", {"text": emit})
             if hasattr(stream, "get_final_message"):
                 # Anthropic reports usage on the final message; the stream is
                 # exhausted so this resolves immediately. Best-effort only.
@@ -639,7 +668,8 @@ async def stream_query(
         head = _strip_metadata_bleed(buf)
         if head:
             answer_text += head
-            yield _sse("delta", {"text": head})
+            if not buffer_answer:
+                yield _sse("delta", {"text": head})
 
     meta = llm.parse_loose_json(meta_raw)
     # Preferred shape: citations:[{chunk_id, quote}]. Fall back to the old flat
@@ -680,8 +710,18 @@ async def stream_query(
             "text": c["text"],  # full chunk so the UI can fall back to highlighting it
         })
 
+    if buffer_answer:
+        yield _sse("status", {
+            "stage": "verifying",
+            "message": "Verifying answer against cited evidence…",
+        })
     claim_results = await verify_answer_claims(question, answer_text, citations)
     verification = apply_claim_verification(verification, claim_results)
+    display_answer, answer_withheld = answer_for_claim_verification(
+        answer_text, verification, config.ANSWER_CLAIM_FAILURE_POLICY
+    )
+    if buffer_answer and display_answer:
+        yield _sse("delta", {"text": display_answer})
     timer.lap("verification")
     await _record_query_run(workspace_id, timer, len(ret["chunks"]), verification)
 
@@ -702,6 +742,7 @@ async def stream_query(
         "counter_evidence": counter_evidence,
         "insight_cards": _enrich_insight_cards(meta.get("insight_cards", []), by_id),
         "verification": verification,
+        "answer_withheld": answer_withheld,
         "trace": ret.get("trace", {}),
     })
     timer.lap("metadata")

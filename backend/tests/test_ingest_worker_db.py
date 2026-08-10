@@ -116,6 +116,38 @@ async def test_connector_update_creates_a_new_active_revision(pool, workspace_id
     assert [row["is_active"] for row in rows] == [False, True]
 
 
+async def test_connector_revision_preserves_external_update_time(pool, workspace_id):
+    async with pool.acquire() as conn:
+        connection_id = await conn.fetchval(
+            "INSERT INTO source_connections(workspace_id, provider, name) "
+            "VALUES($1, 'jira', 'Updated Jira') RETURNING id",
+            workspace_id,
+        )
+
+    doc_id, duplicate = await ingest_document(
+        _req(
+            source="jira",
+            external_ref="jira:cloud:ENG-2",
+            source_connection_id=connection_id,
+            text="revision with a provider modification time",
+            updated_at="2026-08-01T10:30:00Z",
+        ),
+        workspace_id=workspace_id,
+    )
+
+    assert duplicate is False
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT r.external_updated_at AS revision_updated_at, "
+            "so.external_updated_at AS source_updated_at "
+            "FROM documents d JOIN document_revisions r ON r.id=d.revision_id "
+            "JOIN source_objects so ON so.id=d.source_object_id WHERE d.id=$1",
+            doc_id,
+        )
+    assert row["revision_updated_at"].isoformat() == "2026-08-01T10:30:00+00:00"
+    assert row["source_updated_at"].isoformat() == "2026-08-01T10:30:00+00:00"
+
+
 async def test_same_source_content_retry_reuses_the_active_revision(pool, workspace_id):
     req = _req(idempotency_key="upload-17", text="unchanged upload")
     first, duplicate = await ingest_document(req, workspace_id=workspace_id)

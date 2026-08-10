@@ -156,6 +156,7 @@ def digest_doc(connection, stream, day: str, messages: List[Dict[str, Any]]) -> 
         text=text,
         author=(messages[0].get("author") or {}).get("username"),
         created_at=messages[0].get("timestamp"),
+        updated_at=max((m.get("timestamp") or "" for m in messages), default=None),
         tags=[stream["name"]],
         source_connection_id=connection["id"],
         source_stream_id=stream["id"],

@@ -207,7 +207,8 @@ To use an existing Neon database, put its pooled `DATABASE_URL` in
 ### Formation
 
 1. A stable connector object or upload idempotency key accepts an immutable
-   content revision before any embedding provider call.
+   content revision before any embedding provider call. Provider creation and
+   modification timestamps are retained on the source object and revision.
 2. A retry of the same source/content returns the existing revision; a changed
    connector object creates a new active revision and retains the old one as
    history outside retrieval.
@@ -229,7 +230,7 @@ To use an existing Neon database, put its pooled `DATABASE_URL` in
 Provider failure does not discard accepted content: the revision remains in a
 reviewable failed state. When a connector reports deletion or permission loss,
 its source object is explicitly deactivated rather than silently disappearing.
-6. Near-duplicate decisions are consolidated by embedding similarity.
+9. Near-duplicate decisions are consolidated by embedding similarity.
 
 ```mermaid
 sequenceDiagram
@@ -407,6 +408,8 @@ flowchart TD
 | `INTEGRATION_CONCURRENCY` | Connector/digest periodic workers | `1` |
 | `MAINTENANCE_CONCURRENCY` | Consolidation/janitor periodic workers | `1` |
 | `RETRIEVAL_CANDIDATE_MULTIPLIER` | Wider union before final retrieval ranking | `3` |
+| `ANSWER_CLAIM_VERIFICATION` | Enables the independent cited-evidence claim check | Production `true` |
+| `ANSWER_CLAIM_FAILURE_POLICY` | `withhold` replaces failed claims with a source-first fallback; `report` streams and records the result | Production `withhold`, development `report` |
 | `SENTRY_DSN` | Enables Sentry error reporting | Disabled |
 
 See [backend/.env.example](backend/.env.example) for the full configuration surface.
@@ -802,6 +805,12 @@ loss in retrieval recall or citation-entailment precision, and blocks more than
 a 20% rise in retrieval p95, per-query provider cost, or formation queue p95.
 The **Release evaluation** GitHub Actions workflow runs this same gate with the
 two explicitly supplied artifact paths.
+
+Production uses `ANSWER_CLAIM_FAILURE_POLICY=withhold` by default: answer text
+is held until structural citation and claim-entailment checks finish. If either
+fails, users receive a transparent prompt to inspect the cited sources rather
+than the unsupported generated text. Set `report` for a measured, lower-latency
+observation rollout; the outcome remains in query telemetry and SSE metadata.
 
 ## Demo and data import
 

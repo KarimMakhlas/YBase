@@ -217,6 +217,7 @@ def issue_to_doc(connection, stream, issue: Dict[str, Any]) -> Optional[IngestRe
         text=text,
         author=creator or None,
         created_at=issue.get("createdAt"),
+        updated_at=issue.get("updatedAt"),
         tags=[stream["name"], identifier.split("-")[0]],
         source_connection_id=connection["id"],
         source_stream_id=stream["id"],

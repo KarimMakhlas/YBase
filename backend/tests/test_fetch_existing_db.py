@@ -5,6 +5,8 @@ failure mode."""
 
 from app.domains.documents.ingestion import IngestRequest, ingest_document
 from app.domains.memory import formation, graph
+from app.domains.query import embedding_versions
+from app.providers.embeddings import to_pgvector
 
 
 async def test_topic_neighbors_surface_stale_decision(pool, workspace_id):
@@ -52,3 +54,48 @@ async def test_no_tags_no_topic_slice_still_works(pool, workspace_id):
         existing = await formation._fetch_existing(
             conn, workspace_id, doc_id, doc_tags=[])
     assert isinstance(existing, list)  # empty workspace → empty digest is fine
+
+
+async def test_relevant_slice_uses_active_versioned_node_embeddings(pool, workspace_id):
+    """Formation relevance must use the workspace's active embedding model,
+    not the deprecated memory_nodes.embedding compatibility column."""
+    doc_id, _ = await ingest_document(
+        IngestRequest(source="meeting", title="Embedding-aware revisit",
+                      text="The database decision is being revisited."),
+        workspace_id=workspace_id,
+    )
+    vector = to_pgvector([1.0] + [0.0] * 511)
+    async with pool.acquire() as conn:
+        active_model = await embedding_versions.ensure_model(
+            conn, "test:formation-relevance:512"
+        )
+        chunk_id = await conn.fetchval(
+            "SELECT id FROM chunks WHERE document_id=$1", doc_id
+        )
+        await conn.execute(
+            "INSERT INTO chunk_embeddings(workspace_id, chunk_id, embedding_model_id, embedding) "
+            "VALUES($1,$2,$3,$4::vector)",
+            workspace_id, chunk_id, active_model, vector,
+        )
+        await embedding_versions.activate_model(conn, workspace_id, active_model)
+        old_decision = await graph.upsert_node(
+            conn, workspace_id, "decision", "Old semantic database decision",
+            summary="This should be found only by the versioned signature.",
+            status="decided",
+        )
+        await conn.execute(
+            "INSERT INTO memory_node_embeddings(workspace_id, node_id, embedding_model_id, embedding) "
+            "VALUES($1,$2,$3,$4::vector)",
+            workspace_id, old_decision, active_model, vector,
+        )
+        # No legacy node embedding: the historical query would miss this node.
+        await conn.execute(
+            "UPDATE memory_nodes SET embedding=NULL, updated_at='2020-01-01' WHERE id=$1",
+            old_decision,
+        )
+        for i in range(160):
+            await graph.upsert_node(conn, workspace_id, "entity", f"Fresh filler {i}")
+
+        existing = await formation._fetch_existing(conn, workspace_id, doc_id, doc_tags=[])
+
+    assert old_decision in {row["id"] for row in existing}

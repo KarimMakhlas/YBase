@@ -162,6 +162,7 @@ def file_to_doc(connection, stream, f: Dict[str, Any], text: str) -> Optional[In
         text=f"{name}\n\n{body}",
         author=(owners[0].get("displayName") if owners else None),
         created_at=f.get("createdTime"),
+        updated_at=f.get("modifiedTime"),
         tags=[stream["name"]],
         source_connection_id=connection["id"],
         source_stream_id=stream["id"],

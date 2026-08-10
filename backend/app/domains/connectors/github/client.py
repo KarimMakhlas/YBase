@@ -175,6 +175,7 @@ async def issue_to_doc(token: str, connection, stream, issue: Dict[str, Any]) ->
         text="\n".join(lines).strip(),
         author=author or None,
         created_at=_iso(issue.get("created_at")),
+        updated_at=_iso(issue.get("updated_at")),
         tags=[repo.split("/")[-1], "pr" if is_pr else "issue"],
         source_connection_id=connection["id"],
         source_stream_id=stream["id"],
