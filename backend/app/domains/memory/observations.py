@@ -104,6 +104,10 @@ async def persist_observations(
                 "VALUES($1, $2, $3)",
                 document["workspace_id"], observation_id, chunk_by_index[index],
             )
-        valid_result[target_key[kind]].append(item)
+        # The graph projection must use this durable observation as its exact
+        # provenance source. Keep the id only in the in-memory compatibility
+        # projection payload; the immutable JSON stored above remains exactly
+        # what the model proposed.
+        valid_result[target_key[kind]].append({**item, "_observation_id": observation_id})
 
     return ObservationBatch(run_id=run_id, valid_result=valid_result)

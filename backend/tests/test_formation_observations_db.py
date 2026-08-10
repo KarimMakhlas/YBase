@@ -113,6 +113,42 @@ async def test_valid_formation_stores_immutable_observation_and_evidence(
     assert evidence == 1
 
 
+async def test_observation_projects_only_edges_it_asserted(
+    pool, workspace_id, fake_llm
+):
+    """A newly active observation must not inherit unrelated legacy edges
+    merely because they happen to leave the same identity node."""
+    from app.domains.memory import graph
+
+    async with pool.acquire() as conn:
+        decision = await graph.upsert_node(
+            conn, workspace_id, "decision", "Retained decision", status="decided"
+        )
+        stale_topic = await graph.upsert_node(conn, workspace_id, "topic", "stale")
+        await graph.add_edge(conn, workspace_id, decision, stale_topic, "about")
+
+    decision_result = {
+        **make_formation_result()["decisions"][0],
+        "title": "Retained decision",
+        "topics": ["fresh"],
+    }
+    fake_llm.result = make_formation_result(decisions=[decision_result])
+    doc_id, _ = await ingest_document(_req(title="Exact edge projection"), workspace_id)
+    await run_formation(doc_id)
+
+    async with pool.acquire() as conn:
+        edges = await conn.fetch(
+            "SELECT t.label FROM observation_edge_projections ep "
+            "JOIN memory_observations o ON o.id=ep.observation_id "
+            "JOIN memory_nodes t ON t.id=ep.dst_node_id "
+            "WHERE o.document_id=$1 AND ep.src_node_id=$2 AND ep.relation='about' "
+            "ORDER BY t.label",
+            doc_id, decision,
+        )
+
+    assert [row["label"] for row in edges] == ["fresh"]
+
+
 async def test_invalid_evidence_is_quarantined_without_a_chunk_link(
     pool, workspace_id, fake_llm
 ):

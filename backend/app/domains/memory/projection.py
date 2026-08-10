@@ -15,41 +15,22 @@ def _label(kind: str, payload: dict) -> Optional[str]:
 
 
 async def _record_candidate_projection(conn: asyncpg.Connection, run_id: int) -> None:
-    """Associate a candidate's already-written compatibility graph with it."""
-    observations = await conn.fetch(
-        "SELECT id, workspace_id, kind, payload FROM memory_observations "
-        "WHERE formation_run_id=$1 AND status='valid' ORDER BY ordinal",
+    """Validate that formation persisted exact observation projections.
+
+    Graph writes record their observation and asserted edges in formation's
+    transaction. This deliberately does not infer provenance by scanning all
+    current outgoing edges from a node, which could attach stale facts to a
+    newly active observation.
+    """
+    missing = await conn.fetchval(
+        "SELECT count(*) FROM memory_observations o WHERE o.formation_run_id=$1 "
+        "AND o.status='valid' AND NOT EXISTS ("
+        "  SELECT 1 FROM observation_projections op WHERE op.observation_id=o.id"
+        ")",
         run_id,
     )
-    for observation in observations:
-        label = _label(observation["kind"], observation["payload"])
-        if not label:
-            continue
-        node_id = await conn.fetchval(
-            "SELECT id FROM memory_nodes WHERE workspace_id=$1 AND kind=$2 "
-            "AND lower(label)=lower($3) AND archived_at IS NULL",
-            observation["workspace_id"], observation["kind"], label,
-        )
-        if node_id is None:
-            continue
-        await conn.execute(
-            "INSERT INTO observation_projections(workspace_id, observation_id, node_id) "
-            "VALUES($1, $2, $3) ON CONFLICT DO NOTHING",
-            observation["workspace_id"], observation["id"], node_id,
-        )
-        edges = await conn.fetch(
-            "SELECT src, dst, relation FROM memory_edges "
-            "WHERE workspace_id=$1 AND src=$2",
-            observation["workspace_id"], node_id,
-        )
-        for edge in edges:
-            await conn.execute(
-                "INSERT INTO observation_edge_projections(workspace_id, observation_id, "
-                "src_node_id, dst_node_id, relation) VALUES($1, $2, $3, $4, $5) "
-                "ON CONFLICT DO NOTHING",
-                observation["workspace_id"], observation["id"], edge["src"],
-                edge["dst"], edge["relation"],
-            )
+    if missing:
+        raise RuntimeError(f"{missing} valid observations lack graph projections")
 
 
 async def _retire_projection(conn: asyncpg.Connection, old_run_id: int) -> None:
