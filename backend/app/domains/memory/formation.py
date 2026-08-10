@@ -15,7 +15,7 @@ import asyncpg
 from app.core import config, db
 from app.core.observability import StageTimer
 from app.providers import llm
-from . import graph, validation
+from . import graph, observations, validation
 
 log = logging.getLogger("ybase.formation")
 
@@ -461,8 +461,19 @@ async def run_formation(
                     "(dropped by safe_node)", document_id, report["invalid_cross_refs"])
     async with pool.acquire() as conn:
         async with conn.transaction():
-            touched = await _persist(conn, doc["workspace_id"], document_id, chunks,
-                                     result, valid_ids, doc_tags=list(doc["tags"] or []))
+            provider = llm.active_provider()
+            model = llm.active_model()
+            run_id = await observations.create_candidate_run(
+                conn, doc, model_provider=provider, model_name=model, validation=report,
+            )
+            batch = await observations.persist_observations(
+                conn, run_id, doc, chunks, result,
+                model_provider=provider, model_name=model,
+            )
+            touched = await _persist(
+                conn, doc["workspace_id"], document_id, chunks, batch.valid_result,
+                valid_ids, doc_tags=list(doc["tags"] or []),
+            )
     if timer:
         timer.lap("persist")
     return FormationOutcome(touched=touched, validation=report)

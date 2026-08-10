@@ -491,6 +491,22 @@ async def _record_run(
         )
         pool = await db.get_pool()
         async with pool.acquire() as conn:
+            finalized = await conn.fetchval(
+                "UPDATE formation_runs SET status=$3, attempt=$4, queue_wait_ms=$5, "
+                "duration_ms=$6, stage_timings=$7, error=$8, llm_provider=$9, llm_model=$10, "
+                "started_at=$11, finished_at=now(), validation=$12 "
+                "WHERE id = (SELECT id FROM formation_runs "
+                "            WHERE workspace_id=$1 AND document_id=$2 AND status='candidate' "
+                "            ORDER BY id DESC LIMIT 1) "
+                "RETURNING id",
+                meta["workspace_id"], doc_id, status, meta["attempt"],
+                meta["queue_wait_ms"], duration_ms, timer.as_dict(),
+                (error or "")[-1500:] or None,
+                llm.active_provider(), llm.active_model(), started_at,
+                validation or {},
+            )
+            if finalized is not None:
+                return
             await conn.execute(
                 "INSERT INTO formation_runs(workspace_id, document_id, status, "
                 "attempt, queue_wait_ms, duration_ms, stage_timings, error, "
