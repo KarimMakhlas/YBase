@@ -9,7 +9,7 @@ from app.core import config
 from app.domains.documents.ingestion import chunk_text, content_hash
 from app.providers import llm
 from app.providers.llm import parse_loose_json
-from app.domains.query.streaming import _strip_metadata_bleed
+from app.domains.query.streaming import _strip_metadata_bleed, apply_claim_verification
 from app.domains.query.retrieval import rank_graph_evidence, rrf_fuse
 from app.domains.query.vector_search import recall_at_k, supports_iterative_hnsw
 from app.domains.memory.consolidate import similar_pairs, similar_pairs_against
@@ -47,6 +47,27 @@ def test_chunk_hard_splits_monster_paragraph():
 
 def test_chunk_empty_text_falls_back():
     assert chunk_text("") == [""]
+
+
+def test_claim_verification_lowers_confidence_for_unsupported_or_contradicted_claims():
+    structural = {"confidence": "high", "citation_coverage": 1.0}
+    checked = apply_claim_verification(
+        structural,
+        [
+            {"verdict": "supported", "claim": "The team chose PostgreSQL."},
+            {"verdict": "unsupported", "claim": "It was always unanimous."},
+            {"verdict": "contradicted", "claim": "There were no risks."},
+        ],
+    )
+
+    assert checked["confidence"] == "low"
+    assert checked["claim_verification"] == {
+        "status": "failed",
+        "claim_count": 3,
+        "supported_claim_count": 1,
+        "unsupported_claim_count": 1,
+        "contradicted_claim_count": 1,
+    }
 
 
 def test_content_hash_distinguishes_and_repeats():

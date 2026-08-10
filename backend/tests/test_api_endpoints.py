@@ -1487,6 +1487,37 @@ async def test_query_unsupported_visible_citation_lowers_deterministic_confidenc
     assert meta["verification"]["citation_coverage"] == 0.0
 
 
+async def test_query_claim_verifier_lowers_confidence_for_unsupported_claim(
+    pool, workspace_id, monkeypatch
+):
+    from app.core import config
+
+    monkeypatch.setattr(config, "ANSWER_CLAIM_VERIFICATION", True)
+
+    async def verifier(*_args, **_kwargs):
+        return {"claims": [{
+            "claim": "The choice was unanimous.",
+            "citation_ids": [1],
+            "verdict": "unsupported",
+        }]}
+
+    monkeypatch.setattr("app.providers.llm.structured_call", verifier)
+    meta = await _ask_with_meta(
+        pool, workspace_id, monkeypatch,
+        '{"confidence":"high","citations":[{"chunk_id":1,"quote":"keep PostgreSQL for v1"}],'
+        '"related_questions":[],"timeline":[]}',
+    )
+
+    assert meta["confidence"] == "low"
+    assert meta["verification"]["claim_verification"] == {
+        "status": "failed",
+        "claim_count": 1,
+        "supported_claim_count": 0,
+        "unsupported_claim_count": 1,
+        "contradicted_claim_count": 0,
+    }
+
+
 async def test_health_details_reports_active_embedding_version_coverage(pool, workspace_id):
     admin, _ = await _auth_client(pool, workspace_id, role="admin")
     async with admin:

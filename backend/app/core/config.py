@@ -101,6 +101,14 @@ VERIFICATION_TTL_HOURS = int(os.getenv("VERIFICATION_TTL_HOURS", "48"))
 # 0 disables). Login has its own throttle (auth_login_attempts).
 QUERY_RATE_PER_MINUTE = int(os.getenv("QUERY_RATE_PER_MINUTE", "20"))
 INGEST_RATE_PER_MINUTE = int(os.getenv("INGEST_RATE_PER_MINUTE", "120"))
+# A second, bounded structured-model pass checks whether factual answer claims
+# are supported by cited evidence. It is on by default only in production;
+# local development keeps streaming latency deterministic unless opted in.
+ANSWER_CLAIM_VERIFICATION = os.getenv(
+    "ANSWER_CLAIM_VERIFICATION", "true" if DEPLOYMENT_ENV == "production" else "false"
+).lower() in ("1", "true", "yes", "on")
+ANSWER_CLAIM_MAX_COUNT = int(os.getenv("ANSWER_CLAIM_MAX_COUNT", "12"))
+ANSWER_CLAIM_EVIDENCE_CHARS = int(os.getenv("ANSWER_CLAIM_EVIDENCE_CHARS", "16000"))
 # Per-IP limit on the unauthenticated auth endpoints (register / login /
 # forgot / reset), events per minute. 0 disables.
 AUTH_RATE_PER_MINUTE = int(os.getenv("AUTH_RATE_PER_MINUTE", "10"))

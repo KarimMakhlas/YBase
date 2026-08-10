@@ -127,6 +127,120 @@ def verify_answer_evidence(
     }
 
 
+def apply_claim_verification(
+    structural: Dict[str, Any], claims: Optional[List[Dict[str, Any]]]
+) -> Dict[str, Any]:
+    """Add bounded semantic-verifier results to deterministic grounding.
+
+    The answer model never supplies this verdict. A separate verifier may mark
+    each factual claim as supported, unsupported, or contradicted by the
+    retrieved citations. If that verifier is unavailable, the existing
+    structural signal remains authoritative and the metadata says so.
+    """
+    result = dict(structural)
+    if claims is None:
+        result["claim_verification"] = {
+            "status": "not_checked",
+            "claim_count": 0,
+            "supported_claim_count": 0,
+            "unsupported_claim_count": 0,
+            "contradicted_claim_count": 0,
+        }
+        return result
+    verdicts = [str(item.get("verdict", "")).lower() for item in claims]
+    supported = sum(verdict == "supported" for verdict in verdicts)
+    unsupported = sum(verdict == "unsupported" for verdict in verdicts)
+    contradicted = sum(verdict == "contradicted" for verdict in verdicts)
+    failed = unsupported + contradicted > 0
+    result["claim_verification"] = {
+        "status": "failed" if failed else "passed",
+        "claim_count": len(claims),
+        "supported_claim_count": supported,
+        "unsupported_claim_count": unsupported,
+        "contradicted_claim_count": contradicted,
+    }
+    if failed:
+        result["confidence"] = "low"
+    return result
+
+
+CLAIM_VERIFIER_SYSTEM = """You verify an answer against only its cited source chunks.
+Split factual assertions in the answer into at most the requested number of claims. For
+each claim, mark it supported only when the cited text directly establishes it; mark it
+contradicted when cited text conflicts with it; otherwise mark it unsupported. Do not
+use outside knowledge, infer missing facts, or judge style. Return JSON only."""
+
+CLAIM_VERIFIER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim": {"type": "string"},
+                    "citation_ids": {"type": "array", "items": {"type": "integer"}},
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["supported", "unsupported", "contradicted"],
+                    },
+                },
+                "required": ["claim", "citation_ids", "verdict"],
+            },
+        },
+    },
+    "required": ["claims"],
+}
+
+
+async def verify_answer_claims(
+    question: str, answer_text: str, citations: List[Dict[str, Any]]
+) -> Optional[List[Dict[str, Any]]]:
+    """Run a bounded entailment check over only the answer's citations."""
+    if not config.ANSWER_CLAIM_VERIFICATION or not answer_text.strip() or not citations:
+        return None
+    evidence_lines = []
+    remaining = config.ANSWER_CLAIM_EVIDENCE_CHARS
+    for citation in citations:
+        if remaining <= 0:
+            break
+        text = citation["text"][:remaining]
+        evidence_lines.extend([f"[C{citation['chunk_id']}]", text, ""])
+        remaining -= len(text)
+    prompt = "\n".join([
+        "# QUESTION", question,
+        "# ANSWER", answer_text,
+        "# CITED EVIDENCE", *evidence_lines,
+        f"Evaluate at most {config.ANSWER_CLAIM_MAX_COUNT} factual claims.",
+    ])
+    try:
+        output = await llm.structured_call(
+            CLAIM_VERIFIER_SYSTEM, prompt, CLAIM_VERIFIER_SCHEMA,
+            max_tokens=1200, effort="low",
+        )
+    except Exception:
+        log.warning("answer claim verification failed", exc_info=True)
+        return None
+    claims = output.get("claims") if isinstance(output, dict) else None
+    if not isinstance(claims, list):
+        return None
+    verified = []
+    allowed_ids = {citation["chunk_id"] for citation in citations}
+    for item in claims[:config.ANSWER_CLAIM_MAX_COUNT]:
+        if not isinstance(item, dict):
+            continue
+        verdict = str(item.get("verdict", "")).lower()
+        if verdict not in {"supported", "unsupported", "contradicted"}:
+            continue
+        claim = str(item.get("claim", "")).strip()
+        if not claim:
+            continue
+        ids = [int(cid) for cid in item.get("citation_ids", [])
+               if str(cid).isdigit() and int(cid) in allowed_ids]
+        verified.append({"claim": claim[:1000], "citation_ids": ids, "verdict": verdict})
+    return verified
+
+
 # Follow-ups shorter than this likely lean on the conversation ("why did he
 # push back?") and retrieve weakly verbatim — rewrite them standalone first.
 FOLLOWUP_MAX_CHARS = 100
@@ -533,6 +647,9 @@ async def stream_query(
             "quote": locate_quote(c["text"], quote_by_id.get(cid)),  # precise span, or None
             "text": c["text"],  # full chunk so the UI can fall back to highlighting it
         })
+
+    claim_results = await verify_answer_claims(question, answer_text, citations)
+    verification = apply_claim_verification(verification, claim_results)
 
     counter_evidence = []
     for item in meta.get("counter_evidence", []) or []:
