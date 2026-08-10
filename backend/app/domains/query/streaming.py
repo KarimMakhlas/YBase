@@ -84,6 +84,49 @@ def locate_quote(chunk_text: str, quote: Optional[str]) -> Optional[str]:
     return m.group(0) if m else None
 
 
+def verify_answer_evidence(
+    answer_text: str,
+    cited_ids: set[int],
+    quote_by_id: Dict[int, str],
+    by_id: Dict[int, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Report deterministic structural grounding without claiming entailment.
+
+    A valid citation must reference evidence actually supplied to the answer.
+    When a model claims an exact quote, it must also be locatable verbatim in
+    that evidence. This intentionally measures citation coverage, not semantic
+    truth, so consumers can distinguish a structural guarantee from LLM-based
+    entailment evaluation.
+    """
+    visible_ids = {int(match) for match in _CITE_RE.findall(answer_text)}
+    referenced_ids = cited_ids | visible_ids
+    valid_ids = sorted(referenced_ids & set(by_id))
+    invalid_ids = sorted(referenced_ids - set(by_id))
+    invalid_quote_ids = sorted(
+        cid for cid, quote in quote_by_id.items()
+        if cid in by_id and locate_quote(by_id[cid]["text"], quote) is None
+    )
+    valid_visible = visible_ids & set(by_id)
+    coverage = len(valid_visible) / len(visible_ids) if visible_ids else 0.0
+    source_count = len({by_id[cid]["document_id"] for cid in valid_ids})
+    if invalid_ids or not valid_visible:
+        confidence = "low"
+    elif invalid_quote_ids or coverage < 1.0:
+        confidence = "medium"
+    elif source_count >= 2:
+        confidence = "high"
+    else:
+        confidence = "medium"
+    return {
+        "valid_citation_ids": valid_ids,
+        "invalid_citation_ids": invalid_ids,
+        "invalid_quote_citation_ids": invalid_quote_ids,
+        "citation_coverage": round(coverage, 3),
+        "source_count": source_count,
+        "confidence": confidence,
+    }
+
+
 # Follow-ups shorter than this likely lean on the conversation ("why did he
 # push back?") and retrieve weakly verbatim — rewrite them standalone first.
 FOLLOWUP_MAX_CHARS = 100
@@ -472,6 +515,7 @@ async def stream_query(
     cited_ids |= {int(i) for i in meta.get("cited_chunk_ids", []) if str(i).isdigit()}
     cited_ids |= {int(m) for m in _CITE_RE.findall(answer_text)}
     by_id = {c["id"]: c for c in ret["chunks"]}
+    verification = verify_answer_evidence(answer_text, cited_ids, quote_by_id, by_id)
     citations = []
     for cid in sorted(cited_ids):
         c = by_id.get(cid)
@@ -500,12 +544,13 @@ async def stream_query(
 
     yield _sse("metadata", {
         "takeaway": meta.get("takeaway"),
-        "confidence": meta.get("confidence", "unknown"),
+        "confidence": verification["confidence"],
         "citations": citations,
         "related_questions": _clean_related_questions(meta.get("related_questions")),
         "timeline": _clean_timeline(meta.get("timeline")),
         "counter_evidence": counter_evidence,
         "insight_cards": _enrich_insight_cards(meta.get("insight_cards", []), by_id),
+        "verification": verification,
         "trace": ret.get("trace", {}),
     })
     timer.lap("metadata")

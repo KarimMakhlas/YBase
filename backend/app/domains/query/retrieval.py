@@ -20,6 +20,41 @@ from . import vector_search
 
 RRF_K = 60  # standard reciprocal-rank-fusion damping constant
 
+_DEFAULT_RELATION_PRIORITY = {
+    "revisits": 0, "resolves": 1, "relates_to": 2, "raised_by": 3,
+    "involves": 4, "about": 5,
+}
+_INTENT_RELATION_PRIORITY = {
+    "decision_history": {
+        "revisits": 0, "resolves": 1, "relates_to": 2, "about": 3,
+        "involves": 4, "raised_by": 5,
+    },
+    "people": {
+        "involves": 0, "raised_by": 1, "relates_to": 2, "revisits": 3,
+        "resolves": 4, "about": 5,
+    },
+    "open_questions": {
+        "resolves": 0, "relates_to": 1, "raised_by": 2, "revisits": 3,
+        "involves": 4, "about": 5,
+    },
+}
+
+
+def classify_query_intent(question: str) -> str:
+    """Choose bounded traversal emphasis without a latency-prone model call."""
+    words = (question or "").lower()
+    if any(token in words for token in ("reversed", "reverse", "revisited", "reaffirmed", "why did", "history")):
+        return "decision_history"
+    if any(token in words for token in ("who", "person", "people", "owner", "advocated", "made the decision")):
+        return "people"
+    if any(token in words for token in ("open question", "unanswered", "unresolved", "still open", "which questions")):
+        return "open_questions"
+    return "general"
+
+
+def relation_priority_for_intent(intent: str) -> Dict[str, int]:
+    return dict(_INTENT_RELATION_PRIORITY.get(intent, _DEFAULT_RELATION_PRIORITY))
+
 
 def rrf_fuse(ranked_lists: Sequence[Iterable[int]], limit: int) -> List[int]:
     """Fuse ranked id lists: score(id) = Σ 1/(RRF_K + rank). Ids appearing in
@@ -29,6 +64,39 @@ def rrf_fuse(ranked_lists: Sequence[Iterable[int]], limit: int) -> List[int]:
         for rank, item_id in enumerate(ranked):
             scores[item_id] = scores.get(item_id, 0.0) + 1.0 / (RRF_K + rank + 1)
     return sorted(scores, key=lambda i: (-scores[i], i))[:limit]
+
+
+def rerank_candidate_ids(
+    vector_ids: Sequence[int], text_ids: Sequence[int], limit: int
+) -> List[int]:
+    """Final deterministic rank over a wider semantic/lexical candidate union.
+
+    Reciprocal-rank fusion deliberately uses ranks rather than incomparable raw
+    pgvector and tsquery scores. A chunk supported by both independent paths
+    therefore outranks a one-path candidate without another provider roundtrip.
+    """
+    return rrf_fuse([vector_ids, text_ids], limit=max(0, limit))
+
+
+def select_diverse_chunks(
+    chunks: Sequence[Dict[str, Any]],
+    limit: int,
+    per_document_cap: int,
+) -> List[Dict[str, Any]]:
+    """Keep high-relevance evidence while avoiding one-document context floods."""
+    selected: List[Dict[str, Any]] = []
+    per_document: Dict[int, int] = {}
+    for chunk in sorted(
+        chunks, key=lambda c: (-float(c.get("retrieval_score", 0.0)), c["id"])
+    ):
+        document_id = chunk["document_id"]
+        if per_document.get(document_id, 0) >= max(1, per_document_cap):
+            continue
+        selected.append(chunk)
+        per_document[document_id] = per_document.get(document_id, 0) + 1
+        if len(selected) >= max(0, limit):
+            break
+    return selected
 
 
 def _chunk_row(r) -> Dict[str, Any]:
@@ -77,13 +145,15 @@ async def retrieve(
     pool = await db.get_pool()
     qvec = (await embed_texts([embed_text or question], kind="query"))[0]
     embed_model = await active_embed_model()
+    intent = classify_query_intent(question)
+    candidate_limit = config.TOP_K * config.RETRIEVAL_CANDIDATE_MULTIPLIER
     async with pool.acquire() as conn:
         vector_result = await vector_search.approximate_vector_search(
             conn,
             qvec=to_pgvector(qvec),
             workspace_id=workspace_id,
             embed_model=embed_model,
-            limit=config.TOP_K,
+            limit=candidate_limit,
             candidate_multiplier=config.VECTOR_CANDIDATE_MULTIPLIER,
         )
         vec_rows = vector_result.rows
@@ -95,13 +165,23 @@ async def retrieve(
             "WHERE c.workspace_id=$2 AND d.workspace_id=$2 AND d.is_active=true AND c.embed_model=$3 "
             "AND c.text_tsv @@ websearch_to_tsquery('english', $1) "
             "ORDER BY score DESC LIMIT $4",
-            question, workspace_id, embed_model, config.TOP_K,
+            question, workspace_id, embed_model, candidate_limit,
         )
         by_id = {r["id"]: r for r in vec_rows}
         by_id.update({r["id"]: r for r in ft_rows if r["id"] not in by_id})
-        seed_chunk_ids = rrf_fuse(
-            [[r["id"] for r in vec_rows], [r["id"] for r in ft_rows]], config.TOP_K
+        ranked_ids = rerank_candidate_ids(
+            [r["id"] for r in vec_rows], [r["id"] for r in ft_rows], candidate_limit
         )
+        seed_chunk_ids = [
+            chunk["id"] for chunk in select_diverse_chunks(
+                [
+                    {**_chunk_row(by_id[cid]), "retrieval_score": candidate_limit - rank}
+                    for rank, cid in enumerate(ranked_ids)
+                ],
+                limit=config.TOP_K,
+                per_document_cap=config.RETRIEVAL_PER_DOCUMENT_CAP,
+            )
+        ]
         chunks: Dict[int, Dict[str, Any]] = {
             cid: _chunk_row(by_id[cid]) for cid in seed_chunk_ids
         }
@@ -116,7 +196,8 @@ async def retrieve(
         seed_ids = [r["node_id"] for r in seed_rows]
         node_ids, edges = await graph.expand(
             conn, workspace_id, seed_ids,
-            hops=config.GRAPH_HOPS, max_nodes=config.GRAPH_MAX_NODES
+            hops=config.GRAPH_HOPS, max_nodes=config.GRAPH_MAX_NODES,
+            relation_priority=relation_priority_for_intent(intent),
         )
 
         nodes: List[Dict[str, Any]] = []
@@ -171,6 +252,7 @@ async def retrieve(
         "hnsw_iterative_scan": vector_result.iterative_scan_enabled,
         "text_seeds": len(ft_rows),
         "graph_chunks": graph_chunks,
+        "intent": intent,
         "nodes": [
             {"id": n["id"], "kind": n["kind"], "label": n["label"], "status": n["status"]}
             for n in nodes if n["kind"] in ("decision", "question")

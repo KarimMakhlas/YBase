@@ -166,6 +166,7 @@ async def expand(
     seed_ids: Iterable[int],
     hops: int = 2,
     max_nodes: int = 40,
+    relation_priority: Optional[Dict[str, int]] = None,
 ) -> Tuple[Set[int], List[Dict]]:
     """Breadth-first expansion over memory_edges from seed nodes, admitting
     high-value relations first (see _RELATION_PRIORITY)."""
@@ -184,7 +185,8 @@ async def expand(
             "AND (e.src = ANY($2::int[]) OR e.dst = ANY($2::int[]))",
             workspace_id, list(frontier),
         )
-        rows = sorted(rows, key=lambda r: (_RELATION_PRIORITY.get(r["relation"], 9), r["id"]))
+        priority = relation_priority or _RELATION_PRIORITY
+        rows = sorted(rows, key=lambda r: (priority.get(r["relation"], 9), r["id"]))
         next_frontier: Set[int] = set()
         about_fanout: Dict[int, int] = {}
         for r in rows:

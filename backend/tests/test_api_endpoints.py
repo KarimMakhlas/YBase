@@ -1423,3 +1423,28 @@ async def test_query_citation_legacy_cited_chunk_ids_still_work(pool, workspace_
     cites = meta["citations"]
     assert len(cites) == 1 and cites[0]["chunk_id"] == 1
     assert cites[0]["quote"] is None  # no quote in the old shape
+
+
+async def test_query_unsupported_visible_citation_lowers_deterministic_confidence(
+    pool, workspace_id, monkeypatch
+):
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        await admin.post("/api/ingest", json={
+            "source": "meeting", "title": "DB notes",
+            "text": "The team decided to keep PostgreSQL for v1.",
+        })
+        parts = [
+            "We kept Postgres [C999].",
+            "\n<<<MEMORY_METADATA>>>\n",
+            '{"confidence":"high","citations":[{"chunk_id":999,"quote":"invented"}]}'
+        ]
+        monkeypatch.setattr(
+            "app.providers.llm.stream_text", lambda *_a, **_k: _FakeStream(parts))
+        resp = await admin.post("/api/query", json={"question": "what db?"})
+        assert resp.status_code == 200
+        meta = _sse_event(resp.text, "metadata")
+
+    assert meta["confidence"] == "low"
+    assert meta["verification"]["invalid_citation_ids"] == [999]
+    assert meta["verification"]["citation_coverage"] == 0.0

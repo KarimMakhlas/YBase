@@ -164,6 +164,14 @@ TOP_K = int(os.getenv("TOP_K", "8"))                       # vector-search seeds
 VECTOR_CANDIDATE_MULTIPLIER = max(
     1, int(os.getenv("VECTOR_CANDIDATE_MULTIPLIER", "4"))
 )
+# Retrieve this many lexical/semantic seed candidates for final deterministic
+# fusion before choosing the smaller context seed set.
+RETRIEVAL_CANDIDATE_MULTIPLIER = max(
+    1, int(os.getenv("RETRIEVAL_CANDIDATE_MULTIPLIER", "3"))
+)
+RETRIEVAL_PER_DOCUMENT_CAP = max(
+    1, int(os.getenv("RETRIEVAL_PER_DOCUMENT_CAP", "2"))
+)
 HNSW_ITERATIVE_SCAN = os.getenv(
     "HNSW_ITERATIVE_SCAN", "true"
 ).lower() in ("1", "true", "yes", "on")
