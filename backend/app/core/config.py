@@ -27,6 +27,13 @@ _load_dotenv()
 RUNTIME_ROLE = os.getenv("RUNTIME_ROLE", "all").lower()
 if RUNTIME_ROLE not in {"all", "api", "worker"}:
     raise ValueError("RUNTIME_ROLE must be one of: all, api, worker")
+# Explicitly opt into demo-grade local hash embeddings outside production. A
+# production process without Voyage/Ollama must fail requests visibly rather
+# than silently turn semantic search into lexical hashing.
+DEPLOYMENT_ENV = os.getenv("DEPLOYMENT_ENV", "development").lower()
+ALLOW_DEMO_EMBEDDINGS = os.getenv(
+    "ALLOW_DEMO_EMBEDDINGS", "true" if DEPLOYMENT_ENV != "production" else "false"
+).lower() in ("1", "true", "yes", "on")
 
 # Postgres (pgvector). Default matches docker-compose.yml (host port 5433).
 DATABASE_URL = os.getenv(

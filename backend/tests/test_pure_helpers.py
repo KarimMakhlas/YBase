@@ -3,6 +3,8 @@ similarity pairing, and Slack event plumbing — no DB, no network."""
 
 import time
 
+import pytest
+
 from app.core import config
 from app.domains.documents.ingestion import chunk_text, content_hash
 from app.providers import llm
@@ -13,6 +15,7 @@ from app.domains.query.vector_search import recall_at_k, supports_iterative_hnsw
 from app.domains.memory.consolidate import similar_pairs, similar_pairs_against
 from app.domains.memory.formation import fallback_topics
 from app.domains.memory.scoring import node_score
+from app.providers import embeddings
 from app.providers.embeddings import _local_embed
 from app.domains.connectors.slack.events import clean_text, thread_document, verify_signature, wanted_event
 from app.domains.connectors.jira.client import issue_to_doc as jira_issue_to_doc
@@ -176,6 +179,16 @@ def test_auto_provider_uses_nvidia_before_ollama(monkeypatch):
     assert llm.active_provider() == "nvidia"
     assert llm.active_model() == "openai/gpt-oss-120b"
     assert llm.credentials_available()
+
+
+async def test_production_never_silently_falls_back_to_demo_hash_embeddings(monkeypatch):
+    monkeypatch.setattr(config, "EMBED_PROVIDER", "local")
+    monkeypatch.setattr(config, "DEPLOYMENT_ENV", "production")
+    monkeypatch.setattr(config, "ALLOW_DEMO_EMBEDDINGS", False)
+    monkeypatch.setattr(embeddings, "_provider", None)
+
+    with pytest.raises(embeddings.DemoEmbeddingForbidden):
+        await embeddings.active_embedder()
 
 
 # ---- topic fallback ----

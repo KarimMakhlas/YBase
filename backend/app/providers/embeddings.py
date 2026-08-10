@@ -44,6 +44,10 @@ class EmbeddingSpaceMismatch(RuntimeError):
         )
 
 
+class DemoEmbeddingForbidden(RuntimeError):
+    """Production refuses the deterministic hash embedder by default."""
+
+
 def _local_embed(text: str) -> List[float]:
     dim = config.EMBED_DIM
     vec = [0.0] * dim
@@ -88,6 +92,11 @@ async def active_embedder() -> str:
             _provider = "ollama"
         else:
             _provider = "local"
+    if _provider == "local" and not config.ALLOW_DEMO_EMBEDDINGS:
+        raise DemoEmbeddingForbidden(
+            "demo-grade local hash embeddings are disabled; configure Voyage or Ollama "
+            "or explicitly set ALLOW_DEMO_EMBEDDINGS=true for a non-production demo"
+        )
     return _provider
 
 
