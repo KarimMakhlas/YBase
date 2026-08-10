@@ -15,7 +15,7 @@ import asyncpg
 from app.core import config, db
 from app.core.observability import StageTimer
 from app.providers import llm
-from . import graph, observations, validation
+from . import graph, observations, projection, validation
 
 log = logging.getLogger("ybase.formation")
 
@@ -474,6 +474,7 @@ async def run_formation(
                 conn, doc["workspace_id"], document_id, chunks, batch.valid_result,
                 valid_ids, doc_tags=list(doc["tags"] or []),
             )
+            await projection.activate_run(conn, run_id)
     if timer:
         timer.lap("persist")
     return FormationOutcome(touched=touched, validation=report)

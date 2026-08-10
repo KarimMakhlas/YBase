@@ -103,7 +103,7 @@ async def test_valid_formation_stores_immutable_observation_and_evidence(
     assert run["revision_id"] is not None
     assert run["prompt_version"]
     assert run["status"] == "candidate"
-    assert run["is_active"] is False
+    assert run["is_active"] is True
     assert observation["kind"] == "decision"
     assert observation["status"] == "valid"
     assert observation["payload"]["title"] == make_formation_result()["decisions"][0]["title"]
@@ -143,3 +143,65 @@ async def test_invalid_evidence_is_quarantined_without_a_chunk_link(
     assert observation["quarantine_reason"] == "invalid evidence chunk indexes: [999]"
     assert evidence == 0
     assert projected == 0
+
+
+async def test_reformation_retires_prior_observations_and_stale_projection(
+    pool, workspace_id, fake_llm
+):
+    doc_id, _ = await ingest_document(_req(), workspace_id=workspace_id)
+    await run_formation(doc_id)
+    fake_llm.result = make_formation_result(decisions=[], entities=[], questions=[])
+    await run_formation(doc_id)
+
+    async with pool.acquire() as conn:
+        active_runs = await conn.fetchval(
+            "SELECT count(*) FROM formation_runs WHERE document_id=$1 AND is_active",
+            doc_id,
+        )
+        retired = await conn.fetchval(
+            "SELECT count(*) FROM memory_observations WHERE document_id=$1 AND status='retired'",
+            doc_id,
+        )
+        links = await conn.fetchval(
+            "SELECT count(*) FROM chunk_links cl JOIN chunks c ON c.id=cl.chunk_id "
+            "WHERE c.document_id=$1",
+            doc_id,
+        )
+
+    assert active_runs == 1
+    assert retired == 1
+    assert links == 0
+
+
+async def test_failed_replacement_keeps_the_existing_run_active(
+    pool, workspace_id, fake_llm, monkeypatch
+):
+    from app.domains.memory import projection
+
+    doc_id, _ = await ingest_document(_req(), workspace_id=workspace_id)
+    await run_formation(doc_id)
+    async with pool.acquire() as conn:
+        first_run = await conn.fetchval(
+            "SELECT id FROM formation_runs WHERE document_id=$1 AND is_active", doc_id
+        )
+
+    async def fail_projection(_conn, _run_id):
+        raise RuntimeError("projection failed")
+
+    monkeypatch.setattr(projection, "_record_candidate_projection", fail_projection)
+    with pytest.raises(RuntimeError, match="projection failed"):
+        await run_formation(doc_id)
+
+    async with pool.acquire() as conn:
+        active_run = await conn.fetchval(
+            "SELECT id FROM formation_runs WHERE document_id=$1 AND is_active", doc_id
+        )
+        active_observations = await conn.fetchval(
+            "SELECT count(*) FROM memory_observations o JOIN formation_runs r "
+            "ON r.id=o.formation_run_id WHERE o.document_id=$1 "
+            "AND o.status='valid' AND r.is_active",
+            doc_id,
+        )
+
+    assert active_run == first_run
+    assert active_observations == 1
