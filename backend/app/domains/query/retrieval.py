@@ -16,6 +16,7 @@ from app.core.dates import iso_date
 from app.providers.embeddings import active_embed_model, embed_texts, to_pgvector
 from ..memory import graph
 from ..memory.scoring import node_score
+from . import vector_search
 
 RRF_K = 60  # standard reciprocal-rank-fusion damping constant
 
@@ -77,20 +78,21 @@ async def retrieve(
     qvec = (await embed_texts([embed_text or question], kind="query"))[0]
     embed_model = await active_embed_model()
     async with pool.acquire() as conn:
-        vec_rows = await conn.fetch(
-            "SELECT c.id, c.text, c.document_id, d.source, d.title, d.author, "
-            "       d.doc_created_at, 1 - (c.embedding <=> $1::vector) AS score "
-            "FROM chunks c JOIN documents d ON d.id = c.document_id "
-            "WHERE d.workspace_id=$2 AND c.embed_model=$3 "
-            "ORDER BY c.embedding <=> $1::vector LIMIT $4",
-            to_pgvector(qvec), workspace_id, embed_model, config.TOP_K,
+        vector_result = await vector_search.approximate_vector_search(
+            conn,
+            qvec=to_pgvector(qvec),
+            workspace_id=workspace_id,
+            embed_model=embed_model,
+            limit=config.TOP_K,
+            candidate_multiplier=config.VECTOR_CANDIDATE_MULTIPLIER,
         )
+        vec_rows = vector_result.rows
         ft_rows = await conn.fetch(
             "SELECT c.id, c.text, c.document_id, d.source, d.title, d.author, "
             "       d.doc_created_at, "
             "       ts_rank_cd(c.text_tsv, websearch_to_tsquery('english', $1))::float AS score "
             "FROM chunks c JOIN documents d ON d.id = c.document_id "
-            "WHERE d.workspace_id=$2 AND c.embed_model=$3 "
+            "WHERE c.workspace_id=$2 AND d.workspace_id=$2 AND c.embed_model=$3 "
             "AND c.text_tsv @@ websearch_to_tsquery('english', $1) "
             "ORDER BY score DESC LIMIT $4",
             question, workspace_id, embed_model, config.TOP_K,
@@ -145,7 +147,7 @@ async def retrieve(
                 "JOIN chunks c ON c.id = cl.chunk_id "
                 "JOIN documents d ON d.id = c.document_id "
                 "JOIN memory_nodes n ON n.id = cl.node_id "
-                "WHERE d.workspace_id=$1 AND n.workspace_id=$1 "
+                "WHERE c.workspace_id=$1 AND d.workspace_id=$1 AND n.workspace_id=$1 "
                 "AND cl.node_id = ANY($2::int[]) AND n.kind IN ('decision', 'question') "
                 "AND n.archived_at IS NULL AND c.embed_model=$4",
                 workspace_id, list(node_ids), to_pgvector(qvec), embed_model,
@@ -164,6 +166,8 @@ async def retrieve(
     trace = {
         "seed_chunks": len(seed_chunk_ids),
         "vector_seeds": len(vec_rows),
+        "vector_candidates_scanned": vector_result.candidates_scanned,
+        "hnsw_iterative_scan": vector_result.iterative_scan_enabled,
         "text_seeds": len(ft_rows),
         "graph_chunks": graph_chunks,
         "nodes": [

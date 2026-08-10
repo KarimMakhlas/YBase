@@ -1,6 +1,7 @@
 """Integration coverage for tenant-scoped pgvector retrieval."""
 
 from app.domains.documents.ingestion import IngestRequest, ingest_document
+from app.domains.query import retrieval
 from app.domains.query.vector_search import (
     approximate_vector_search,
     exact_vector_search,
@@ -107,3 +108,19 @@ async def test_hnsw_plan_remains_usable_with_workspace_and_model_filters(
     plan = "\n".join(row[0] for row in rows)
     assert "chunks_embedding_idx" in plan
     assert "workspace_id" in plan
+
+
+async def test_retrieve_preserves_contract_and_reports_vector_diagnostics(
+    workspace_id,
+):
+    await _seed_documents(workspace_id, f"retrieve-{workspace_id}", 12)
+
+    result = await retrieval.retrieve(
+        "billing retry database ownership",
+        workspace_id=workspace_id,
+    )
+
+    assert set(result) == {"chunks", "nodes", "edges", "trace"}
+    assert result["chunks"]
+    assert "vector_candidates_scanned" in result["trace"]
+    assert "hnsw_iterative_scan" in result["trace"]
