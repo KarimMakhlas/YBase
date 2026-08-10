@@ -811,6 +811,10 @@ a 20% rise in retrieval p95, per-query provider cost, or formation queue p95.
 The **Release evaluation** GitHub Actions workflow runs this same gate with the
 two explicitly supplied artifact paths.
 
+`GET /api/ops/query-slo` also reports `p95_first_visible_ms` separately from
+completion time. This exposes the deliberate latency trade-off of strict claim
+withholding and keeps user-perceived responsiveness visible during a rollout.
+
 Production uses `ANSWER_CLAIM_FAILURE_POLICY=withhold` by default: answer text
 is held until structural citation and claim-entailment checks finish. If either
 fails, users receive a transparent prompt to inspect the cited sources rather

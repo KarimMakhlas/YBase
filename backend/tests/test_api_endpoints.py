@@ -1575,6 +1575,7 @@ async def test_query_slo_reports_latency_and_grounding_metrics(
     body = response.json()
     assert body["runs"] == 1
     assert body["p95_total_ms"] is not None
+    assert body["p95_first_visible_ms"] is not None
     assert body["mean_citation_coverage"] == 1.0
     assert body["claim_verification"]["not_checked"] == 1
 

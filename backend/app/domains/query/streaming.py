@@ -265,7 +265,11 @@ async def verify_answer_claims(
 
 
 async def _record_query_run(
-    workspace_id: int, timer: StageTimer, retrieved_chunks: int, verification: Dict[str, Any]
+    workspace_id: int,
+    timer: StageTimer,
+    retrieved_chunks: int,
+    verification: Dict[str, Any],
+    first_visible_ms: Optional[int],
 ) -> None:
     """Persist privacy-preserving quality/latency telemetry best-effort."""
     timings = timer.as_dict()
@@ -274,14 +278,15 @@ async def _record_query_run(
         pool = await db.get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
-                "INSERT INTO query_runs(workspace_id, status, retrieval_ms, generation_ms, "
+                "INSERT INTO query_runs(workspace_id, status, retrieval_ms, generation_ms, first_visible_ms, "
                 "verification_ms, total_ms, retrieved_chunks, valid_citations, "
                 "citation_coverage, confidence, claim_verification_status, "
                 "unsupported_claims, contradicted_claims) "
-                "VALUES($1, 'success', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                "VALUES($1, 'success', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
                 workspace_id,
                 timings.get("retrieval"),
                 timings.get("llm"),
+                first_visible_ms,
                 timings.get("verification"),
                 timer.total_ms(),
                 retrieved_chunks,
@@ -614,6 +619,13 @@ async def stream_query(
     timer.lap("context")
 
     answer_text = ""
+    first_visible_ms: Optional[int] = None
+
+    def mark_first_visible() -> None:
+        nonlocal first_visible_ms
+        if first_visible_ms is None:
+            first_visible_ms = timer.elapsed_ms()
+
     buffer_answer = (
         config.ANSWER_CLAIM_VERIFICATION
         and config.ANSWER_CLAIM_FAILURE_POLICY == "withhold"
@@ -638,6 +650,7 @@ async def stream_query(
                     if head:
                         answer_text += head
                         if not buffer_answer:
+                            mark_first_visible()
                             yield _sse("delta", {"text": head})
                     meta_raw = buf[idx + len(DELIM):]
                     buf = ""
@@ -647,6 +660,7 @@ async def stream_query(
                     buf = buf[-holdback:]
                     answer_text += emit
                     if not buffer_answer:
+                        mark_first_visible()
                         yield _sse("delta", {"text": emit})
             if hasattr(stream, "get_final_message"):
                 # Anthropic reports usage on the final message; the stream is
@@ -669,6 +683,7 @@ async def stream_query(
         if head:
             answer_text += head
             if not buffer_answer:
+                mark_first_visible()
                 yield _sse("delta", {"text": head})
 
     meta = llm.parse_loose_json(meta_raw)
@@ -721,9 +736,12 @@ async def stream_query(
         answer_text, verification, config.ANSWER_CLAIM_FAILURE_POLICY
     )
     if buffer_answer and display_answer:
+        mark_first_visible()
         yield _sse("delta", {"text": display_answer})
     timer.lap("verification")
-    await _record_query_run(workspace_id, timer, len(ret["chunks"]), verification)
+    await _record_query_run(
+        workspace_id, timer, len(ret["chunks"]), verification, first_visible_ms
+    )
 
     counter_evidence = []
     for item in meta.get("counter_evidence", []) or []:

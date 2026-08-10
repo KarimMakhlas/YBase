@@ -80,6 +80,7 @@ class StageTimer:
     def __init__(self) -> None:
         self._stages: "dict[str, float]" = {}
         self._mark = time.perf_counter()
+        self._started = self._mark
 
     def lap(self, stage: str) -> None:
         now = time.perf_counter()
@@ -95,6 +96,10 @@ class StageTimer:
 
     def total_ms(self) -> int:
         return int(sum(self._stages.values()) * 1000)
+
+    def elapsed_ms(self) -> int:
+        """Wall-clock duration since timer creation, including an active stage."""
+        return int((time.perf_counter() - self._started) * 1000)
 
 
 class RequestContextMiddleware:

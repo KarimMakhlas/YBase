@@ -316,6 +316,7 @@ async def query_slo(
             "SELECT count(*)::int AS runs, "
             "percentile_cont(0.5) WITHIN GROUP (ORDER BY total_ms) AS p50_total_ms, "
             "percentile_cont(0.95) WITHIN GROUP (ORDER BY total_ms) AS p95_total_ms, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY first_visible_ms) AS p95_first_visible_ms, "
             "percentile_cont(0.95) WITHIN GROUP (ORDER BY retrieval_ms) AS p95_retrieval_ms, "
             "percentile_cont(0.95) WITHIN GROUP (ORDER BY generation_ms) AS p95_generation_ms, "
             "percentile_cont(0.95) WITHIN GROUP (ORDER BY verification_ms) AS p95_verification_ms, "
@@ -338,6 +339,7 @@ async def query_slo(
         "runs": summary["runs"],
         "p50_total_ms": _ms(summary["p50_total_ms"]),
         "p95_total_ms": _ms(summary["p95_total_ms"]),
+        "p95_first_visible_ms": _ms(summary["p95_first_visible_ms"]),
         "p95_retrieval_ms": _ms(summary["p95_retrieval_ms"]),
         "p95_generation_ms": _ms(summary["p95_generation_ms"]),
         "p95_verification_ms": _ms(summary["p95_verification_ms"]),
