@@ -78,7 +78,11 @@ async def node_coverage(
 
 
 async def activate_model(
-    conn: asyncpg.Connection, workspace_id: int, embedding_model_id: int
+    conn: asyncpg.Connection,
+    workspace_id: int,
+    embedding_model_id: int,
+    *,
+    require_node_coverage: bool = True,
 ) -> None:
     exists = await conn.fetchval(
         "SELECT 1 FROM embedding_models WHERE id=$1", embedding_model_id
@@ -91,12 +95,13 @@ async def activate_model(
             f"embedding model {embedding_model_id} covers {current.embedded_chunks}/"
             f"{current.active_chunks} active chunks"
         )
-    nodes = await node_coverage(conn, workspace_id, embedding_model_id)
-    if not nodes.complete:
-        raise ValueError(
-            f"embedding model {embedding_model_id} covers {nodes.embedded_nodes}/"
-            f"{nodes.active_nodes} active decision nodes"
-        )
+    if require_node_coverage:
+        nodes = await node_coverage(conn, workspace_id, embedding_model_id)
+        if not nodes.complete:
+            raise ValueError(
+                f"embedding model {embedding_model_id} covers {nodes.embedded_nodes}/"
+                f"{nodes.active_nodes} active decision nodes"
+            )
     await conn.execute(
         "UPDATE workspaces SET active_embedding_model_id=$2 WHERE id=$1",
         workspace_id, embedding_model_id,

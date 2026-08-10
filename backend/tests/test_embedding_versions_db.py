@@ -132,3 +132,20 @@ async def test_activation_requires_active_decision_embedding_coverage(pool, work
 
         with pytest.raises(ValueError, match="covers 0/1 active decision nodes"):
             await embedding_versions.activate_model(conn, workspace_id, candidate)
+
+
+async def test_initial_chunk_model_activation_can_bootstrap_before_node_backfill(pool, workspace_id):
+    async with pool.acquire() as conn:
+        model = await embedding_versions.ensure_model(conn, "test:bootstrap:512")
+        await conn.execute(
+            "INSERT INTO memory_nodes(workspace_id, kind, label, status) "
+            "VALUES($1, 'decision', 'Manual decision awaiting consolidation', 'decided')",
+            workspace_id,
+        )
+
+        await embedding_versions.activate_model(
+            conn, workspace_id, model, require_node_coverage=False
+        )
+
+    async with pool.acquire() as conn:
+        assert await embedding_versions.active_model(conn, workspace_id) == model

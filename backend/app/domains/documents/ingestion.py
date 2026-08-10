@@ -289,7 +289,13 @@ async def _materialize_revision(
             model_id = await embedding_versions.ensure_model(conn, embed_model)
             workspace_model_id = await embedding_versions.active_model(conn, workspace_id)
             if workspace_model_id is None:
-                await embedding_versions.activate_model(conn, workspace_id, model_id)
+                # A workspace can contain manually curated decisions before its
+                # first searchable document. Bootstrap the chunk model now;
+                # consolidation backfills those signatures before any later
+                # operator-initiated model switch is allowed.
+                await embedding_versions.activate_model(
+                    conn, workspace_id, model_id, require_node_coverage=False
+                )
             elif workspace_model_id != model_id:
                 existing_models = await conn.fetch(
                     "SELECT model_key FROM embedding_models WHERE id=$1", workspace_model_id
