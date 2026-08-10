@@ -216,8 +216,15 @@ To use an existing Neon database, put its pooled `DATABASE_URL` in
    allowing different workspaces to run in parallel.
 5. The selected LLM extracts decisions, reasoning, alternatives, people,
    topics, open questions, and conflicts.
-6. Memory nodes are linked to evidence chunks and to one another through typed
-   graph edges.
+6. The extraction is saved as an immutable candidate run with one observation
+   per proposed memory item. Missing or invalid evidence quarantines that item:
+   no fallback chunk is fabricated and it never reaches the graph.
+7. Only after validation and projection succeed does the candidate atomically
+   become the active run for that document revision; the predecessor's
+   unshared nodes, links, and edges are retired. Document detail exposes this
+   active-run lineage and quarantine count.
+8. Active observations project memory nodes to evidence chunks and to one
+   another through typed graph edges.
 
 Provider failure does not discard accepted content: the revision remains in a
 reviewable failed state. When a connector reports deletion or permission loss,

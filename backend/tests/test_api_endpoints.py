@@ -133,6 +133,31 @@ async def test_protected_ingest_requires_admin(pool, workspace_id):
         assert any(d["id"] == doc_id for d in docs.json())
 
 
+async def test_document_detail_exposes_active_formation_lineage(
+    pool, workspace_id, fake_llm
+):
+    from app.domains.memory.formation import run_formation
+
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        ingest = await admin.post(
+            "/api/ingest",
+            json={
+                "source": "meeting",
+                "title": "Lineage notes",
+                "text": "We chose PostgreSQL because transactions matter.",
+            },
+        )
+        doc_id = ingest.json()["document_id"]
+        await run_formation(doc_id)
+        detail = await admin.get(f"/api/documents/{doc_id}")
+
+    assert detail.status_code == 200
+    formation = detail.json()["formation"]
+    assert formation["active_run_id"]
+    assert formation["quarantined_observations"] == 0
+
+
 async def test_query_streams_sse_events(pool, workspace_id, monkeypatch):
     admin, _ = await _auth_client(pool, workspace_id, role="admin")
     async with admin:

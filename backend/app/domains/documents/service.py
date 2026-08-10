@@ -175,10 +175,28 @@ async def get_document(
             "AND n.archived_at IS NULL GROUP BY n.kind",
             doc_id, current.workspace_id,
         )
+        formation = await conn.fetchrow(
+            "SELECT fr.id AS active_run_id, fr.activated_at, fr.prompt_version, "
+            "fr.llm_provider, fr.llm_model, "
+            "(SELECT count(*) FROM memory_observations o "
+            " WHERE o.formation_run_id=fr.id AND o.status='quarantined') "
+            " AS quarantined_observations "
+            "FROM formation_runs fr WHERE fr.workspace_id=$1 AND fr.revision_id=$2 "
+            "AND fr.is_active ORDER BY fr.id DESC LIMIT 1",
+            current.workspace_id, doc["revision_id"],
+        )
     out = dict(doc)
     raw = out.pop("raw_text", "") or ""
     if full:
         out["text"] = raw
     out["text_preview"] = raw[:1200] + ("…" if len(raw) > 1200 else "")
     out["memory_counts"] = {r["kind"]: r["n"] for r in counts}
+    out["formation"] = dict(formation) if formation else {
+        "active_run_id": None,
+        "activated_at": None,
+        "prompt_version": None,
+        "llm_provider": None,
+        "llm_model": None,
+        "quarantined_observations": 0,
+    }
     return out
