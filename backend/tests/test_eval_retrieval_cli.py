@@ -17,3 +17,4 @@ def test_eval_retrieval_help_describes_required_workspace_and_recall_gate():
     assert result.returncode == 0
     assert "--workspace" in result.stdout
     assert "--min-recall" in result.stdout
+    assert "--feedback-regressions" in result.stdout

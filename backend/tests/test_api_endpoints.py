@@ -8,6 +8,7 @@ import httpx
 
 from app.core import config, migrate
 from app.domains.auth import service as auth
+from app.domains.documents.ingestion import IngestRequest, ingest_document
 from app.main import app
 
 
@@ -53,7 +54,7 @@ async def _auth_client(pool, workspace_id: int, role: str = "admin"):
 async def test_bootstrap_login_logout_cookie_flow(pool):
     async with pool.acquire() as conn:
         await conn.execute(
-            "TRUNCATE answer_feedback, auth_sessions, workspace_memberships, users, "
+            "TRUNCATE feedback_regression_cases, answer_feedback, auth_sessions, workspace_memberships, users, "
             "workspaces, audit_events, auth_login_attempts RESTART IDENTITY CASCADE"
         )
     await migrate.run()
@@ -396,6 +397,42 @@ async def test_feedback_admin_queue_permissions_and_resolution(pool, workspace_i
         assert resolved.status_code == 200
         assert resolved.json()["status"] == "resolved"
         assert resolved.json()["resolution_note"] == "Fixed in memory review."
+
+
+async def test_admin_can_promote_resolved_feedback_to_an_immutable_regression_case(
+    pool, workspace_id
+):
+    document_id, _ = await ingest_document(
+        IngestRequest(source="meeting", title="Regression evidence", text="PostgreSQL was selected."),
+        workspace_id=workspace_id,
+    )
+    async with pool.acquire() as conn:
+        chunk_id = await conn.fetchval(
+            "SELECT id FROM chunks WHERE document_id=$1 ORDER BY chunk_index LIMIT 1", document_id
+        )
+    member, _ = await _auth_client(pool, workspace_id, role="member")
+    async with member:
+        _sid, message_id = await _create_saved_answer(member, "Regression feedback")
+        created = await member.post(
+            "/api/answer-feedback",
+            json={"chat_message_id": message_id, "issue_type": "wrong", "cited_chunk_id": chunk_id},
+        )
+        feedback_id = created.json()["id"]
+
+    admin, admin_id = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        unresolved = await admin.post(f"/api/answer-feedback/{feedback_id}/promote-regression")
+        assert unresolved.status_code == 409
+        await admin.patch(f"/api/answer-feedback/{feedback_id}", json={"status": "resolved"})
+        promoted = await admin.post(f"/api/answer-feedback/{feedback_id}/promote-regression")
+        assert promoted.status_code == 200
+        body = promoted.json()
+
+    assert body["feedback_id"] == feedback_id
+    assert body["workspace_id"] == workspace_id
+    assert body["issue_type"] == "wrong"
+    assert body["expected_citation_chunk_id"] == chunk_id
+    assert body["created_by_user_id"] == admin_id
 
 
 async def test_duplicate_feedback_updates_existing_row(pool, workspace_id):

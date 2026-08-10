@@ -19,6 +19,7 @@ from app.domains.query.vector_search import (  # noqa: E402
     exact_vector_search,
     recall_at_k,
 )
+from app.domains.query.retrieval import retrieve  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,6 +39,11 @@ def parse_args() -> argparse.Namespace:
         "--seed",
         default="ybase-retrieval-v1",
         help="deterministic sample salt",
+    )
+    parser.add_argument(
+        "--feedback-regressions",
+        action="store_true",
+        help="also run promoted feedback cases and require their expected evidence",
     )
     args = parser.parse_args()
     if args.queries <= 0:
@@ -92,6 +98,11 @@ async def main() -> int:
                 args.seed,
                 args.queries,
             )
+            regression_cases = await conn.fetch(
+                "SELECT id, question, expected_citation_chunk_id FROM feedback_regression_cases "
+                "WHERE workspace_id=$1 ORDER BY id",
+                workspace["id"],
+            ) if args.feedback_regressions else []
 
             recalls = []
             iterative_scan_queries = 0
@@ -128,6 +139,20 @@ async def main() -> int:
                 )
                 iterative_scan_queries += int(approximate.iterative_scan_enabled)
 
+        regression_failures = 0
+        if args.feedback_regressions:
+            for case in regression_cases:
+                result = await retrieve(case["question"], workspace["id"])
+                evidence_ids = {chunk["id"] for chunk in result["chunks"]}
+                expected_id = case["expected_citation_chunk_id"]
+                passed = expected_id is None or expected_id in evidence_ids
+                regression_failures += int(not passed)
+                expected = "none" if expected_id is None else str(expected_id)
+                print(
+                    f"feedback_regression id={case['id']} expected_chunk={expected} "
+                    f"result={'PASS' if passed else 'FAIL'}"
+                )
+
         mean_recall = statistics.fmean(recalls)
         min_recall = min(recalls)
         print(
@@ -141,7 +166,12 @@ async def main() -> int:
             f"min_recall@{args.k}={min_recall:.3f} "
             f"iterative_scan_queries={iterative_scan_queries}/{len(samples)}"
         )
-        return 0 if mean_recall >= args.min_recall else 1
+        if args.feedback_regressions:
+            print(
+                f"feedback_regressions={len(regression_cases)} "
+                f"failures={regression_failures}"
+            )
+        return 0 if mean_recall >= args.min_recall and not regression_failures else 1
     finally:
         await db.close_pool()
 
