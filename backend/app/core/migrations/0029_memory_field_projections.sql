@@ -16,3 +16,18 @@ CREATE TABLE IF NOT EXISTS memory_field_projections (
 );
 CREATE INDEX IF NOT EXISTS memory_field_projections_node_idx
     ON memory_field_projections(node_id, field_name);
+
+-- Existing primary observation projections already encode the compatible
+-- provenance model. Backfill their fields before the runtime starts checking
+-- completeness, so this additive migration does not falsely flag legacy data.
+INSERT INTO memory_field_projections(workspace_id, observation_id, node_id, field_name)
+SELECT op.workspace_id, op.observation_id, op.node_id, fields.field_name
+FROM observation_projections op
+JOIN memory_observations o ON o.id=op.observation_id
+CROSS JOIN LATERAL unnest(
+    CASE o.kind
+        WHEN 'entity' THEN ARRAY['label', 'summary', 'data']::text[]
+        ELSE ARRAY['label', 'summary', 'status', 'data']::text[]
+    END
+) AS fields(field_name)
+ON CONFLICT DO NOTHING;

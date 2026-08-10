@@ -770,6 +770,20 @@ rather than an embedding provider. It creates a uniquely named workspace and
 deletes it automatically; use `--keep-workspace` only when inspecting query
 plans afterward.
 
+To exercise the durable worker path across many tenants (acceptance → fair
+claiming → concurrent chunking/embedding → formation handoff), run the separate
+staging profile:
+
+```bash
+DATABASE_URL='postgresql://…' backend/.venv/bin/python scripts/worker_load_profile.py \
+  --workspaces 20 --documents-per-workspace 5000 --concurrency 8
+```
+
+This profile uses the configured embedding provider, so it measures provider,
+pool, and database contention together. It removes its generated workspaces by
+default and fails if the first service round is not workspace-fair or any
+revision is left unmaterialized.
+
 ### Release budgets
 
 For a model, prompt, index, embedding, ranking, or retrieval rollout, retain a
