@@ -205,3 +205,39 @@ async def test_failed_replacement_keeps_the_existing_run_active(
 
     assert active_run == first_run
     assert active_observations == 1
+
+
+async def test_reformation_rebuilds_a_same_identity_node_from_active_observations(
+    pool, workspace_id, fake_llm
+):
+    first = make_formation_result()["decisions"][0]
+    first = {
+        **first,
+        "what": "The original interpretation included a very long explanation that is obsolete.",
+        "reasoning": "The original rationale is deliberately long so the old upsert wins without projection rebuilding.",
+    }
+    fake_llm.result = make_formation_result(decisions=[first])
+    doc_id, _ = await ingest_document(_req(), workspace_id=workspace_id)
+    await run_formation(doc_id)
+
+    replacement = {
+        **first,
+        "what": "The replacement interpretation is concise.",
+        "reasoning": "The new rationale supersedes the original interpretation.",
+    }
+    fake_llm.result = make_formation_result(decisions=[replacement])
+    await run_formation(doc_id)
+
+    async with pool.acquire() as conn:
+        summary = await conn.fetchval(
+            "SELECT n.summary FROM memory_nodes n JOIN observation_projections op "
+            "ON op.node_id=n.id JOIN memory_observations o ON o.id=op.observation_id "
+            "JOIN formation_runs r ON r.id=o.formation_run_id "
+            "WHERE o.document_id=$1 AND r.is_active AND o.status='valid'",
+            doc_id,
+        )
+
+    assert summary == (
+        "The replacement interpretation is concise.\n\n"
+        "Reasoning: The new rationale supersedes the original interpretation."
+    )

@@ -103,6 +103,43 @@ async def _retire_projection(conn: asyncpg.Connection, old_run_id: int) -> None:
         )
 
 
+async def _rebuild_candidate_nodes(conn: asyncpg.Connection, run_id: int) -> None:
+    """Replace mutable compatibility fields with the active candidate's facts."""
+    rows = await conn.fetch(
+        "SELECT DISTINCT ON (op.node_id) op.node_id, o.kind, o.payload "
+        "FROM observation_projections op JOIN memory_observations o "
+        "ON o.id=op.observation_id JOIN memory_nodes n ON n.id=op.node_id "
+        "WHERE o.formation_run_id=$1 AND o.status='valid' AND n.curated_at IS NULL "
+        "ORDER BY op.node_id, o.ordinal DESC",
+        run_id,
+    )
+    for row in rows:
+        payload = row["payload"]
+        if row["kind"] == "decision":
+            summary = (payload.get("what") or "").strip()
+            if payload.get("reasoning"):
+                summary += "\n\nReasoning: " + payload["reasoning"].strip()
+            data = {
+                "made_by": payload.get("made_by") or [],
+                "positions": payload.get("positions") or [],
+                "alternatives_considered": payload.get("alternatives_considered") or [],
+                "date": payload.get("date"),
+            }
+            status = payload.get("status")
+        elif row["kind"] == "question":
+            summary = None
+            data = {"resolution": payload.get("resolution"), "raised_by": payload.get("raised_by") or []}
+            status = payload.get("status")
+        else:
+            summary = payload.get("description") or None
+            data = {"entity_kind": payload.get("kind")} if payload.get("kind") else {}
+            status = None
+        await conn.execute(
+            "UPDATE memory_nodes SET summary=$2, status=$3, data=$4, updated_at=now() WHERE id=$1",
+            row["node_id"], summary, status, {k: v for k, v in data.items() if v not in (None, "", [])},
+        )
+
+
 async def activate_run(conn: asyncpg.Connection, run_id: int) -> None:
     """Atomically replace a revision's active interpretation with a candidate."""
     candidate = await conn.fetchrow(
@@ -117,7 +154,6 @@ async def activate_run(conn: asyncpg.Connection, run_id: int) -> None:
     )
     await _record_candidate_projection(conn, run_id)
     if prior and prior["id"] != run_id:
-        await _retire_projection(conn, prior["id"])
         await conn.execute(
             "UPDATE formation_runs SET is_active=false, retired_at=now() WHERE id=$1",
             prior["id"],
@@ -126,3 +162,6 @@ async def activate_run(conn: asyncpg.Connection, run_id: int) -> None:
         "UPDATE formation_runs SET is_active=true, activated_at=now(), retired_at=NULL WHERE id=$1",
         run_id,
     )
+    if prior and prior["id"] != run_id:
+        await _retire_projection(conn, prior["id"])
+    await _rebuild_candidate_nodes(conn, run_id)
