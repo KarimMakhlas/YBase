@@ -52,15 +52,17 @@ async def _supports_iterative_scan(conn: asyncpg.Connection) -> bool:
 _VECTOR_CANDIDATE_SQL = """
 WITH candidates AS MATERIALIZED (
     SELECT c.id, c.text, c.document_id, d.source, d.title, d.author,
-           d.doc_created_at, c.embedding <=> $1::vector AS distance
-    FROM chunks c
+           d.doc_created_at, ce.embedding <=> $1::vector AS distance
+    FROM chunk_embeddings ce
+    JOIN chunks c ON c.id = ce.chunk_id
     JOIN documents d ON d.id = c.document_id
-    WHERE c.workspace_id = $2
+    WHERE ce.workspace_id = $2
+      AND c.workspace_id = $2
       AND d.workspace_id = $2
       AND d.is_active = true
-      AND c.embed_model = $3
+      AND ce.embedding_model_id = $3
       AND ($6::int IS NULL OR c.id <> $6)
-    ORDER BY c.embedding <=> $1::vector
+    ORDER BY ce.embedding <=> $1::vector
     LIMIT $4
 )
 SELECT id, text, document_id, source, title, author, doc_created_at,
@@ -77,7 +79,7 @@ async def approximate_vector_search(
     *,
     qvec: str,
     workspace_id: int,
-    embed_model: str,
+    embedding_model_id: int,
     limit: int,
     candidate_multiplier: Optional[int] = None,
     exclude_chunk_id: Optional[int] = None,
@@ -101,7 +103,7 @@ async def approximate_vector_search(
                 _VECTOR_CANDIDATE_SQL,
                 qvec,
                 workspace_id,
-                embed_model,
+                embedding_model_id,
                 candidate_limit,
                 final_limit,
                 exclude_chunk_id,
@@ -116,7 +118,7 @@ async def exact_vector_search(
     *,
     qvec: str,
     workspace_id: int,
-    embed_model: str,
+    embedding_model_id: int,
     limit: int,
     exclude_chunk_id: Optional[int] = None,
 ) -> VectorSearchResult:
@@ -130,7 +132,7 @@ async def exact_vector_search(
                 _VECTOR_CANDIDATE_SQL,
                 qvec,
                 workspace_id,
-                embed_model,
+                embedding_model_id,
                 final_limit,
                 final_limit,
                 exclude_chunk_id,

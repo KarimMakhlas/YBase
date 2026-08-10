@@ -13,6 +13,7 @@ from app.providers.embeddings import (
     embed_texts,
     to_pgvector,
 )
+from ..query import embedding_versions
 from ..memory import worker
 
 
@@ -206,17 +207,16 @@ async def _materialize_revision(
     try:
         embed_model = await active_embed_model()
         async with pool.acquire() as conn:
-            existing_models = await conn.fetch(
-                "SELECT DISTINCT COALESCE(c.embed_model, 'legacy:unknown') AS embed_model "
-                "FROM chunks c JOIN documents d ON d.id=c.document_id "
-                "WHERE d.workspace_id=$1 AND d.is_active=true "
-                "AND c.embed_model IS DISTINCT FROM $2 ORDER BY 1 LIMIT 5",
-                workspace_id,
-                embed_model,
-            )
-            if existing_models:
+            model_id = await embedding_versions.ensure_model(conn, embed_model)
+            workspace_model_id = await embedding_versions.active_model(conn, workspace_id)
+            if workspace_model_id is None:
+                await embedding_versions.activate_model(conn, workspace_id, model_id)
+            elif workspace_model_id != model_id:
+                existing_models = await conn.fetch(
+                    "SELECT model_key FROM embedding_models WHERE id=$1", workspace_model_id
+                )
                 raise EmbeddingSpaceMismatch(
-                    embed_model, [row["embed_model"] for row in existing_models]
+                    embed_model, [row["model_key"] for row in existing_models]
                 )
             await conn.execute(
                 "UPDATE document_revisions SET status='materializing', error=NULL WHERE id=$1",
@@ -233,10 +233,15 @@ async def _materialize_revision(
         async with pool.acquire() as conn:
             async with conn.transaction():
                 for i, (piece, emb) in enumerate(zip(pieces, embeddings)):
-                    await conn.execute(
+                    chunk_id = await conn.fetchval(
                         "INSERT INTO chunks(workspace_id, document_id, chunk_index, text, embedding, embed_model) "
-                        "VALUES($1, $2, $3, $4, $5::vector, $6)",
+                        "VALUES($1, $2, $3, $4, $5::vector, $6) RETURNING id",
                         workspace_id, document_id, i, piece, to_pgvector(emb), embed_model,
+                    )
+                    await conn.execute(
+                        "INSERT INTO chunk_embeddings(workspace_id, chunk_id, embedding_model_id, embedding) "
+                        "VALUES($1, $2, $3, $4::vector)",
+                        workspace_id, chunk_id, model_id, to_pgvector(emb),
                     )
                 await conn.execute(
                     "UPDATE document_revisions SET status='searchable', error=NULL WHERE id=$1",

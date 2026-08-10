@@ -69,9 +69,11 @@ async def main() -> int:
                 return 2
 
             model_counts = await conn.fetch(
-                "SELECT embed_model, count(*)::int AS chunk_count "
-                "FROM chunks WHERE workspace_id=$1 AND embedding IS NOT NULL "
-                "GROUP BY embed_model ORDER BY embed_model",
+                "SELECT em.id AS embedding_model_id, em.model_key AS embed_model, "
+                "count(*)::int AS chunk_count "
+                "FROM chunk_embeddings ce JOIN embedding_models em ON em.id=ce.embedding_model_id "
+                "WHERE ce.workspace_id=$1 "
+                "GROUP BY em.id, em.model_key ORDER BY em.model_key",
                 workspace["id"],
             )
             insufficient = [
@@ -91,9 +93,9 @@ async def main() -> int:
                 return 2
 
             samples = await conn.fetch(
-                "SELECT id, embedding::text AS embedding, embed_model "
-                "FROM chunks WHERE workspace_id=$1 AND embedding IS NOT NULL "
-                "ORDER BY md5(id::text || $2) LIMIT $3",
+                "SELECT ce.chunk_id AS id, ce.embedding::text AS embedding, ce.embedding_model_id "
+                "FROM chunk_embeddings ce WHERE ce.workspace_id=$1 "
+                "ORDER BY md5(ce.chunk_id::text || $2) LIMIT $3",
                 workspace["id"],
                 args.seed,
                 args.queries,
@@ -111,7 +113,7 @@ async def main() -> int:
                     conn,
                     qvec=sample["embedding"],
                     workspace_id=workspace["id"],
-                    embed_model=sample["embed_model"],
+                    embedding_model_id=sample["embedding_model_id"],
                     limit=args.k,
                     exclude_chunk_id=sample["id"],
                 )
@@ -119,7 +121,7 @@ async def main() -> int:
                     conn,
                     qvec=sample["embedding"],
                     workspace_id=workspace["id"],
-                    embed_model=sample["embed_model"],
+                    embedding_model_id=sample["embedding_model_id"],
                     limit=args.k,
                     exclude_chunk_id=sample["id"],
                 )

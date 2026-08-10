@@ -13,10 +13,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from app.core import config, db
 from app.core.dates import iso_date
-from app.providers.embeddings import active_embed_model, embed_texts, to_pgvector
+from app.providers.embeddings import EmbeddingSpaceMismatch, active_embed_model, embed_texts, to_pgvector
 from ..memory import graph
 from ..memory.scoring import node_score
-from . import vector_search
+from . import embedding_versions, vector_search
 
 RRF_K = 60  # standard reciprocal-rank-fusion damping constant
 
@@ -144,28 +144,35 @@ async def retrieve(
 ) -> Dict[str, Any]:
     pool = await db.get_pool()
     qvec = (await embed_texts([embed_text or question], kind="query"))[0]
-    embed_model = await active_embed_model()
     intent = classify_query_intent(question)
     candidate_limit = config.TOP_K * config.RETRIEVAL_CANDIDATE_MULTIPLIER
     async with pool.acquire() as conn:
-        vector_result = await vector_search.approximate_vector_search(
-            conn,
-            qvec=to_pgvector(qvec),
-            workspace_id=workspace_id,
-            embed_model=embed_model,
-            limit=candidate_limit,
-            candidate_multiplier=config.VECTOR_CANDIDATE_MULTIPLIER,
-        )
+        embedding_model_id = await embedding_versions.active_model(conn, workspace_id)
+        if embedding_model_id is None:
+            vector_result = vector_search.VectorSearchResult([], 0, False)
+        else:
+            embed_model = await active_embed_model()
+            active_key = await embedding_versions.model_key(conn, embedding_model_id)
+            if active_key != embed_model:
+                raise EmbeddingSpaceMismatch(embed_model, [active_key or "unknown"])
+            vector_result = await vector_search.approximate_vector_search(
+                conn,
+                qvec=to_pgvector(qvec),
+                workspace_id=workspace_id,
+                embedding_model_id=embedding_model_id,
+                limit=candidate_limit,
+                candidate_multiplier=config.VECTOR_CANDIDATE_MULTIPLIER,
+            )
         vec_rows = vector_result.rows
         ft_rows = await conn.fetch(
             "SELECT c.id, c.text, c.document_id, d.source, d.title, d.author, "
             "       d.doc_created_at, "
             "       ts_rank_cd(c.text_tsv, websearch_to_tsquery('english', $1))::float AS score "
             "FROM chunks c JOIN documents d ON d.id = c.document_id "
-            "WHERE c.workspace_id=$2 AND d.workspace_id=$2 AND d.is_active=true AND c.embed_model=$3 "
+            "WHERE c.workspace_id=$2 AND d.workspace_id=$2 AND d.is_active=true "
             "AND c.text_tsv @@ websearch_to_tsquery('english', $1) "
-            "ORDER BY score DESC LIMIT $4",
-            question, workspace_id, embed_model, candidate_limit,
+            "ORDER BY score DESC LIMIT $3",
+            question, workspace_id, candidate_limit,
         )
         by_id = {r["id"]: r for r in vec_rows}
         by_id.update({r["id"]: r for r in ft_rows if r["id"] not in by_id})
@@ -222,17 +229,18 @@ async def retrieve(
             extra = await conn.fetch(
                 "SELECT c.id, c.text, c.document_id, d.source, "
                 "       d.title, d.author, d.doc_created_at, "
-                "       1 - (c.embedding <=> $3::vector) AS sim, "
+                "       1 - (ce.embedding <=> $3::vector) AS sim, "
                 "       cl.node_id "
                 "FROM chunk_links cl "
                 "JOIN chunks c ON c.id = cl.chunk_id "
+                "JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.workspace_id=c.workspace_id "
                 "JOIN documents d ON d.id = c.document_id "
                 "JOIN memory_nodes n ON n.id = cl.node_id "
                 "WHERE c.workspace_id=$1 AND d.workspace_id=$1 AND d.is_active=true "
                 "AND n.workspace_id=$1 "
                 "AND cl.node_id = ANY($2::int[]) AND n.kind IN ('decision', 'question') "
-                "AND n.archived_at IS NULL AND c.embed_model=$4",
-                workspace_id, list(node_ids), to_pgvector(qvec), embed_model,
+                "AND n.archived_at IS NULL AND ce.embedding_model_id=$4",
+                workspace_id, list(node_ids), to_pgvector(qvec), embedding_model_id,
             )
             total_chars = sum(len(c["text"]) for c in chunks.values())
             for r in rank_graph_evidence(extra, score_by_node):

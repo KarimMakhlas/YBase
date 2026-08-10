@@ -44,15 +44,16 @@ async def test_vector_search_keeps_candidates_in_the_requested_workspace(
 
     async with pool.acquire() as conn:
         query = await conn.fetchrow(
-            "SELECT id, embedding::text AS embedding, embed_model "
-            "FROM chunks WHERE workspace_id=$1 ORDER BY id LIMIT 1",
+            "SELECT c.id, ce.embedding::text AS embedding, ce.embedding_model_id "
+            "FROM chunks c JOIN chunk_embeddings ce ON ce.chunk_id=c.id "
+            "WHERE c.workspace_id=$1 ORDER BY c.id LIMIT 1",
             workspace_id,
         )
         approximate = await approximate_vector_search(
             conn,
             qvec=query["embedding"],
             workspace_id=workspace_id,
-            embed_model=query["embed_model"],
+            embedding_model_id=query["embedding_model_id"],
             limit=10,
             candidate_multiplier=4,
             exclude_chunk_id=query["id"],
@@ -61,7 +62,7 @@ async def test_vector_search_keeps_candidates_in_the_requested_workspace(
             conn,
             qvec=query["embedding"],
             workspace_id=workspace_id,
-            embed_model=query["embed_model"],
+            embedding_model_id=query["embedding_model_id"],
             limit=10,
             exclude_chunk_id=query["id"],
         )
@@ -88,8 +89,9 @@ async def test_hnsw_plan_remains_usable_with_workspace_and_model_filters(
 
     async with pool.acquire() as conn:
         query = await conn.fetchrow(
-            "SELECT embedding::text AS embedding, embed_model "
-            "FROM chunks WHERE workspace_id=$1 ORDER BY id LIMIT 1",
+            "SELECT ce.embedding::text AS embedding, ce.embedding_model_id "
+            "FROM chunks c JOIN chunk_embeddings ce ON ce.chunk_id=c.id "
+            "WHERE c.workspace_id=$1 ORDER BY c.id LIMIT 1",
             workspace_id,
         )
         async with conn.transaction():
@@ -97,16 +99,16 @@ async def test_hnsw_plan_remains_usable_with_workspace_and_model_filters(
             await conn.execute("SET LOCAL enable_sort = off")
             rows = await conn.fetch(
                 "EXPLAIN (FORMAT TEXT) "
-                "SELECT c.id FROM chunks c "
-                "WHERE c.workspace_id=$1 AND c.embed_model=$2 "
-                "ORDER BY c.embedding <=> $3::vector LIMIT 10",
+                "SELECT c.id FROM chunk_embeddings ce JOIN chunks c ON c.id=ce.chunk_id "
+                "WHERE ce.workspace_id=$1 AND ce.embedding_model_id=$2 "
+                "ORDER BY ce.embedding <=> $3::vector LIMIT 10",
                 workspace_id,
-                query["embed_model"],
+                query["embedding_model_id"],
                 query["embedding"],
             )
 
     plan = "\n".join(row[0] for row in rows)
-    assert "chunks_embedding_idx" in plan
+    assert "chunk_embeddings_embedding_idx" in plan
     assert "workspace_id" in plan
 
 
