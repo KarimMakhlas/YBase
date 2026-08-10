@@ -754,6 +754,22 @@ request. The deterministic CI corpus catches vector-index/filter/candidate
 budget regressions; run the command above against a representative production
 workspace before changing embeddings or search configuration.
 
+### Retrieval scale profile
+
+Before a Neon tier, pgvector-index, or candidate-budget rollout, run the
+disposable 100k-chunk profile against a staging branch and keep the observed
+p95 below the release budget:
+
+```bash
+DATABASE_URL='postgresql://…' backend/.venv/bin/python scripts/retrieval_load_profile.py \
+  --chunks 100000 --queries 50 --max-p95-ms 100
+```
+
+The command uses fixed synthetic vectors to measure database/index latency
+rather than an embedding provider. It creates a uniquely named workspace and
+deletes it automatically; use `--keep-workspace` only when inspecting query
+plans afterward.
+
 ## Demo and data import
 
 Authenticate as an owner or admin, then:
