@@ -7,8 +7,9 @@ from the current database (Fly Postgres or local) and the durability setup.
 
 ## Why Neon for YBase
 
-- **pgvector built in** — the `chunks.embedding vector(512)` column and HNSW
-  index work unchanged.
+- **pgvector built in** — YBase keeps legacy chunk vectors during migration and
+  queries the active per-workspace `chunk_embeddings.embedding vector(512)`
+  version through HNSW.
 - **Autoscaling compute** — the DB scales with formation/query bursts instead of
   being OOM-killed at a fixed size.
 - **Branching** — a production branch can be forked for staging/migration tests
@@ -47,7 +48,8 @@ counts plus the presence of the HNSW index. Recreate the index manually if the
 verification shows it missing:
 
 ```sql
-CREATE INDEX ON chunks USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX CONCURRENTLY chunk_embeddings_embedding_idx
+  ON chunk_embeddings USING hnsw (embedding vector_cosine_ops);
 ```
 
 ## 3. Point the app at Neon (pooled)
@@ -83,6 +85,35 @@ limit (generous on pooled endpoints, but not infinite).
 3. Document the restore steps where on-call can find them. In a real incident
    the play is: create a branch at the last-good timestamp, verify, then either
    swap `DATABASE_URL` to the branch or copy corrected rows back.
+
+## 5. Compute, vector, and worker operations
+
+Scale Neon compute from measurements: sustained database CPU above 70%, cache
+hit rate below 95%, elevated read I/O, pool wait, or p95 vector/full-text query
+latency are useful signals. More compute improves concurrent SQL execution,
+working-set cache, HNSW queries, and index builds; it does not repair stale
+sources, provider latency, low ANN recall, or unordered memory projection.
+
+- Route public traffic only to `RUNTIME_ROLE=api` instances. Run formation,
+  connector, and maintenance loops in `RUNTIME_ROLE=worker` instances (or use
+  `all` only for local/dev). Size `DB_POOL_MAX_SIZE` across both roles, not per
+  role in isolation.
+- Build large HNSW indexes with `CREATE INDEX CONCURRENTLY` on a direct Neon
+  connection during a planned window. Validate index plans and tenant
+  `recall@10 >= 0.95` before changing query budgets.
+- Stage embedding versions side-by-side with
+  `scripts/reembed.py --workspace <slug> --activate`. Confirm
+  `/api/health/details` reports complete coverage; rollback changes the pointer
+  with `--rollback-to <model-key>` and never rewrites vectors.
+- Consider stable workspace-bucket partitioning only after query plans show it
+  reduces tenant-filtered ANN candidate waste. Isolate an exceptional large
+  tenant only with measured benefit. Use read replicas for analytics and
+  latency-tolerant evaluation only; ordered ingestion, formation, and
+  read-after-write retrieval stay on the primary.
+- Release gates: run `make ci`, the tenant recall evaluator, and feedback
+  regressions. Block a release if recall/citation precision loses more than two
+  points or retrieval p95/provider cost rises more than 20% without a recorded
+  trade-off.
 
 ## Notes
 

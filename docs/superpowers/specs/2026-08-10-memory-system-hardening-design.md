@@ -1,7 +1,7 @@
 # YBase Memory System Hardening Design
 
 **Date:** 2026-08-10
-**Status:** Approved direction; written specification awaiting final review
+**Status:** Approved direction; implementation in progress
 **Scope:** Document ingestion, memory formation, semantic retrieval, answer grounding,
 concurrency, and Neon-backed scaling
 

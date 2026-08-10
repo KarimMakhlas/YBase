@@ -1485,3 +1485,17 @@ async def test_query_unsupported_visible_citation_lowers_deterministic_confidenc
     assert meta["confidence"] == "low"
     assert meta["verification"]["invalid_citation_ids"] == [999]
     assert meta["verification"]["citation_coverage"] == 0.0
+
+
+async def test_health_details_reports_active_embedding_version_coverage(pool, workspace_id):
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        await admin.post("/api/ingest", json={
+            "source": "meeting", "title": "Embedding health", "text": "Version coverage evidence.",
+        })
+        response = await admin.get("/api/health/details")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["active_embedding_model_id"], int)
+    assert body["active_embedding_coverage"] == {"active_chunks": 1, "embedded_chunks": 1, "complete": True}

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.core import config, coordination, db, mailer
 from app.domains.auth import service as auth
 from app.domains.memory import worker
+from app.domains.query import embedding_versions
 from app.providers import llm
 from app.providers.embeddings import active_embed_model, active_embedder
 
@@ -51,10 +52,19 @@ async def health_details(
     async with pool.acquire() as conn:
         ok = await conn.fetchval("SELECT 1")
         embed_model = await active_embed_model()
+        active_model_id = await embedding_versions.active_model(conn, current.workspace_id)
+        active_model_key = (
+            await embedding_versions.model_key(conn, active_model_id)
+            if active_model_id is not None else None
+        )
+        active_coverage = (
+            await embedding_versions.coverage(conn, current.workspace_id, active_model_id)
+            if active_model_id is not None else None
+        )
         corpus_models = await conn.fetch(
-            "SELECT DISTINCT COALESCE(c.embed_model, 'legacy:unknown') AS embed_model "
-            "FROM chunks c JOIN documents d ON d.id=c.document_id "
-            "WHERE d.workspace_id=$1 ORDER BY 1",
+            "SELECT DISTINCT em.model_key AS embed_model "
+            "FROM chunk_embeddings ce JOIN embedding_models em ON em.id=ce.embedding_model_id "
+            "WHERE ce.workspace_id=$1 ORDER BY 1",
             current.workspace_id,
         )
     return {
@@ -65,9 +75,20 @@ async def health_details(
         "llm_credentials": llm.credentials_available(),
         "embeddings": await active_embedder(),
         "embedding_model": embed_model,
+        "active_embedding_model_id": active_model_id,
+        "active_embedding_model": active_model_key,
+        "active_embedding_coverage": (
+            {
+                "active_chunks": active_coverage.active_chunks,
+                "embedded_chunks": active_coverage.embedded_chunks,
+                "complete": active_coverage.complete,
+            } if active_coverage is not None else None
+        ),
         "embedding_corpus_models": [r["embed_model"] for r in corpus_models],
         "embedding_space_consistent": all(
             r["embed_model"] == embed_model for r in corpus_models
+        ) and active_model_key == embed_model and (
+            active_coverage is None or active_coverage.complete
         ),
         "formation": await worker.queue_stats(current.workspace_id),
         "slack_events": bool(config.SLACK_SIGNING_SECRET),

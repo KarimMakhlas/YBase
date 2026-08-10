@@ -345,11 +345,20 @@ Set `EMBED_PROVIDER` to `auto`, `voyage`, `ollama`, or `local`.
 | Local hash | Fallback | `local-hash` | Deterministic, lexical, demo-grade fallback |
 
 Embedding spaces must not be mixed. After changing providers or embedding
-models, rebuild stored vectors:
+models, stage a workspace-local vector version, then atomically activate it
+only after coverage completes:
 
 ```bash
-backend/.venv/bin/python scripts/reembed.py
+backend/.venv/bin/python scripts/reembed.py --workspace default --activate
+
+# Fast rollback: changes only the active model pointer; it does not re-embed.
+backend/.venv/bin/python scripts/reembed.py --workspace default \
+  --rollback-to voyage:voyage-3-lite:512
 ```
+
+`GET /api/health/details` exposes the active model and its
+`active_embedding_coverage`; do not activate a candidate with incomplete
+coverage.
 
 ### Provider routing
 
@@ -393,7 +402,11 @@ flowchart TD
 | `SESSION_COOKIE_SECURE` | Sends session cookies over HTTPS only | `false` |
 | `CORS_ORIGINS` | Allowed browser origins | Local Vite origins |
 | `DB_POOL_MAX_SIZE` | Per-process database connection limit | `20` |
+| `RUNTIME_ROLE` | `api`, `worker`, or combined local `all` process | `all` |
 | `FORMATION_CONCURRENCY` | Parallel workspace formation workers | Auto |
+| `INTEGRATION_CONCURRENCY` | Connector/digest periodic workers | `1` |
+| `MAINTENANCE_CONCURRENCY` | Consolidation/janitor periodic workers | `1` |
+| `RETRIEVAL_CANDIDATE_MULTIPLIER` | Wider union before final retrieval ranking | `3` |
 | `SENTRY_DSN` | Enables Sentry error reporting | Disabled |
 
 See [backend/.env.example](backend/.env.example) for the full configuration surface.

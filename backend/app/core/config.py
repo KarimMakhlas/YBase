@@ -21,8 +21,9 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
-# Deployment role: `all` preserves local/dev behavior; `api` serves requests
-# only; `worker` runs durable background work without accepting API traffic.
+# Deployment role: `all` preserves local/dev behavior; `api` starts no durable
+# background loops; `worker` starts those loops. Worker HTTP routing still
+# exists in-process, so deployment routing must expose only API instances.
 RUNTIME_ROLE = os.getenv("RUNTIME_ROLE", "all").lower()
 if RUNTIME_ROLE not in {"all", "api", "worker"}:
     raise ValueError("RUNTIME_ROLE must be one of: all, api, worker")
