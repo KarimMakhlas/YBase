@@ -21,6 +21,12 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
+# Deployment role: `all` preserves local/dev behavior; `api` serves requests
+# only; `worker` runs durable background work without accepting API traffic.
+RUNTIME_ROLE = os.getenv("RUNTIME_ROLE", "all").lower()
+if RUNTIME_ROLE not in {"all", "api", "worker"}:
+    raise ValueError("RUNTIME_ROLE must be one of: all, api, worker")
+
 # Postgres (pgvector). Default matches docker-compose.yml (host port 5433).
 DATABASE_URL = os.getenv(
     "DATABASE_URL",

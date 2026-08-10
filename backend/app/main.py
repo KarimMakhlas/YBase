@@ -49,12 +49,15 @@ def _warn_on_missing_email_provider() -> None:
 async def lifespan(app: FastAPI):
     await migrate.run()
     _warn_on_missing_email_provider()
-    await sources.recover_stuck_sync_jobs()
-    await worker.recover_stuck()
-    worker.start()
+    runs_workers = config.RUNTIME_ROLE in {"all", "worker"}
+    if runs_workers:
+        await sources.recover_stuck_sync_jobs()
+        await worker.recover_stuck()
+        worker.start()
     yield
-    await sources.stop_sync_tasks()
-    await worker.stop()
+    if runs_workers:
+        await sources.stop_sync_tasks()
+        await worker.stop()
     await db.close_pool()
 
 
