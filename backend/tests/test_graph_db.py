@@ -106,8 +106,8 @@ async def test_consolidation_merges_incrementally_and_stores_embeddings(pool, wo
             "SELECT id, embedding IS NOT NULL AS has_vec FROM memory_nodes "
             "WHERE kind='decision' ORDER BY id")
     has_vec = {r["id"]: r["has_vec"] for r in rows}
-    assert b not in has_vec              # duplicate deleted
-    assert has_vec == {a: True, c: True}  # survivor re-embedded, legacy row backfilled
+    assert b in has_vec                  # resolution candidate remains reversible
+    assert has_vec == {a: True, b: True, c: True}
 
     # second run with nothing touched: everything already embedded → no merges
     assert await consolidate.merge_similar_decisions(workspace_id, touched_ids=[]) == []
