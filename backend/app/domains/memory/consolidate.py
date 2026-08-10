@@ -20,7 +20,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from app.core import config, db, usage
 from app.providers.embeddings import embed_texts, to_pgvector
-from . import graph
+from . import graph, resolver
 
 log = logging.getLogger("ybase.consolidate")
 
@@ -249,16 +249,17 @@ async def _merge_similar_decisions(
             for keep, drop, sim in pairs:
                 if keep in dropped or drop in dropped:
                     continue
-                await graph.merge_nodes(conn, keep, drop)
+                ledger_id = await resolver.record_merge_candidate(
+                    conn, workspace_id, keep, drop, sim
+                )
                 # Merges delete a node — audit inside the same transaction so
                 # a merge can always be explained (and recovered) later.
                 await auth.audit(
-                    conn, "consolidation_merge_nodes", workspace_id, None,
+                    conn, "consolidation_merge_candidate", workspace_id, None,
                     target_type="memory_node", target_id=keep,
-                    data={"dropped": drop, "dropped_label": by_id[drop],
-                          "kept_label": by_id[keep], "sim": sim},
+                    data={"ledger_id": ledger_id, "candidate": drop,
+                          "candidate_label": by_id[drop], "survivor_label": by_id[keep], "sim": sim},
                 )
-                dropped.add(drop)
                 merged.append({
                     "kept": keep, "kept_label": by_id[keep],
                     "dropped": drop, "dropped_label": by_id[drop], "sim": sim,

@@ -122,8 +122,10 @@ async def test_end_to_end_batch_merges_duplicates(
         remaining = await conn.fetchval("SELECT count(*) FROM consolidation_queue")
         merge_audit = await conn.fetchval(
             "SELECT count(*) FROM audit_events "
-            "WHERE workspace_id=$1 AND action='consolidation_merge_nodes'", workspace_id)
-    assert n == 1                # duplicates merged by the batch run
+            "WHERE workspace_id=$1 AND action='consolidation_merge_candidate'", workspace_id)
+        candidates = await conn.fetchval("SELECT count(*) FROM resolution_ledger")
+    assert n == 2                # candidates remain reversible
+    assert candidates == 1
     assert remaining == 0        # queue row finished
     assert merge_audit == 1
 
