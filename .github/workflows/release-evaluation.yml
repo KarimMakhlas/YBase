@@ -1,0 +1,27 @@
+name: Release evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Repository path to accepted baseline metrics JSON
+        required: true
+        type: string
+      candidate:
+        description: Repository path to candidate staging metrics JSON
+        required: true
+        type: string
+
+jobs:
+  budgets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Enforce quality, latency, cost, and fairness budgets
+        run: >-
+          python scripts/check_release_budget.py
+          --baseline "${{ inputs.baseline }}"
+          --candidate "${{ inputs.candidate }}"

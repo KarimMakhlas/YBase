@@ -1518,6 +1518,25 @@ async def test_query_claim_verifier_lowers_confidence_for_unsupported_claim(
     }
 
 
+async def test_query_slo_reports_latency_and_grounding_metrics(
+    pool, workspace_id, monkeypatch
+):
+    await _ask_with_meta(
+        pool, workspace_id, monkeypatch,
+        '{"confidence":"high","cited_chunk_ids":[1],"related_questions":[],"timeline":[]}',
+    )
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        response = await admin.get("/api/ops/query-slo?days=7")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["runs"] == 1
+    assert body["p95_total_ms"] is not None
+    assert body["mean_citation_coverage"] == 1.0
+    assert body["claim_verification"]["not_checked"] == 1
+
+
 async def test_health_details_reports_active_embedding_version_coverage(pool, workspace_id):
     admin, _ = await _auth_client(pool, workspace_id, role="admin")
     async with admin:

@@ -12,7 +12,7 @@ from datetime import date
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from app.providers import llm
-from app.core import config, usage
+from app.core import config, db, usage
 from app.core.observability import StageTimer
 from . import retrieval
 
@@ -239,6 +239,38 @@ async def verify_answer_claims(
                if str(cid).isdigit() and int(cid) in allowed_ids]
         verified.append({"claim": claim[:1000], "citation_ids": ids, "verdict": verdict})
     return verified
+
+
+async def _record_query_run(
+    workspace_id: int, timer: StageTimer, retrieved_chunks: int, verification: Dict[str, Any]
+) -> None:
+    """Persist privacy-preserving quality/latency telemetry best-effort."""
+    timings = timer.as_dict()
+    claims = verification.get("claim_verification") or {}
+    try:
+        pool = await db.get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO query_runs(workspace_id, status, retrieval_ms, generation_ms, "
+                "verification_ms, total_ms, retrieved_chunks, valid_citations, "
+                "citation_coverage, confidence, claim_verification_status, "
+                "unsupported_claims, contradicted_claims) "
+                "VALUES($1, 'success', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                workspace_id,
+                timings.get("retrieval"),
+                timings.get("llm"),
+                timings.get("verification"),
+                timer.total_ms(),
+                retrieved_chunks,
+                len(verification.get("valid_citation_ids") or []),
+                verification.get("citation_coverage"),
+                verification.get("confidence"),
+                claims.get("status"),
+                claims.get("unsupported_claim_count", 0),
+                claims.get("contradicted_claim_count", 0),
+            )
+    except Exception:
+        log.warning("query run telemetry record failed", exc_info=True)
 
 
 # Follow-ups shorter than this likely lean on the conversation ("why did he
@@ -650,6 +682,8 @@ async def stream_query(
 
     claim_results = await verify_answer_claims(question, answer_text, citations)
     verification = apply_claim_verification(verification, claim_results)
+    timer.lap("verification")
+    await _record_query_run(workspace_id, timer, len(ret["chunks"]), verification)
 
     counter_evidence = []
     for item in meta.get("counter_evidence", []) or []:

@@ -70,7 +70,7 @@ async def pool():
             "memory_observations, document_revisions, source_objects, sync_jobs, source_streams, source_connections, "
             "oauth_states, oauth_login_states, documents, chunks, chunk_links, "
             "memory_nodes, memory_edges, slack_events, chat_sessions, chat_messages, "
-            "formation_runs, audit_events, usage_events, consolidation_queue, resolution_ledger "
+            "formation_runs, query_runs, audit_events, usage_events, consolidation_queue, resolution_ledger "
             "RESTART IDENTITY CASCADE"
         )
         await conn.execute(

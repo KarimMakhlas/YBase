@@ -770,6 +770,25 @@ rather than an embedding provider. It creates a uniquely named workspace and
 deletes it automatically; use `--keep-workspace` only when inspecting query
 plans afterward.
 
+### Release budgets
+
+For a model, prompt, index, embedding, ranking, or retrieval rollout, retain a
+fixed staging-evaluation JSON artifact containing `ann_recall_at_10`,
+`citation_entailment_precision`, `retrieval_p95_ms`,
+`query_provider_cost_usd`, and `formation_queue_p95_ms`. Compare the candidate
+to the accepted baseline:
+
+```bash
+python scripts/check_release_budget.py \
+  --baseline evaluation/baseline.json --candidate evaluation/candidate.json
+```
+
+The gate requires at least 95% ANN recall@10, allows no more than a two-point
+loss in retrieval recall or citation-entailment precision, and blocks more than
+a 20% rise in retrieval p95, per-query provider cost, or formation queue p95.
+The **Release evaluation** GitHub Actions workflow runs this same gate with the
+two explicitly supplied artifact paths.
+
 ## Demo and data import
 
 Authenticate as an owner or admin, then:
