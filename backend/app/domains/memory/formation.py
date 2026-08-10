@@ -15,7 +15,7 @@ import asyncpg
 from app.core import config, db
 from app.core.observability import StageTimer
 from app.providers import llm
-from . import events, graph, observations, projection, validation
+from . import graph, observations, projection, validation
 
 log = logging.getLogger("ybase.formation")
 
@@ -217,8 +217,6 @@ async def _persist(
 ) -> List[int]:
     """Write the extraction into the graph. Returns the decision node ids this
     document created or updated, for incremental consolidation."""
-    from app.domains.auth import service as auth  # lazy: avoid import cycle
-
     index_to_id = {c["chunk_index"]: c["id"] for c in chunks}
     doc_chunk_ids = list(index_to_id.values())
 
@@ -228,18 +226,6 @@ async def _persist(
 
     def safe_node(node_id: Optional[int]) -> Optional[int]:
         return node_id if node_id in valid_node_ids else None
-
-    async def flip_status(node_id: int, new_status: str) -> None:
-        """Status changes on *existing* nodes (reversals, resolutions) are the
-        destructive edge of formation — leave an audit trail."""
-        old = await graph.set_status(conn, node_id, new_status)
-        if old is not None and old != new_status:
-            await auth.audit(
-                conn, "formation_node_status_change", workspace_id, None,
-                target_type="memory_node", target_id=node_id,
-                data={"old_status": old, "new_status": new_status,
-                      "document_id": document_id},
-            )
 
     entity_ids: Dict[str, int] = {}
     touched_decisions: List[int] = []
@@ -274,11 +260,6 @@ async def _persist(
                 "date": dec.get("date"),
             },
         )
-        if dec.get("date"):
-            await events.record_decision_event(
-                conn, workspace_id, node_id, dec["status"], dec["date"]
-            )
-            await events.derive_node_status(conn, node_id)
         for cid in chunk_ids_for(dec.get("evidence_chunk_indexes", [])):
             await graph.link_chunk(conn, cid, node_id)
         for person in dec.get("made_by", []):
@@ -293,15 +274,10 @@ async def _persist(
         revisits = safe_node(dec.get("revisits_node_id"))
         if revisits and revisits != node_id:
             await graph.add_edge(conn, workspace_id, node_id, revisits, "revisits")
-            if dec["status"] == "reversed":
-                await flip_status(revisits, "reversed")
-            elif dec["status"] == "revisited":
-                await flip_status(revisits, "revisited")
             await graph.merge_data(conn, revisits, {"last_revisited": dec.get("date")})
         resolves_q = safe_node(dec.get("resolves_question_node_id"))
         if resolves_q:
             await graph.add_edge(conn, workspace_id, node_id, resolves_q, "resolves")
-            await flip_status(resolves_q, "resolved")
             await graph.merge_data(conn, resolves_q, {"resolution": dec["what"]})
         for rel in dec.get("relates_to_node_ids", []):
             rel_id = safe_node(rel)
@@ -314,7 +290,6 @@ async def _persist(
         resolves = safe_node(q.get("resolves_node_id"))
         if resolves:
             node_id = resolves
-            await flip_status(node_id, "resolved")
             await graph.merge_data(conn, node_id, {"resolution": q.get("resolution")})
         else:
             node_id = await graph.upsert_node(

@@ -1,8 +1,11 @@
 """Project active formation observations into the legacy memory graph."""
 
+from datetime import timezone
 from typing import List, Optional
 
 import asyncpg
+
+from . import events
 
 
 def _label(kind: str, payload: dict) -> Optional[str]:
@@ -140,10 +143,73 @@ async def _rebuild_candidate_nodes(conn: asyncpg.Connection, run_id: int) -> Non
         )
 
 
+async def _record_observation_events(conn: asyncpg.Connection, run_id: int) -> List[int]:
+    """Create event projections after observations have canonical node mappings."""
+    rows = await conn.fetch(
+        "SELECT DISTINCT ON (op.observation_id, op.node_id) "
+        "o.id AS observation_id, o.workspace_id, op.node_id, o.kind, o.payload, "
+        "o.effective_at, o.created_at "
+        "FROM observation_projections op "
+        "JOIN memory_observations o ON o.id=op.observation_id "
+        "WHERE o.formation_run_id=$1 AND o.status='valid' "
+        "AND o.kind IN ('decision','question') "
+        "ORDER BY op.observation_id, op.node_id",
+        run_id,
+    )
+    node_ids: List[int] = []
+    allowed = {
+        "decision": {"proposed", "decided", "revisited", "reversed", "reaffirmed"},
+        "question": {"open", "resolved"},
+    }
+    requested_targets = set()
+    projected = []
+    for row in rows:
+        event_type = row["payload"].get("status")
+        if event_type not in allowed[row["kind"]]:
+            continue
+        targets = [(row["node_id"], event_type)]
+        payload = row["payload"]
+        if row["kind"] == "decision":
+            revisits = payload.get("revisits_node_id")
+            if event_type in {"revisited", "reversed", "reaffirmed"} and isinstance(revisits, int):
+                targets.append((revisits, event_type))
+            resolves = payload.get("resolves_question_node_id")
+            if isinstance(resolves, int):
+                targets.append((resolves, "resolved"))
+        elif row["kind"] == "question":
+            resolves = payload.get("resolves_node_id")
+            if isinstance(resolves, int):
+                targets.append((resolves, "resolved"))
+        projected.append((row, targets))
+        requested_targets.update(target for target, _ in targets)
+
+    valid_targets = {
+        row["id"] for row in await conn.fetch(
+            "SELECT id FROM memory_nodes WHERE workspace_id=("
+            "SELECT workspace_id FROM formation_runs WHERE id=$1) "
+            "AND id = ANY($2::int[]) AND archived_at IS NULL",
+            run_id, list(requested_targets),
+        )
+    } if requested_targets else set()
+    for row, targets in projected:
+        effective_at = row["effective_at"] or row["created_at"]
+        if effective_at.tzinfo is None:
+            effective_at = effective_at.replace(tzinfo=timezone.utc)
+        for node_id, event_type in targets:
+            if node_id not in valid_targets:
+                continue
+            await events.record_observation_event(
+                conn, row["workspace_id"], node_id, row["observation_id"],
+                event_type, effective_at,
+            )
+            node_ids.append(node_id)
+    return node_ids
+
+
 async def activate_run(conn: asyncpg.Connection, run_id: int) -> None:
     """Atomically replace a revision's active interpretation with a candidate."""
     candidate = await conn.fetchrow(
-        "SELECT id, workspace_id, revision_id FROM formation_runs WHERE id=$1 FOR UPDATE",
+        "SELECT id, workspace_id, document_id, revision_id FROM formation_runs WHERE id=$1 FOR UPDATE",
         run_id,
     )
     if candidate is None:
@@ -153,6 +219,7 @@ async def activate_run(conn: asyncpg.Connection, run_id: int) -> None:
         candidate["revision_id"],
     )
     await _record_candidate_projection(conn, run_id)
+    event_node_ids = await _record_observation_events(conn, run_id)
     if prior and prior["id"] != run_id:
         await conn.execute(
             "UPDATE formation_runs SET is_active=false, retired_at=now() WHERE id=$1",
@@ -165,3 +232,14 @@ async def activate_run(conn: asyncpg.Connection, run_id: int) -> None:
     if prior and prior["id"] != run_id:
         await _retire_projection(conn, prior["id"])
     await _rebuild_candidate_nodes(conn, run_id)
+    from app.domains.auth import service as auth  # lazy: avoid import cycle
+    for node_id in sorted(set(event_node_ids)):
+        old_status = await conn.fetchval("SELECT status FROM memory_nodes WHERE id=$1", node_id)
+        new_status = await events.derive_node_status(conn, node_id)
+        if new_status is not None and old_status != new_status:
+            await auth.audit(
+                conn, "formation_node_status_change", candidate["workspace_id"], None,
+                target_type="memory_node", target_id=node_id,
+                data={"old_status": old_status, "new_status": new_status,
+                      "document_id": candidate["document_id"]},
+            )
