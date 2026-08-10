@@ -72,6 +72,66 @@ async def test_ingest_different_text_is_not_duplicate(pool, workspace_id):
     assert not dup and a != b
 
 
+async def test_connector_update_creates_a_new_active_revision(pool, workspace_id):
+    async with pool.acquire() as conn:
+        connection_id = await conn.fetchval(
+            "INSERT INTO source_connections(workspace_id, provider, name) "
+            "VALUES($1, 'jira', 'Jira') RETURNING id",
+            workspace_id,
+        )
+
+    first, first_duplicate = await ingest_document(
+        _req(
+            source="jira",
+            external_ref="jira:cloud:ENG-1",
+            source_connection_id=connection_id,
+            text="first revision text",
+        ),
+        workspace_id=workspace_id,
+    )
+    second, second_duplicate = await ingest_document(
+        _req(
+            source="jira",
+            external_ref="jira:cloud:ENG-1",
+            source_connection_id=connection_id,
+            text="updated revision text",
+        ),
+        workspace_id=workspace_id,
+    )
+
+    assert (first_duplicate, second_duplicate) == (False, False)
+    assert first != second
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT source_object_id, revision_id, is_active FROM documents "
+            "WHERE id = ANY($1::int[]) ORDER BY id",
+            [first, second],
+        )
+    assert [row["source_object_id"] for row in rows] == [
+        rows[0]["source_object_id"], rows[0]["source_object_id"],
+    ]
+    assert rows[0]["revision_id"] != rows[1]["revision_id"]
+    assert [row["is_active"] for row in rows] == [False, True]
+
+
+async def test_same_source_content_retry_reuses_the_active_revision(pool, workspace_id):
+    req = _req(idempotency_key="upload-17", text="unchanged upload")
+    first, duplicate = await ingest_document(req, workspace_id=workspace_id)
+    second, retry_duplicate = await ingest_document(req, workspace_id=workspace_id)
+
+    assert (duplicate, retry_duplicate, first, second) == (False, True, first, first)
+    async with pool.acquire() as conn:
+        revision_count = await conn.fetchval("SELECT count(*) FROM document_revisions")
+        document = await conn.fetchrow(
+            "SELECT source_object_id, revision_id, is_active FROM documents WHERE id=$1",
+            first,
+        )
+    assert revision_count == 1
+    assert document["source_object_id"] is not None
+    assert document["revision_id"] is not None
+    assert document["is_active"] is True
+
+
 async def test_worker_claim_and_success_path(pool, workspace_id):
     doc_id, _ = await ingest_document(_req(), workspace_id=workspace_id)
     claimed = await worker._claim()
