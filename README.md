@@ -257,8 +257,10 @@ sequenceDiagram
 ### Retrieval
 
 1. Short follow-ups are rewritten into standalone questions.
-2. Vector and PostgreSQL full-text results are fused with reciprocal-rank
-   fusion.
+2. Vector candidates are directly filtered by workspace and embedding model,
+   over-fetched from HNSW, exact-ordered, then fused with PostgreSQL full-text
+   results using reciprocal-rank fusion. pgvector iterative scans are used when
+   the installed extension supports them.
 3. Relevant memory nodes expand through the graph for up to two hops.
 4. Evidence is ranked by relevance and memory confidence.
 5. The LLM reasons over the evidence, graph context, and conversation history.
@@ -701,6 +703,21 @@ or consolidation:
 ```bash
 backend/.venv/bin/python scripts/eval.py
 ```
+
+### Retrieval recall evaluation
+
+Before rolling out a pgvector index, filter, or candidate-budget change, check
+ANN quality against exact tenant-scoped search on a representative workspace:
+
+```bash
+backend/.venv/bin/python scripts/eval_retrieval.py \
+  --workspace default --queries 50 --k 10 --min-recall 0.95
+```
+
+The command exits with status 1 when mean recall@10 is below the threshold and
+status 2 when the workspace has too few chunks to measure it. Keep the rollout
+gate at 95% mean recall@10 unless a product-specific evaluation justifies a
+different threshold.
 
 The GitHub Actions workflow runs the backend suite against pgvector/PostgreSQL
 and builds the frontend on every push and pull request.
