@@ -781,13 +781,16 @@ staging profile:
 
 ```bash
 DATABASE_URL='postgresql://…' backend/.venv/bin/python scripts/worker_load_profile.py \
-  --workspaces 20 --documents-per-workspace 5000 --concurrency 8
+  --workspaces 20 --documents-per-workspace 5000 --concurrency 8 \
+  --queries-per-workspace 10 --max-query-p95-ms 250
 ```
 
 This profile uses the configured embedding provider, so it measures provider,
-pool, and database contention together. It removes its generated workspaces by
-default and fails if the first service round is not workspace-fair or any
-revision is left unmaterialized.
+pool, and database contention together. It issues tenant-scoped ANN requests
+while materialization is active, removes its generated workspaces by default,
+and fails if the first service round is not workspace-fair, a query crosses a
+tenant boundary, any revision is left unmaterialized, or query p95 exceeds its
+budget.
 
 ### Release budgets
 

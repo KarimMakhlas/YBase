@@ -15,3 +15,5 @@ def test_worker_load_profile_help_exposes_workspace_and_concurrency_scale():
     assert "--workspaces" in result.stdout
     assert "--documents-per-workspace" in result.stdout
     assert "--concurrency" in result.stdout
+    assert "--queries-per-workspace" in result.stdout
+    assert "--max-query-p95-ms" in result.stdout

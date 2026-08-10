@@ -114,6 +114,12 @@ sources, provider latency, low ANN recall, or unordered memory projection.
   regressions. Block a release if recall/citation precision loses more than two
   points or retrieval p95/provider cost rises more than 20% without a recorded
   trade-off.
+- Before a compute-tier change, run both `scripts/retrieval_load_profile.py`
+  (100k chunks) and `scripts/worker_load_profile.py` (many workspaces with
+  active preprocessing and tenant-scoped queries) against a disposable Neon
+  staging branch. Save their output with the release evaluation artifact,
+  alongside Neon CPU, cache-hit, I/O, connection-pool, and `EXPLAIN ANALYZE`
+  observations. Scale only when those measurements identify database pressure.
 
 ## Notes
 
