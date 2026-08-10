@@ -264,6 +264,45 @@ async def formation_slo(
     }
 
 
+@router.get("/pipeline-slo")
+async def pipeline_slo(
+    days: int = 7,
+    current: auth.AuthContext = Depends(auth.require_role("admin")),
+) -> Dict[str, Any]:
+    """Durable revision-stage timing from acceptance through active formation."""
+    days = max(1, min(days, 90))
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        summary = await conn.fetchrow(
+            "SELECT count(*)::int AS accepted_revisions, "
+            "count(*) FILTER (WHERE r.materialized_at IS NOT NULL)::int AS searchable_revisions, "
+            "count(*) FILTER (WHERE fr.activated_at IS NOT NULL)::int AS formed_revisions, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY "
+            "  extract(epoch FROM (r.materialized_at - r.created_at)) * 1000) "
+            "  FILTER (WHERE r.materialized_at IS NOT NULL) AS p95_accepted_to_searchable_ms, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY "
+            "  extract(epoch FROM (fr.activated_at - r.materialized_at)) * 1000) "
+            "  FILTER (WHERE fr.activated_at IS NOT NULL AND r.materialized_at IS NOT NULL) "
+            "  AS p95_searchable_to_formed_ms "
+            "FROM document_revisions r LEFT JOIN formation_runs fr "
+            "ON fr.revision_id=r.id AND fr.is_active "
+            "WHERE r.workspace_id=$1 AND r.created_at > now() - ($2 || ' days')::interval",
+            current.workspace_id, str(days),
+        )
+
+    def _ms(value: Any) -> Any:
+        return round(value) if value is not None else None
+
+    return {
+        "days": days,
+        "accepted_revisions": summary["accepted_revisions"],
+        "searchable_revisions": summary["searchable_revisions"],
+        "formed_revisions": summary["formed_revisions"],
+        "p95_accepted_to_searchable_ms": _ms(summary["p95_accepted_to_searchable_ms"]),
+        "p95_searchable_to_formed_ms": _ms(summary["p95_searchable_to_formed_ms"]),
+    }
+
+
 @router.get("/query-slo")
 async def query_slo(
     days: int = 7,

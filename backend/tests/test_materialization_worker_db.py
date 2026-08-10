@@ -51,12 +51,16 @@ async def test_claimed_revision_becomes_searchable_before_formation_queue(pool, 
         revision_status = await conn.fetchval(
             "SELECT status FROM document_revisions WHERE id=$1", revision_id
         )
+        materialized_at = await conn.fetchval(
+            "SELECT materialized_at FROM document_revisions WHERE id=$1", revision_id
+        )
         formation_status = await conn.fetchval(
             "SELECT formation_status FROM documents WHERE id=$1", document_id
         )
         chunk_count = await conn.fetchval("SELECT count(*) FROM chunks WHERE document_id=$1", document_id)
 
     assert revision_status == "searchable"
+    assert materialized_at is not None
     assert formation_status == "pending"
     assert chunk_count == 1
 

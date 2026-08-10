@@ -1537,6 +1537,21 @@ async def test_query_slo_reports_latency_and_grounding_metrics(
     assert body["claim_verification"]["not_checked"] == 1
 
 
+async def test_pipeline_slo_reports_accepted_to_searchable_latency(pool, workspace_id):
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        await admin.post("/api/ingest", json={
+            "source": "meeting", "title": "Pipeline SLO", "text": "A durable pipeline metric.",
+        })
+        response = await admin.get("/api/ops/pipeline-slo?days=7")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["accepted_revisions"] == 1
+    assert body["searchable_revisions"] == 1
+    assert body["p95_accepted_to_searchable_ms"] is not None
+
+
 async def test_health_details_reports_active_embedding_version_coverage(pool, workspace_id):
     admin, _ = await _auth_client(pool, workspace_id, role="admin")
     async with admin:

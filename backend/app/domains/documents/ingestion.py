@@ -329,7 +329,9 @@ async def _materialize_revision(
                         workspace_id, chunk_id, model_id, to_pgvector(emb),
                     )
                 await conn.execute(
-                    "UPDATE document_revisions SET status='searchable', error=NULL WHERE id=$1",
+                    "UPDATE document_revisions SET status='searchable', error=NULL, "
+                    "materialized_at=now(), materialization_claimed_at=NULL "
+                    "WHERE id=$1",
                     revision_id,
                 )
     except Exception as exc:
