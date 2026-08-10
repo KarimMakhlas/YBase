@@ -57,9 +57,9 @@ async def test_merge_nodes_moves_evidence_and_edges(pool, workspace_id):
             "INSERT INTO documents(workspace_id, source, title, raw_text) "
             "VALUES($1, 'slack', 't', 'x') RETURNING id", workspace_id)
         chunk = await conn.fetchval(
-            "INSERT INTO chunks(document_id, chunk_index, text, embedding) "
-            "VALUES($1, 0, 'x', $2::vector) RETURNING id",
-            doc, "[" + ",".join(["0"] * 512) + "]")
+            "INSERT INTO chunks(workspace_id, document_id, chunk_index, text, embedding) "
+            "VALUES($1, $2, 0, 'x', $3::vector) RETURNING id",
+            workspace_id, doc, "[" + ",".join(["0"] * 512) + "]")
         keep = await graph.upsert_node(conn, workspace_id, "decision", "Choose Postgres",
                                        summary="original")
         drop = await graph.upsert_node(conn, workspace_id, "decision", "Postgres selection",

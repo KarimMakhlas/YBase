@@ -128,9 +128,9 @@ async def ingest_document(req: IngestRequest, workspace_id: int) -> Tuple[int, b
             )
             for i, (piece, emb) in enumerate(zip(pieces, embeddings)):
                 await conn.execute(
-                    "INSERT INTO chunks(document_id, chunk_index, text, embedding, embed_model) "
-                    "VALUES($1, $2, $3, $4::vector, $5)",
-                    doc_id, i, piece, to_pgvector(emb), embed_model,
+                    "INSERT INTO chunks(workspace_id, document_id, chunk_index, text, embedding, embed_model) "
+                    "VALUES($1, $2, $3, $4, $5::vector, $6)",
+                    workspace_id, doc_id, i, piece, to_pgvector(emb), embed_model,
                 )
     await schedule_formation(doc_id)
     return doc_id, False

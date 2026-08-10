@@ -21,8 +21,25 @@ async def test_ingest_creates_doc_chunks_and_queues(pool, workspace_id):
             "SELECT formation_status FROM documents WHERE id=$1", doc_id)
         chunks = await conn.fetchval(
             "SELECT count(*) FROM chunks WHERE document_id=$1", doc_id)
+        chunk_workspaces = await conn.fetch(
+            "SELECT DISTINCT workspace_id FROM chunks WHERE document_id=$1", doc_id)
     assert status == "pending"
     assert chunks >= 1
+    assert {row["workspace_id"] for row in chunk_workspaces} == {workspace_id}
+
+
+async def test_chunk_workspace_schema_is_enforced(pool):
+    async with pool.acquire() as conn:
+        nullable = await conn.fetchval(
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_name='chunks' AND column_name='workspace_id'"
+        )
+        validated = await conn.fetchval(
+            "SELECT convalidated FROM pg_constraint "
+            "WHERE conname='chunks_document_workspace_fk'"
+        )
+    assert nullable == "NO"
+    assert validated is True
 
 
 async def test_ingest_exact_duplicate_is_skipped(pool, workspace_id):
