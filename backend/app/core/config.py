@@ -155,6 +155,12 @@ EMBED_DIM = 512
 
 # Retrieval knobs
 TOP_K = int(os.getenv("TOP_K", "8"))                       # vector-search seeds
+VECTOR_CANDIDATE_MULTIPLIER = max(
+    1, int(os.getenv("VECTOR_CANDIDATE_MULTIPLIER", "4"))
+)
+HNSW_ITERATIVE_SCAN = os.getenv(
+    "HNSW_ITERATIVE_SCAN", "true"
+).lower() in ("1", "true", "yes", "on")
 CONTEXT_CHUNK_CAP = int(os.getenv("CONTEXT_CHUNK_CAP", "22"))  # max chunks sent to Claude
 # Total character budget across all context chunks. CONTEXT_CHUNK_CAP bounds
 # the count; this bounds the size so a worst case (22 chunks × 1500 chars +

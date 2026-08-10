@@ -9,6 +9,7 @@ from app.providers import llm
 from app.providers.llm import parse_loose_json
 from app.domains.query.streaming import _strip_metadata_bleed
 from app.domains.query.retrieval import rank_graph_evidence, rrf_fuse
+from app.domains.query.vector_search import recall_at_k, supports_iterative_hnsw
 from app.domains.memory.consolidate import similar_pairs, similar_pairs_against
 from app.domains.memory.formation import fallback_topics
 from app.domains.memory.scoring import node_score
@@ -69,6 +70,19 @@ def test_oauth_redirect_rejects_untrusted_referer(monkeypatch):
 
 
 # ---- reciprocal-rank fusion ----
+
+def test_pgvector_iterative_scan_version_gate():
+    assert not supports_iterative_hnsw(None)
+    assert not supports_iterative_hnsw("0.7.4")
+    assert supports_iterative_hnsw("0.8.0")
+    assert supports_iterative_hnsw("0.8.2")
+    assert supports_iterative_hnsw("1.0.0")
+
+
+def test_recall_at_k_uses_exact_top_k_as_ground_truth():
+    assert recall_at_k([1, 2, 3, 4], [1, 3, 9, 10], 3) == 2 / 3
+    assert recall_at_k([], [], 10) == 1.0
+    assert recall_at_k([1, 2], [1], 10) == 0.5
 
 def test_rrf_overlap_outranks_single_list_winners():
     # 3 appears in both lists (mid-rank) and must beat either list's #1
