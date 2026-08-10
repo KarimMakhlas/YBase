@@ -73,6 +73,7 @@ async def pool():
             "formation_runs, audit_events, usage_events, consolidation_queue, resolution_ledger "
             "RESTART IDENTITY CASCADE"
         )
+        await conn.execute("UPDATE workspaces SET last_formation_served_at=NULL")
     yield p
     await db.close_pool()
 

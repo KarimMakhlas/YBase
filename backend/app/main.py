@@ -53,7 +53,8 @@ async def lifespan(app: FastAPI):
     if runs_workers:
         await sources.recover_stuck_sync_jobs()
         await worker.recover_stuck()
-        worker.start()
+        worker.start_formation()
+        worker.start_periodic()
     yield
     if runs_workers:
         await sources.stop_sync_tasks()

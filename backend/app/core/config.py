@@ -182,6 +182,11 @@ GRAPH_MAX_NODES = int(os.getenv("GRAPH_MAX_NODES", "40"))
 # order), with this many workspaces forming in parallel. 0 = auto: 1 on local
 # Ollama (concurrent formations jam its GPU queue), 3 on Anthropic.
 FORMATION_CONCURRENCY = int(os.getenv("FORMATION_CONCURRENCY", "0"))
+# Background responsibilities use their own bounded task groups.  These do not
+# consume API request handlers or formation slots.
+INTEGRATION_CONCURRENCY = int(os.getenv("INTEGRATION_CONCURRENCY", "1"))
+MAINTENANCE_CONCURRENCY = int(os.getenv("MAINTENANCE_CONCURRENCY", "1"))
+WORKER_PERIODIC_TICK_S = float(os.getenv("WORKER_PERIODIC_TICK_S", "15"))
 # Bounded attempts with exponential backoff instead of blind in-call retries.
 FORMATION_MAX_ATTEMPTS = int(os.getenv("FORMATION_MAX_ATTEMPTS", "3"))
 FORMATION_BACKOFF_S = int(os.getenv("FORMATION_BACKOFF_S", "60"))
