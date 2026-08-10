@@ -52,7 +52,9 @@ async def lifespan(app: FastAPI):
     runs_workers = config.RUNTIME_ROLE in {"all", "worker"}
     if runs_workers:
         await sources.recover_stuck_sync_jobs()
+        await worker.recover_stuck_materialization()
         await worker.recover_stuck()
+        worker.start_preprocessing()
         worker.start_formation()
         worker.start_periodic()
     yield

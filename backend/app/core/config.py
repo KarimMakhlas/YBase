@@ -202,6 +202,17 @@ FORMATION_CONCURRENCY = int(os.getenv("FORMATION_CONCURRENCY", "0"))
 # consume API request handlers or formation slots.
 INTEGRATION_CONCURRENCY = int(os.getenv("INTEGRATION_CONCURRENCY", "1"))
 MAINTENANCE_CONCURRENCY = int(os.getenv("MAINTENANCE_CONCURRENCY", "1"))
+PREPROCESS_CONCURRENCY = int(os.getenv("PREPROCESS_CONCURRENCY", "2"))
+PREPROCESS_TASK_TIMEOUT_S = float(os.getenv("PREPROCESS_TASK_TIMEOUT_S", "300"))
+PREPROCESS_MAX_ATTEMPTS = int(os.getenv("PREPROCESS_MAX_ATTEMPTS", "3"))
+PREPROCESS_BACKOFF_S = int(os.getenv("PREPROCESS_BACKOFF_S", "30"))
+# API and connector ingestion only needs to durably accept an immutable revision.
+# In production, leave chunking/embedding to the separately budgeted worker so
+# slow providers cannot consume request handlers. Development keeps the inline
+# path by default for convenient local scripts and deterministic tests.
+INGEST_INLINE_MATERIALIZATION = os.getenv(
+    "INGEST_INLINE_MATERIALIZATION", "true" if DEPLOYMENT_ENV != "production" else "false"
+).lower() in ("1", "true", "yes", "on")
 WORKER_PERIODIC_TICK_S = float(os.getenv("WORKER_PERIODIC_TICK_S", "15"))
 # Bounded attempts with exponential backoff instead of blind in-call retries.
 FORMATION_MAX_ATTEMPTS = int(os.getenv("FORMATION_MAX_ATTEMPTS", "3"))

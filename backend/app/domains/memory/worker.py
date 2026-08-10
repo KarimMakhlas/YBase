@@ -35,6 +35,7 @@ _tasks: List[asyncio.Task] = []
 _aux_tasks: List[asyncio.Task] = []  # wake subscriber + heartbeat (Redis mode)
 _integration_tasks: List[asyncio.Task] = []
 _maintenance_tasks: List[asyncio.Task] = []
+_preprocess_tasks: List[asyncio.Task] = []
 # Timestamp of the most recent successful formation. The health endpoint uses it
 # to tell a stalled queue (work pending + workers alive, nothing completing)
 # apart from a healthy busy one.
@@ -90,6 +91,12 @@ async def enqueue(doc_id: int) -> None:
     await coordination.publish_wake()  # best-effort: sibling instances
 
 
+async def wake_preprocessing() -> None:
+    """Wake local and sibling preprocessing loops after durable acceptance."""
+    _event().set()
+    await coordination.publish_wake()
+
+
 async def recover_stuck() -> int:
     """Documents left `processing` by a crash/restart go back to `pending` —
     except those whose workspace lock is held by a live sibling instance
@@ -113,6 +120,23 @@ async def recover_stuck() -> int:
         )
     log.warning("recovered %d documents stuck in processing: %s", len(ids), ids)
     return len(ids)
+
+
+async def recover_stuck_materialization() -> int:
+    """Requeue only stale provider-stage claims after a crashed worker."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "UPDATE document_revisions SET status='accepted', materialization_claimed_at=NULL, "
+            "materialization_next_attempt_at=now() "
+            "WHERE status='materializing' AND materialization_claimed_at IS NOT NULL "
+            "AND materialization_claimed_at < now() - ($1 || ' seconds')::interval "
+            "RETURNING id",
+            str(int(config.PREPROCESS_TASK_TIMEOUT_S) + 120),
+        )
+    if rows:
+        log.warning("recovered %d stale materialization claims", len(rows))
+    return len(rows)
 
 
 async def janitor_tick() -> None:
@@ -601,6 +625,10 @@ async def _tick_integrations() -> None:
 
 async def _tick_maintenance() -> None:
     try:
+        await recover_stuck_materialization()
+    except Exception:
+        log.exception("materialization recovery tick failed")
+    try:
         await janitor_tick()
     except Exception:
         log.exception("janitor tick failed")
@@ -626,6 +654,34 @@ async def _integration_loop(worker_index: int) -> None:
             raise
         except Exception:
             log.exception("integration worker %d loop error", worker_index)
+            await asyncio.sleep(1)
+
+
+async def _preprocess_loop(worker_index: int) -> None:
+    """Run chunking/embedding independently from ordered canonical formation."""
+    from app.domains.documents import ingestion
+
+    log.info("preprocessing worker %d started", worker_index)
+    while True:
+        try:
+            claimed = await ingestion.claim_materialization()
+            if claimed is None:
+                try:
+                    await asyncio.wait_for(
+                        _event().wait(), timeout=config.WORKER_PERIODIC_TICK_S
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                _event().clear()
+                continue
+            await asyncio.wait_for(
+                ingestion.materialize_claimed_revision(claimed),
+                timeout=config.PREPROCESS_TASK_TIMEOUT_S,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("preprocessing worker %d loop error", worker_index)
             await asyncio.sleep(1)
 
 
@@ -766,6 +822,14 @@ def start_formation() -> None:
         _aux_tasks.append(asyncio.create_task(_heartbeat_loop()))
 
 
+def start_preprocessing() -> None:
+    """Start bounded parsing/chunking/embedding workers."""
+    global _preprocess_tasks
+    _preprocess_tasks = [task for task in _preprocess_tasks if not task.done()]
+    for index in range(len(_preprocess_tasks), max(0, config.PREPROCESS_CONCURRENCY)):
+        _preprocess_tasks.append(asyncio.create_task(_preprocess_loop(index)))
+
+
 def start_periodic() -> None:
     """Start independently budgeted integration and maintenance task groups."""
     global _integration_tasks, _maintenance_tasks
@@ -779,15 +843,16 @@ def start_periodic() -> None:
 
 def start() -> None:
     """Compatibility entry point for combined local/API-and-worker runtimes."""
+    start_preprocessing()
     start_formation()
     start_periodic()
 
 
 async def stop() -> None:
-    global _tasks, _aux_tasks, _integration_tasks, _maintenance_tasks
-    for t in _tasks + _aux_tasks + _integration_tasks + _maintenance_tasks:
+    global _tasks, _aux_tasks, _integration_tasks, _maintenance_tasks, _preprocess_tasks
+    for t in _tasks + _aux_tasks + _integration_tasks + _maintenance_tasks + _preprocess_tasks:
         t.cancel()
-    for t in _tasks + _aux_tasks + _integration_tasks + _maintenance_tasks:
+    for t in _tasks + _aux_tasks + _integration_tasks + _maintenance_tasks + _preprocess_tasks:
         try:
             await t
         except asyncio.CancelledError:
@@ -796,6 +861,7 @@ async def stop() -> None:
     _aux_tasks = []
     _integration_tasks = []
     _maintenance_tasks = []
+    _preprocess_tasks = []
     # Hand the ticker lease to a surviving instance immediately, then drop
     # the Redis connection.
     await coordination.resign_leader()

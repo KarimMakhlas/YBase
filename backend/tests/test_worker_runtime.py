@@ -16,7 +16,9 @@ async def test_api_runtime_role_does_not_start_background_task_groups(monkeypatc
     monkeypatch.setattr(main.migrate, "run", lambda: note("migrate"))
     monkeypatch.setattr(main, "_warn_on_missing_email_provider", lambda: calls.append("warn"))
     monkeypatch.setattr(main.sources, "recover_stuck_sync_jobs", lambda: note("recover-sources"))
+    monkeypatch.setattr(main.worker, "recover_stuck_materialization", lambda: note("recover-preprocessing"))
     monkeypatch.setattr(main.worker, "recover_stuck", lambda: note("recover-worker"))
+    monkeypatch.setattr(main.worker, "start_preprocessing", lambda: calls.append("preprocessing"))
     monkeypatch.setattr(main.worker, "start_formation", lambda: calls.append("formation"))
     monkeypatch.setattr(main.worker, "start_periodic", lambda: calls.append("periodic"))
     monkeypatch.setattr(main.worker, "stop", lambda: note("stop"))
@@ -39,7 +41,9 @@ async def test_worker_runtime_role_starts_separate_task_groups(monkeypatch):
     monkeypatch.setattr(main.migrate, "run", lambda: note("migrate"))
     monkeypatch.setattr(main, "_warn_on_missing_email_provider", lambda: calls.append("warn"))
     monkeypatch.setattr(main.sources, "recover_stuck_sync_jobs", lambda: note("recover-sources"))
+    monkeypatch.setattr(main.worker, "recover_stuck_materialization", lambda: note("recover-preprocessing"))
     monkeypatch.setattr(main.worker, "recover_stuck", lambda: note("recover-worker"))
+    monkeypatch.setattr(main.worker, "start_preprocessing", lambda: calls.append("preprocessing"))
     monkeypatch.setattr(main.worker, "start_formation", lambda: calls.append("formation"))
     monkeypatch.setattr(main.worker, "start_periodic", lambda: calls.append("periodic"))
     monkeypatch.setattr(main.worker, "stop", lambda: note("stop"))
@@ -47,10 +51,10 @@ async def test_worker_runtime_role_starts_separate_task_groups(monkeypatch):
     monkeypatch.setattr(main.db, "close_pool", lambda: note("close-db"))
 
     async with main.lifespan(main.app):
-        assert calls == ["migrate", "warn", "recover-sources", "recover-worker", "formation", "periodic"]
+        assert calls == ["migrate", "warn", "recover-sources", "recover-preprocessing", "recover-worker", "preprocessing", "formation", "periodic"]
 
     assert calls == [
-        "migrate", "warn", "recover-sources", "recover-worker", "formation", "periodic",
+        "migrate", "warn", "recover-sources", "recover-preprocessing", "recover-worker", "preprocessing", "formation", "periodic",
         "stop-sources", "stop", "close-db",
     ]
 

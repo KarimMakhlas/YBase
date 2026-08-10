@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.core import db
+from app.core import config, db
 from app.core.ratelimit import ingest_limiter
 from app.domains.auth import service as auth
 from app.domains.documents.ingestion import (
@@ -28,7 +28,11 @@ async def ingest(
     return {
         "document_id": doc_id,
         "duplicate": duplicate,
-        "formation": "skipped" if duplicate else "scheduled",
+        "formation": (
+            "skipped" if duplicate else
+            "scheduled" if config.INGEST_INLINE_MATERIALIZATION else
+            "accepted_for_materialization"
+        ),
     }
 
 

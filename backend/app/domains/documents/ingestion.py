@@ -239,8 +239,47 @@ async def _mark_materialization_failed(
         )
 
 
+async def record_materialization_failure(
+    claimed: ClaimedMaterialization, error: Exception
+) -> bool:
+    """Release a failed worker claim with bounded exponential backoff.
+
+    Returns whether the immutable revision was permanently failed. The claim
+    count is incremented atomically by ``claim_materialization`` before a
+    provider call, so a crash and a regular provider error share the same retry
+    budget.
+    """
+    pool = await db.get_pool()
+    detail = str(error)[:2000]
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "UPDATE document_revisions SET "
+            "status=CASE WHEN materialization_attempts >= $3 THEN 'failed' ELSE 'accepted' END, "
+            "error=$4, materialization_claimed_at=NULL, "
+            "materialization_next_attempt_at=CASE "
+            "WHEN materialization_attempts >= $3 THEN NULL "
+            "ELSE now() + ($5 * power(2, GREATEST(0, materialization_attempts - 1))) * interval '1 second' "
+            "END "
+            "WHERE id=$1 AND workspace_id=$2 AND status='materializing' "
+            "RETURNING status",
+            claimed.revision_id,
+            claimed.workspace_id,
+            config.PREPROCESS_MAX_ATTEMPTS,
+            detail,
+            config.PREPROCESS_BACKOFF_S,
+        )
+        if row is not None and row["status"] == "failed":
+            await conn.execute(
+                "UPDATE documents SET formation_status='failed', formation_error=$2 "
+                "WHERE id=$1 AND workspace_id=$3",
+                claimed.document_id, detail, claimed.workspace_id,
+            )
+    return row is not None and row["status"] == "failed"
+
+
 async def _materialize_revision(
-    req: IngestRequest, workspace_id: int, document_id: int, revision_id: int
+    req: IngestRequest, workspace_id: int, document_id: int, revision_id: int,
+    *, mark_failure: bool = True,
 ) -> None:
     """Embed and store chunks for an already durable accepted revision."""
     pool = await db.get_pool()
@@ -288,8 +327,41 @@ async def _materialize_revision(
                     revision_id,
                 )
     except Exception as exc:
-        await _mark_materialization_failed(document_id, revision_id, exc)
+        if mark_failure:
+            await _mark_materialization_failed(document_id, revision_id, exc)
         raise
+
+
+async def materialize_claimed_revision(claimed: ClaimedMaterialization) -> bool:
+    """Materialize one claimed immutable revision and then enqueue formation."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT d.id AS document_id, d.workspace_id, r.id AS revision_id, r.source, "
+            "r.title, r.author, r.doc_created_at, r.raw_text, r.tags "
+            "FROM documents d JOIN document_revisions r ON r.id=d.revision_id "
+            "WHERE d.id=$1 AND d.workspace_id=$2 AND r.id=$3 "
+            "AND r.status='materializing'",
+            claimed.document_id, claimed.workspace_id, claimed.revision_id,
+        )
+    if row is None:
+        return False
+    req = IngestRequest(
+        source=row["source"], title=row["title"], text=row["raw_text"],
+        author=row["author"], created_at=row["doc_created_at"].isoformat()
+        if row["doc_created_at"] else None,
+        tags=list(row["tags"] or []),
+    )
+    try:
+        await _materialize_revision(
+            req, claimed.workspace_id, claimed.document_id, claimed.revision_id,
+            mark_failure=False,
+        )
+    except Exception as exc:
+        await record_materialization_failure(claimed, exc)
+        return False
+    await schedule_formation(claimed.document_id)
+    return True
 
 
 async def mark_source_deleted_for_document(document_id: int, workspace_id: int) -> bool:
@@ -329,10 +401,18 @@ async def mark_source_deleted_for_document(document_id: int, workspace_id: int) 
 
 
 async def ingest_document(req: IngestRequest, workspace_id: int) -> Tuple[int, bool]:
-    """Accept a revision, materialize it, and queue formation when it is new."""
+    """Durably accept a revision, materializing inline only when configured.
+
+    Production calls return after the immutable acceptance transaction; the
+    preprocessing worker owns provider calls and formation handoff. This keeps
+    request latency independent from document size and embedding-provider load.
+    """
     document_id, revision_id, duplicate = await accept_revision(req, workspace_id)
     if duplicate:
         return document_id, True
+    if not config.INGEST_INLINE_MATERIALIZATION:
+        await worker.wake_preprocessing()
+        return document_id, False
     await _materialize_revision(req, workspace_id, document_id, revision_id)
     await schedule_formation(document_id)
     return document_id, False
