@@ -1,6 +1,9 @@
 """Chronological memory-event contracts."""
 
 from app.domains.memory import events, graph
+from app.domains.documents.ingestion import IngestRequest, ingest_document
+from app.domains.memory.formation import run_formation
+from conftest import make_formation_result
 
 
 async def test_later_effective_event_wins_even_when_inserted_first(pool, workspace_id):
@@ -19,3 +22,15 @@ async def test_later_effective_event_wins_even_when_inserted_first(pool, workspa
 
     assert status == "reversed"
     assert projected == "reversed"
+
+
+async def test_formation_records_a_dated_decision_event(pool, workspace_id, fake_llm):
+    doc_id, _ = await ingest_document(
+        IngestRequest(source="meeting", title="Decision", text="Use PostgreSQL."),
+        workspace_id=workspace_id,
+    )
+    await run_formation(doc_id)
+    async with pool.acquire() as conn:
+        event = await conn.fetchrow("SELECT event_type, effective_at FROM memory_events")
+    assert event["event_type"] == make_formation_result()["decisions"][0]["status"]
+    assert event["effective_at"].date().isoformat() == "2026-01-15"

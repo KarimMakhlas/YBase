@@ -15,7 +15,7 @@ import asyncpg
 from app.core import config, db
 from app.core.observability import StageTimer
 from app.providers import llm
-from . import graph, observations, projection, validation
+from . import events, graph, observations, projection, validation
 
 log = logging.getLogger("ybase.formation")
 
@@ -274,6 +274,11 @@ async def _persist(
                 "date": dec.get("date"),
             },
         )
+        if dec.get("date"):
+            await events.record_decision_event(
+                conn, workspace_id, node_id, dec["status"], dec["date"]
+            )
+            await events.derive_node_status(conn, node_id)
         for cid in chunk_ids_for(dec.get("evidence_chunk_indexes", [])):
             await graph.link_chunk(conn, cid, node_id)
         for person in dec.get("made_by", []):
