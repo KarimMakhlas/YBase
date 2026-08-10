@@ -11,6 +11,26 @@ on:
         description: Repository path to candidate staging metrics JSON
         required: true
         type: string
+      change_kind:
+        description: Change class; model and prompt releases require canary metadata
+        required: true
+        default: other
+        type: choice
+        options:
+          - other
+          - embedding
+          - index
+          - model
+          - prompt
+          - retrieval
+      rollout_metadata:
+        description: Repository path to canary/rollback JSON (required for model or prompt)
+        required: false
+        type: string
+      approval:
+        description: Repository path to an exact-artifact release exception JSON, if approved
+        required: false
+        type: string
 
 jobs:
   budgets:
@@ -21,7 +41,18 @@ jobs:
         with:
           python-version: "3.12"
       - name: Enforce quality, latency, cost, and fairness budgets
-        run: >-
-          python scripts/check_release_budget.py
-          --baseline "${{ inputs.baseline }}"
-          --candidate "${{ inputs.candidate }}"
+        env:
+          BASELINE: ${{ inputs.baseline }}
+          CANDIDATE: ${{ inputs.candidate }}
+          CHANGE_KIND: ${{ inputs.change_kind }}
+          ROLLOUT_METADATA: ${{ inputs.rollout_metadata }}
+          APPROVAL: ${{ inputs.approval }}
+        run: |
+          args=(--baseline "$BASELINE" --candidate "$CANDIDATE" --change-kind "$CHANGE_KIND")
+          if [ -n "$ROLLOUT_METADATA" ]; then
+            args+=(--rollout-metadata "$ROLLOUT_METADATA")
+          fi
+          if [ -n "$APPROVAL" ]; then
+            args+=(--approval "$APPROVAL")
+          fi
+          python scripts/check_release_budget.py "${args[@]}"

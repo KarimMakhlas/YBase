@@ -815,6 +815,29 @@ two explicitly supplied artifact paths.
 completion time. This exposes the deliberate latency trade-off of strict claim
 withholding and keeps user-perceived responsiveness visible during a rollout.
 
+For model or prompt changes, record the passed canary and a concrete rollback
+target, then provide it to the gate:
+
+```json
+{
+  "candidate_sha256": "sha256 of candidate.json bytes",
+  "canary": {"scope": "staging canary workspace", "result": "passed"},
+  "rollback": {"strategy": "deploy previous prompt version", "target": "prompt:2026-08-01"}
+}
+```
+
+```bash
+python scripts/check_release_budget.py \
+  --baseline evaluation/baseline.json --candidate evaluation/candidate.json \
+  --change-kind prompt --rollout-metadata evaluation/prompt-rollout.json
+```
+
+An approved exception is never a reusable bypass: pass `--approval` only with
+an artifact that includes the approver, reason, approval/expiry timestamps, and
+SHA-256 hashes of the exact baseline and candidate files. The gate rejects an
+expired or hash-mismatched approval and prints the accepted exception into CI
+logs for audit.
+
 Production uses `ANSWER_CLAIM_FAILURE_POLICY=withhold` by default: answer text
 is held until structural citation and claim-entailment checks finish. If either
 fails, users receive a transparent prompt to inspect the cited sources rather
