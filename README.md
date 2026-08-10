@@ -206,14 +206,22 @@ To use an existing Neon database, put its pooled `DATABASE_URL` in
 
 ### Formation
 
-1. Content is deduplicated by hash.
-2. Documents are split into evidence-sized chunks and embedded.
-3. A bounded worker queue processes documents sequentially per workspace while
+1. A stable connector object or upload idempotency key accepts an immutable
+   content revision before any embedding provider call.
+2. A retry of the same source/content returns the existing revision; a changed
+   connector object creates a new active revision and retains the old one as
+   history outside retrieval.
+3. Active revisions are split into evidence-sized chunks and embedded.
+4. A bounded worker queue processes documents sequentially per workspace while
    allowing different workspaces to run in parallel.
-4. The selected LLM extracts decisions, reasoning, alternatives, people,
+5. The selected LLM extracts decisions, reasoning, alternatives, people,
    topics, open questions, and conflicts.
-5. Memory nodes are linked to evidence chunks and to one another through typed
+6. Memory nodes are linked to evidence chunks and to one another through typed
    graph edges.
+
+Provider failure does not discard accepted content: the revision remains in a
+reviewable failed state. When a connector reports deletion or permission loss,
+its source object is explicitly deactivated rather than silently disappearing.
 6. Near-duplicate decisions are consolidated by embedding similarity.
 
 ```mermaid
@@ -426,7 +434,7 @@ flowchart TB
     G3["Periodic resync"]:::amber
     G1 --> G2 --> G3
   end
-  Ingest["ingest_document()<br/>dedup by content_hash / external_ref"]:::purple
+  Ingest["ingest_document()<br/>source object + immutable revision"]:::purple
   Queue["Formation queue"]:::purple
 
   S3 --> Ingest

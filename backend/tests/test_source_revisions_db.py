@@ -38,3 +38,25 @@ async def test_document_listing_exposes_revision_projection_metadata(pool, works
     assert row["source_object_id"] is not None
     assert row["revision_id"] is not None
     assert row["is_active"] is True
+
+
+async def test_source_object_deletion_hides_the_current_document(pool, workspace_id):
+    from app.domains.documents import ingestion
+
+    document_id, _ = await ingest_document(_req("removed source"), workspace_id)
+
+    assert await ingestion.mark_source_deleted_for_document(document_id, workspace_id)
+
+    async with pool.acquire() as conn:
+        document = await conn.fetchrow(
+            "SELECT is_active FROM documents WHERE id=$1", document_id
+        )
+        revision = await conn.fetchrow(
+            "SELECT r.status, so.status AS source_status "
+            "FROM documents d JOIN document_revisions r ON r.id=d.revision_id "
+            "JOIN source_objects so ON so.id=d.source_object_id WHERE d.id=$1",
+            document_id,
+        )
+    assert document["is_active"] is False
+    assert revision["status"] == "deleted"
+    assert revision["source_status"] == "deleted"

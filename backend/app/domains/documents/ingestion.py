@@ -247,6 +247,42 @@ async def _materialize_revision(
         raise
 
 
+async def mark_source_deleted_for_document(document_id: int, workspace_id: int) -> bool:
+    """Record a provider-reported deletion without erasing revision history."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT d.source_object_id, d.revision_id "
+                "FROM documents d JOIN source_objects so ON so.id=d.source_object_id "
+                "WHERE d.id=$1 AND d.workspace_id=$2 AND d.is_active "
+                "AND so.status='active' FOR UPDATE OF so",
+                document_id,
+                workspace_id,
+            )
+            if row is None:
+                return False
+            await conn.execute(
+                "UPDATE documents SET is_active=false "
+                "WHERE source_object_id=$1 AND workspace_id=$2 AND is_active",
+                row["source_object_id"],
+                workspace_id,
+            )
+            await conn.execute(
+                "UPDATE document_revisions SET status='deleted' "
+                "WHERE id=$1 AND workspace_id=$2",
+                row["revision_id"],
+                workspace_id,
+            )
+            await conn.execute(
+                "UPDATE source_objects SET status='deleted', deleted_at=now(), updated_at=now() "
+                "WHERE id=$1 AND workspace_id=$2",
+                row["source_object_id"],
+                workspace_id,
+            )
+    return True
+
+
 async def ingest_document(req: IngestRequest, workspace_id: int) -> Tuple[int, bool]:
     """Accept a revision, materialize it, and queue formation when it is new."""
     document_id, revision_id, duplicate = await accept_revision(req, workspace_id)
