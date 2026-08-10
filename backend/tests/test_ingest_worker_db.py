@@ -150,6 +150,7 @@ async def test_connector_revision_preserves_external_update_time(pool, workspace
             source_connection_id=connection_id,
             text="revision with a provider modification time",
             updated_at="2026-08-01T10:30:00Z",
+            normalizer_version="connector-normalizer:v2",
         ),
         workspace_id=workspace_id,
     )
@@ -157,7 +158,7 @@ async def test_connector_revision_preserves_external_update_time(pool, workspace
     assert duplicate is False
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT r.external_updated_at AS revision_updated_at, "
+            "SELECT r.external_updated_at AS revision_updated_at, r.normalizer_version, "
             "so.external_updated_at AS source_updated_at "
             "FROM documents d JOIN document_revisions r ON r.id=d.revision_id "
             "JOIN source_objects so ON so.id=d.source_object_id WHERE d.id=$1",
@@ -165,6 +166,7 @@ async def test_connector_revision_preserves_external_update_time(pool, workspace
         )
     assert row["revision_updated_at"].isoformat() == "2026-08-01T10:30:00+00:00"
     assert row["source_updated_at"].isoformat() == "2026-08-01T10:30:00+00:00"
+    assert row["normalizer_version"] == "connector-normalizer:v2"
 
 
 async def test_same_source_content_retry_reuses_the_active_revision(pool, workspace_id):

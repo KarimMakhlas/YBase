@@ -208,7 +208,8 @@ To use an existing Neon database, put its pooled `DATABASE_URL` in
 
 1. A stable connector object or upload idempotency key accepts an immutable
    content revision before any embedding provider call. Provider creation and
-   modification timestamps are retained on the source object and revision.
+   modification timestamps and the text-normalizer version are retained on the
+   source object and revision.
 2. A retry of the same source/content returns the existing revision; a changed
    connector object creates a new active revision and retains the old one as
    history outside retrieval.
@@ -791,6 +792,11 @@ while materialization is active, removes its generated workspaces by default,
 and fails if the first service round is not workspace-fair, a query crosses a
 tenant boundary, any revision is left unmaterialized, or query p95 exceeds its
 budget.
+
+`GET /api/ops/pipeline-slo` separates source-update-to-acceptance time from
+acceptance-to-searchable and searchable-to-formed time. This makes connector
+polling/freshness delays visible without conflating them with materialization
+or formation backlog.
 
 ### Release budgets
 

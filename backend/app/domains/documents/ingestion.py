@@ -33,6 +33,7 @@ class IngestRequest(BaseModel):
     created_at: Optional[str] = None  # ISO 8601 — when the content was originally written
     updated_at: Optional[str] = None  # ISO 8601 — provider's last source-content update
     content_type: str = Field("text/plain", max_length=128)
+    normalizer_version: str = Field(config.NORMALIZER_VERSION, max_length=128)
     tags: List[str] = Field(default_factory=list)
     source_connection_id: Optional[int] = None
     source_stream_id: Optional[int] = None
@@ -191,8 +192,8 @@ async def accept_revision(
             revision_id = await conn.fetchval(
                 "INSERT INTO document_revisions("
                 "workspace_id, source_object_id, revision_number, content_hash, source, "
-                "title, author, doc_created_at, external_updated_at, raw_text, tags, content_type"
-                ") VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
+                "title, author, doc_created_at, external_updated_at, raw_text, tags, content_type, normalizer_version"
+                ") VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
                 workspace_id,
                 source_object_id,
                 revision_number,
@@ -205,6 +206,7 @@ async def accept_revision(
                 req.text,
                 req.tags,
                 req.content_type,
+                req.normalizer_version,
             )
             await conn.execute(
                 "UPDATE documents SET is_active=false "
@@ -400,7 +402,7 @@ async def materialize_claimed_revision(claimed: ClaimedMaterialization) -> bool:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT d.id AS document_id, d.workspace_id, r.id AS revision_id, r.source, "
-            "r.title, r.author, r.doc_created_at, r.raw_text, r.tags, r.content_type "
+            "r.title, r.author, r.doc_created_at, r.raw_text, r.tags, r.content_type, r.normalizer_version "
             "FROM documents d JOIN document_revisions r ON r.id=d.revision_id "
             "WHERE d.id=$1 AND d.workspace_id=$2 AND r.id=$3 "
             "AND r.status='materializing'",
@@ -414,6 +416,7 @@ async def materialize_claimed_revision(claimed: ClaimedMaterialization) -> bool:
         if row["doc_created_at"] else None,
         tags=list(row["tags"] or []),
         content_type=row["content_type"],
+        normalizer_version=row["normalizer_version"],
     )
     try:
         await _materialize_revision(

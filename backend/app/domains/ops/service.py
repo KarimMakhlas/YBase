@@ -278,6 +278,10 @@ async def pipeline_slo(
             "count(*) FILTER (WHERE r.materialized_at IS NOT NULL)::int AS searchable_revisions, "
             "count(*) FILTER (WHERE fr.activated_at IS NOT NULL)::int AS formed_revisions, "
             "percentile_cont(0.95) WITHIN GROUP (ORDER BY "
+            "  GREATEST(0, extract(epoch FROM (r.created_at - r.external_updated_at)) * 1000)) "
+            "  FILTER (WHERE r.external_updated_at IS NOT NULL) "
+            "  AS p95_source_updated_to_accepted_ms, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY "
             "  extract(epoch FROM (r.materialized_at - r.created_at)) * 1000) "
             "  FILTER (WHERE r.materialized_at IS NOT NULL) AS p95_accepted_to_searchable_ms, "
             "percentile_cont(0.95) WITHIN GROUP (ORDER BY "
@@ -298,6 +302,7 @@ async def pipeline_slo(
         "accepted_revisions": summary["accepted_revisions"],
         "searchable_revisions": summary["searchable_revisions"],
         "formed_revisions": summary["formed_revisions"],
+        "p95_source_updated_to_accepted_ms": _ms(summary["p95_source_updated_to_accepted_ms"]),
         "p95_accepted_to_searchable_ms": _ms(summary["p95_accepted_to_searchable_ms"]),
         "p95_searchable_to_formed_ms": _ms(summary["p95_searchable_to_formed_ms"]),
     }

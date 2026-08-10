@@ -151,6 +151,7 @@ MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", str(10 * 1024 * 1024)))
 # starts. Well under MAX_REQUEST_BYTES, which is the blunt outer wall.
 MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "4000"))
 MAX_DOCUMENT_CHARS = int(os.getenv("MAX_DOCUMENT_CHARS", "1000000"))
+NORMALIZER_VERSION = os.getenv("NORMALIZER_VERSION", "plain-text:v1")
 MAX_MESSAGE_CHARS = int(os.getenv("MAX_MESSAGE_CHARS", "100000"))
 
 # Claude — memory formation, query reasoning, answer synthesis.

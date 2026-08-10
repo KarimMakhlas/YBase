@@ -1585,6 +1585,7 @@ async def test_pipeline_slo_reports_accepted_to_searchable_latency(pool, workspa
     async with admin:
         await admin.post("/api/ingest", json={
             "source": "meeting", "title": "Pipeline SLO", "text": "A durable pipeline metric.",
+            "updated_at": "2026-08-01T00:00:00Z",
         })
         response = await admin.get("/api/ops/pipeline-slo?days=7")
 
@@ -1592,6 +1593,7 @@ async def test_pipeline_slo_reports_accepted_to_searchable_latency(pool, workspa
     body = response.json()
     assert body["accepted_revisions"] == 1
     assert body["searchable_revisions"] == 1
+    assert body["p95_source_updated_to_accepted_ms"] is not None
     assert body["p95_accepted_to_searchable_ms"] is not None
 
 
