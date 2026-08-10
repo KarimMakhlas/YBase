@@ -747,8 +747,12 @@ status 2 when the workspace has too few chunks to measure it. Keep the rollout
 gate at 95% mean recall@10 unless a product-specific evaluation justifies a
 different threshold.
 
-The GitHub Actions workflow runs the backend suite against pgvector/PostgreSQL
-and builds the frontend on every push and pull request.
+The GitHub Actions workflow runs the backend suite against pgvector/PostgreSQL,
+then creates a disposable tenant corpus and blocks the build if tenant-scoped
+ANN recall falls below 95%, before building the frontend on every push and pull
+request. The deterministic CI corpus catches vector-index/filter/candidate
+budget regressions; run the command above against a representative production
+workspace before changing embeddings or search configuration.
 
 ## Demo and data import
 

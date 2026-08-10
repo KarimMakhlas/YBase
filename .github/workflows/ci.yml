@@ -45,6 +45,9 @@ jobs:
       - name: Run backend tests
         run: PYTHONPATH=backend python -m pytest backend/tests
 
+      - name: Gate tenant ANN recall
+        run: PYTHONPATH=backend python scripts/ci_retrieval_gate.py --documents 16 --k 5 --min-recall 0.95
+
       # Lint is advisory for now: it was added to a codebase that had never run
       # one, so it reports rather than gates. Tighten to blocking once the
       # existing backlog is cleared.
