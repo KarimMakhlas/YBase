@@ -144,7 +144,8 @@ async def list_documents(
         rows = await conn.fetch(
             "SELECT id, source, title, author, doc_created_at, tags, context_summary, "
             "       formation_status, formation_error, formation_attempts, ingested_at, "
-            "       source_connection_id, source_stream_id, external_ref "
+            "       source_connection_id, source_stream_id, external_ref, "
+            "       source_object_id, revision_id, is_active "
             "FROM documents WHERE workspace_id=$1 "
             "ORDER BY doc_created_at NULLS LAST, id LIMIT $2 OFFSET $3",
             current.workspace_id, limit, offset,

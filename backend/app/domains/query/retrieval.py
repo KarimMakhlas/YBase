@@ -92,7 +92,7 @@ async def retrieve(
             "       d.doc_created_at, "
             "       ts_rank_cd(c.text_tsv, websearch_to_tsquery('english', $1))::float AS score "
             "FROM chunks c JOIN documents d ON d.id = c.document_id "
-            "WHERE c.workspace_id=$2 AND d.workspace_id=$2 AND c.embed_model=$3 "
+            "WHERE c.workspace_id=$2 AND d.workspace_id=$2 AND d.is_active=true AND c.embed_model=$3 "
             "AND c.text_tsv @@ websearch_to_tsquery('english', $1) "
             "ORDER BY score DESC LIMIT $4",
             question, workspace_id, embed_model, config.TOP_K,
@@ -147,7 +147,8 @@ async def retrieve(
                 "JOIN chunks c ON c.id = cl.chunk_id "
                 "JOIN documents d ON d.id = c.document_id "
                 "JOIN memory_nodes n ON n.id = cl.node_id "
-                "WHERE c.workspace_id=$1 AND d.workspace_id=$1 AND n.workspace_id=$1 "
+                "WHERE c.workspace_id=$1 AND d.workspace_id=$1 AND d.is_active=true "
+                "AND n.workspace_id=$1 "
                 "AND cl.node_id = ANY($2::int[]) AND n.kind IN ('decision', 'question') "
                 "AND n.archived_at IS NULL AND c.embed_model=$4",
                 workspace_id, list(node_ids), to_pgvector(qvec), embed_model,

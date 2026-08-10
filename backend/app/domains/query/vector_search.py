@@ -57,6 +57,7 @@ WITH candidates AS MATERIALIZED (
     JOIN documents d ON d.id = c.document_id
     WHERE c.workspace_id = $2
       AND d.workspace_id = $2
+      AND d.is_active = true
       AND c.embed_model = $3
       AND ($6::int IS NULL OR c.id <> $6)
     ORDER BY c.embedding <=> $1::vector
