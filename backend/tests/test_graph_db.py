@@ -109,5 +109,13 @@ async def test_consolidation_merges_incrementally_and_stores_embeddings(pool, wo
     assert b in has_vec                  # resolution candidate remains reversible
     assert has_vec == {a: True, b: True, c: True}
 
+    async with pool.acquire() as conn:
+        versioned = await conn.fetchval(
+            "SELECT count(*) FROM memory_node_embeddings "
+            "WHERE workspace_id=$1 AND node_id = ANY($2::int[])",
+            workspace_id, [a, b, c],
+        )
+    assert versioned == 3
+
     # second run with nothing touched: everything already embedded → no merges
     assert await consolidate.merge_similar_decisions(workspace_id, touched_ids=[]) == []

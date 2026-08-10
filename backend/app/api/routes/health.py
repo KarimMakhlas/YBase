@@ -61,6 +61,10 @@ async def health_details(
             await embedding_versions.coverage(conn, current.workspace_id, active_model_id)
             if active_model_id is not None else None
         )
+        active_node_coverage = (
+            await embedding_versions.node_coverage(conn, current.workspace_id, active_model_id)
+            if active_model_id is not None else None
+        )
         corpus_models = await conn.fetch(
             "SELECT DISTINCT em.model_key AS embed_model "
             "FROM chunk_embeddings ce JOIN embedding_models em ON em.id=ce.embedding_model_id "
@@ -85,11 +89,18 @@ async def health_details(
             } if active_coverage is not None else None
         ),
         "embedding_corpus_models": [r["embed_model"] for r in corpus_models],
+        "active_decision_embedding_coverage": (
+            {
+                "active_nodes": active_node_coverage.active_nodes,
+                "embedded_nodes": active_node_coverage.embedded_nodes,
+                "complete": active_node_coverage.complete,
+            } if active_node_coverage is not None else None
+        ),
         "embedding_space_consistent": all(
             r["embed_model"] == embed_model for r in corpus_models
         ) and active_model_key == embed_model and (
             active_coverage is None or active_coverage.complete
-        ),
+        ) and (active_node_coverage is None or active_node_coverage.complete),
         "formation": await worker.queue_stats(current.workspace_id),
         "slack_events": bool(config.SLACK_SIGNING_SECRET),
         # False means password-reset and email-verification links are silently

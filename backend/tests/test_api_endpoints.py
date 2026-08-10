@@ -1499,3 +1499,6 @@ async def test_health_details_reports_active_embedding_version_coverage(pool, wo
     body = response.json()
     assert isinstance(body["active_embedding_model_id"], int)
     assert body["active_embedding_coverage"] == {"active_chunks": 1, "embedded_chunks": 1, "complete": True}
+    assert body["active_decision_embedding_coverage"] == {
+        "active_nodes": 0, "embedded_nodes": 0, "complete": True,
+    }

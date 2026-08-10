@@ -16,6 +16,16 @@ class EmbeddingCoverage:
         return self.active_chunks == self.embedded_chunks
 
 
+@dataclass(frozen=True)
+class NodeEmbeddingCoverage:
+    active_nodes: int
+    embedded_nodes: int
+
+    @property
+    def complete(self) -> bool:
+        return self.active_nodes == self.embedded_nodes
+
+
 async def ensure_model(conn: asyncpg.Connection, model_key: str) -> int:
     return await conn.fetchval(
         "INSERT INTO embedding_models(model_key) VALUES($1) "
@@ -52,6 +62,21 @@ async def coverage(
     return EmbeddingCoverage(row["active_chunks"], row["embedded_chunks"])
 
 
+async def node_coverage(
+    conn: asyncpg.Connection, workspace_id: int, embedding_model_id: int
+) -> NodeEmbeddingCoverage:
+    row = await conn.fetchrow(
+        "SELECT count(n.id)::int AS active_nodes, "
+        "count(ne.node_id)::int AS embedded_nodes "
+        "FROM memory_nodes n LEFT JOIN memory_node_embeddings ne "
+        "ON ne.node_id=n.id AND ne.workspace_id=n.workspace_id "
+        "AND ne.embedding_model_id=$2 "
+        "WHERE n.workspace_id=$1 AND n.kind='decision' AND n.archived_at IS NULL",
+        workspace_id, embedding_model_id,
+    )
+    return NodeEmbeddingCoverage(row["active_nodes"], row["embedded_nodes"])
+
+
 async def activate_model(
     conn: asyncpg.Connection, workspace_id: int, embedding_model_id: int
 ) -> None:
@@ -65,6 +90,12 @@ async def activate_model(
         raise ValueError(
             f"embedding model {embedding_model_id} covers {current.embedded_chunks}/"
             f"{current.active_chunks} active chunks"
+        )
+    nodes = await node_coverage(conn, workspace_id, embedding_model_id)
+    if not nodes.complete:
+        raise ValueError(
+            f"embedding model {embedding_model_id} covers {nodes.embedded_nodes}/"
+            f"{nodes.active_nodes} active decision nodes"
         )
     await conn.execute(
         "UPDATE workspaces SET active_embedding_model_id=$2 WHERE id=$1",

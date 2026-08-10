@@ -356,9 +356,9 @@ backend/.venv/bin/python scripts/reembed.py --workspace default \
   --rollback-to voyage:voyage-3-lite:512
 ```
 
-`GET /api/health/details` exposes the active model and its
-`active_embedding_coverage`; do not activate a candidate with incomplete
-coverage.
+`GET /api/health/details` exposes the active model plus chunk and active
+decision coverage. Do not activate a candidate with incomplete coverage: both
+retrieval vectors and consolidation signatures must be staged together.
 
 ### Provider routing
 

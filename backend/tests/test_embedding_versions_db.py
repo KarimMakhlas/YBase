@@ -112,3 +112,23 @@ async def test_activation_requires_complete_coverage_and_rollback_is_a_pointer_f
 
         await embedding_versions.activate_model(conn, workspace_id, current_model)
         assert await embedding_versions.active_model(conn, workspace_id) == current_model
+
+
+async def test_activation_requires_active_decision_embedding_coverage(pool, workspace_id):
+    async with pool.acquire() as conn:
+        current = await embedding_versions.ensure_model(conn, "test:node-current:512")
+        candidate = await embedding_versions.ensure_model(conn, "test:node-candidate:512")
+        await embedding_versions.activate_model(conn, workspace_id, current)
+        node_id = await conn.fetchval(
+            "INSERT INTO memory_nodes(workspace_id, kind, label, status) "
+            "VALUES($1, 'decision', 'Versioned node coverage', 'decided') RETURNING id",
+            workspace_id,
+        )
+        await conn.execute(
+            "INSERT INTO memory_node_embeddings(workspace_id, node_id, embedding_model_id, embedding) "
+            "VALUES($1,$2,$3,$4::vector)",
+            workspace_id, node_id, current, to_pgvector([0.0] * 512),
+        )
+
+        with pytest.raises(ValueError, match="covers 0/1 active decision nodes"):
+            await embedding_versions.activate_model(conn, workspace_id, candidate)

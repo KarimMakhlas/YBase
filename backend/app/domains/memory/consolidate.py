@@ -19,7 +19,13 @@ import logging
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from app.core import config, db, usage
-from app.providers.embeddings import embed_texts, to_pgvector
+from app.providers.embeddings import (
+    EmbeddingSpaceMismatch,
+    active_embed_model,
+    embed_texts,
+    to_pgvector,
+)
+from app.domains.query import embedding_versions
 from . import graph, resolver
 
 log = logging.getLogger("ybase.consolidate")
@@ -71,11 +77,24 @@ def similar_pairs(
     return similar_pairs_against(items, items, threshold)
 
 
-async def _store_embeddings(rows, vecs: List[List[float]]) -> None:
+async def _store_embeddings(
+    rows, vecs: List[List[float]], workspace_id: int, embedding_model_id: int
+) -> None:
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             for r, v in zip(rows, vecs):
+                await conn.execute(
+                    "INSERT INTO memory_node_embeddings("
+                    "workspace_id, node_id, embedding_model_id, embedding) "
+                    "VALUES($1, $2, $3, $4::vector) "
+                    "ON CONFLICT (node_id, embedding_model_id) DO UPDATE "
+                    "SET embedding=EXCLUDED.embedding, created_at=now()",
+                    workspace_id, r["id"], embedding_model_id, to_pgvector(v),
+                )
+                # Kept temporarily for existing operational tooling and a
+                # low-risk migration rollback; semantic comparisons below use
+                # memory_node_embeddings exclusively.
                 await conn.execute(
                     "UPDATE memory_nodes SET embedding=$2::vector WHERE id=$1",
                     r["id"], to_pgvector(v),
@@ -201,10 +220,20 @@ async def _merge_similar_decisions(
 ) -> List[Dict]:
     pool = await db.get_pool()
     async with pool.acquire() as conn:
+        provider_model_key = await active_embed_model()
+        model_id = await embedding_versions.ensure_model(conn, provider_model_key)
+        active_model_id = await embedding_versions.active_model(conn, workspace_id)
+        if active_model_id is not None and active_model_id != model_id:
+            current_key = await embedding_versions.model_key(conn, active_model_id)
+            raise EmbeddingSpaceMismatch(provider_model_key, [current_key or "unknown"])
         rows = await conn.fetch(
-            "SELECT id, label, summary, embedding::text AS embedding FROM memory_nodes "
-            "WHERE workspace_id=$1 AND kind='decision' AND archived_at IS NULL ORDER BY id",
-            workspace_id,
+            "SELECT n.id, n.label, n.summary, ne.embedding::text AS embedding "
+            "FROM memory_nodes n LEFT JOIN memory_node_embeddings ne "
+            "ON ne.node_id=n.id AND ne.workspace_id=n.workspace_id "
+            "AND ne.embedding_model_id=$2 "
+            "WHERE n.workspace_id=$1 AND n.kind='decision' AND n.archived_at IS NULL "
+            "ORDER BY n.id",
+            workspace_id, model_id,
         )
     if len(rows) < 2:
         return []
@@ -213,8 +242,11 @@ async def _merge_similar_decisions(
     fresh: Dict[int, List[float]] = {}
     if need:
         vecs = await embed_texts([_signature(r["label"], r["summary"] or "") for r in need])
-        await _store_embeddings(need, vecs)
+        await _store_embeddings(need, vecs, workspace_id, model_id)
         fresh = {r["id"]: v for r, v in zip(need, vecs)}
+    if active_model_id is None:
+        async with pool.acquire() as conn:
+            await embedding_versions.activate_model(conn, workspace_id, model_id)
     # Candidate search via the HNSW index on memory_nodes.embedding — each
     # fresh node fetches its nearest stored decisions instead of a full
     # pairwise pass over the workspace (similar_pairs_against remains the
@@ -224,11 +256,12 @@ async def _merge_similar_decisions(
     async with pool.acquire() as conn:
         for nid in sorted(fresh):
             cands = await conn.fetch(
-                "SELECT id, 1 - (embedding <=> $2::vector) AS sim FROM memory_nodes "
-                "WHERE workspace_id=$1 AND kind='decision' AND archived_at IS NULL "
-                "AND embedding IS NOT NULL AND id <> $3 "
-                "ORDER BY embedding <=> $2::vector LIMIT 8",
-                workspace_id, to_pgvector(fresh[nid]), nid,
+                "SELECT n.id, 1 - (ne.embedding <=> $3::vector) AS sim "
+                "FROM memory_node_embeddings ne JOIN memory_nodes n ON n.id=ne.node_id "
+                "WHERE ne.workspace_id=$1 AND ne.embedding_model_id=$2 "
+                "AND n.workspace_id=$1 AND n.kind='decision' AND n.archived_at IS NULL "
+                "AND n.id <> $4 ORDER BY ne.embedding <=> $3::vector LIMIT 8",
+                workspace_id, model_id, to_pgvector(fresh[nid]), nid,
             )
             for c in cands:
                 if float(c["sim"]) < config.MERGE_SIM_THRESHOLD:
@@ -280,5 +313,5 @@ async def _merge_similar_decisions(
             vecs = await embed_texts(
                 [_signature(r["label"], r["summary"] or "") for r in kept_rows]
             )
-            await _store_embeddings(kept_rows, vecs)
+            await _store_embeddings(kept_rows, vecs, workspace_id, model_id)
     return merged

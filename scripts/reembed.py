@@ -24,6 +24,10 @@ from app.domains.query import embedding_versions  # noqa: E402
 from app.providers.embeddings import active_embed_model, embed_texts, to_pgvector  # noqa: E402
 
 
+def _node_signature(label: str, summary: str) -> str:
+    return f"{label}\n{(summary or '')[:300]}"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Stage or activate versioned workspace embeddings.")
     parser.add_argument("--workspace", required=True, help="workspace slug")
@@ -93,7 +97,18 @@ async def main() -> int:
                 "ORDER BY c.id",
                 workspace["id"], model_id,
             )
-        print(f"staging workspace={workspace['slug']} chunks={len(rows)} model={model_key}")
+            node_rows = await conn.fetch(
+                "SELECT n.id, n.label, n.summary FROM memory_nodes n "
+                "WHERE n.workspace_id=$1 AND n.kind='decision' AND n.archived_at IS NULL "
+                "AND NOT EXISTS (SELECT 1 FROM memory_node_embeddings ne "
+                "                WHERE ne.node_id=n.id AND ne.embedding_model_id=$2) "
+                "ORDER BY n.id",
+                workspace["id"], model_id,
+            )
+        print(
+            f"staging workspace={workspace['slug']} chunks={len(rows)} "
+            f"decisions={len(node_rows)} model={model_key}"
+        )
         for start in range(0, len(rows), args.batch):
             batch = rows[start:start + args.batch]
             vecs = await embed_texts([row["text"] for row in batch], kind="document")
@@ -107,11 +122,32 @@ async def main() -> int:
                         )
             print(f"  staged={min(start + args.batch, len(rows))}/{len(rows)}")
 
+        for start in range(0, len(node_rows), args.batch):
+            batch = node_rows[start:start + args.batch]
+            vecs = await embed_texts(
+                [_node_signature(row["label"], row["summary"] or "") for row in batch],
+                kind="document",
+            )
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    for row, vector in zip(batch, vecs):
+                        await conn.execute(
+                            "INSERT INTO memory_node_embeddings("
+                            "workspace_id, node_id, embedding_model_id, embedding) "
+                            "VALUES($1,$2,$3,$4::vector) ON CONFLICT DO NOTHING",
+                            workspace["id"], row["id"], model_id, to_pgvector(vector),
+                        )
+            print(f"  staged_decisions={min(start + args.batch, len(node_rows))}/{len(node_rows)}")
+
         async with pool.acquire() as conn:
             current = await embedding_versions.coverage(conn, workspace["id"], model_id)
+            node_current = await embedding_versions.node_coverage(
+                conn, workspace["id"], model_id
+            )
             print(
                 f"coverage workspace={workspace['slug']} model={model_key} "
-                f"chunks={current.embedded_chunks}/{current.active_chunks}"
+                f"chunks={current.embedded_chunks}/{current.active_chunks} "
+                f"decisions={node_current.embedded_nodes}/{node_current.active_nodes}"
             )
             if args.activate:
                 await embedding_versions.activate_model(conn, workspace["id"], model_id)
