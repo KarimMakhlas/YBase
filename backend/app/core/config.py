@@ -236,6 +236,10 @@ def formation_quota_for(plan: "str | None") -> int:
 # Post-formation consolidation: decisions whose label+summary embed this close
 # are treated as the same decision and merged.
 MERGE_SIM_THRESHOLD = float(os.getenv("MERGE_SIM_THRESHOLD", "0.86"))
+# A candidate must clear this stricter threshold *and* have independent active
+# observation evidence before the resolver may auto-approve it.  Approval is a
+# reversible ledger state; it never deletes either graph node.
+RESOLVER_AUTO_THRESHOLD = float(os.getenv("RESOLVER_AUTO_THRESHOLD", "0.98"))
 # Batch consolidation debounce: a workspace's touched decisions consolidate
 # once no formation has landed for DEBOUNCE seconds — or MAX_DELAY after the
 # first touch, so continuous ingest can't postpone consolidation forever.
