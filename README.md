@@ -247,7 +247,7 @@ its source object is explicitly deactivated rather than silently disappearing.
 
 ```mermaid
 sequenceDiagram
-    participant Src as Connector, upload, or API
+    participant Src as Connector or upload or API
     participant API as accept_revision
     participant DB as Postgres durable state
     participant Pre as Preprocessing worker
@@ -256,36 +256,36 @@ sequenceDiagram
     participant Graph as Memory projections
 
     Src->>API: normalized source content
-    API->>DB: lock source identity; create immutable revision
-    alt identical source object + content hash
+    API->>DB: lock source and create immutable revision
+    alt duplicate source content
         DB-->>API: existing document and revision
         API-->>Src: duplicate accepted
     else new revision
-        API->>DB: source_objects, document_revisions status accepted,<br/>new active documents projection
+        API->>DB: store source revision and active document
         API-->>Src: accepted for materialization
-        Note over API,DB: Production returns here. No provider call occurs in the request.
+        Note over API,DB: The request returns before provider work starts
     end
 
-    Pre->>DB: fairly claim accepted revision<br/>FOR UPDATE SKIP LOCKED
+    Pre->>DB: fairly claim accepted revision with SKIP LOCKED
     Pre->>Pre: paragraph-aware chunk structure and source spans
     Pre->>LLM: embedding request
-    Pre->>DB: chunks + versioned chunk_embeddings;<br/>revision searchable; enqueue formation
+    Pre->>DB: store chunks and embeddings then enqueue formation
 
-    Form->>DB: fairly claim searchable document;<br/>one in flight per workspace
+    Form->>DB: fairly claim searchable document per workspace
     Form->>DB: chunks + active memory context
     Form->>LLM: strict structured extraction
     LLM-->>Form: candidate items and evidence indexes
     Form->>DB: immutable formation_run + observations + evidence
     Form->>Form: validate evidence and projection constraints
     alt valid candidate
-        Form->>Graph: atomically activate run; project nodes,<br/>edges, chunk links, field/support lineage
+        Form->>Graph: activate run and project nodes edges and evidence links
         Graph->>DB: retire superseded unshared projections
         Form->>DB: enqueue touched decisions for consolidation
     else invalid evidence or candidate
-        Form->>DB: quarantine item; retain run and reason
+        Form->>DB: quarantine item and retain run reason
     end
 
-    Note over Pre,Form: Claims are workspace-fair and retried with bounded exponential backoff.<br/>Stale claims are reclaimed by startup and maintenance recovery.
+    Note over Pre,Form: Claims are fair retried and reclaimed after failure
 ```
 
 ### Retrieval
@@ -306,37 +306,37 @@ sequenceDiagram
     participant API as POST /api/query
     participant RW as Follow-up rewrite
     participant Ret as Hybrid retrieval
-    participant DB as Postgres + pgvector
+    participant DB as Postgres and pgvector
     participant Graph as Memory graph
     participant LLM as LLM provider
     participant Verify as Citation and claim verification
 
-    UI->>API: question + chat history
-    opt short follow-up under 100 chars, history exists
+    UI->>API: question with chat history
+    opt short followup with history
         API->>RW: resolve pronouns / ellipsis
         RW-->>API: standalone search question
     end
-    API->>Ret: retrieve - question, workspace_id
-    par vector + full text
-        Ret->>DB: active-model tenant-scoped HNSW candidates;<br/>exact re-order inside the candidate set
+    API->>Ret: retrieve question for workspace
+    par vector and full text
+        Ret->>DB: HNSW candidates then exact candidate ordering
         Ret->>DB: websearch_to_tsquery top-K
     end
-    Ret->>Ret: reciprocal-rank fusion and per-document diversity cap
+    Ret->>Ret: reciprocal rank fusion with document diversity cap
     Ret->>Graph: intent-prioritized bounded expansion
     Graph-->>Ret: nodes, typed edges, linked evidence
     Ret->>Ret: rank graph evidence by confidence and similarity
-    Ret-->>API: chunks + nodes + edges + retrieval trace
-    API->>LLM: streamed answer + structured metadata delimiter
+    Ret-->>API: chunks nodes edges and retrieval trace
+    API->>LLM: streamed answer with structured metadata delimiter
     LLM-->>UI: SSE status and delta events
     API->>Verify: verify supplied citation IDs and exact quotes
     opt ANSWER_CLAIM_VERIFICATION enabled
-        Verify->>LLM: bounded claim entailment check over cited chunks only
+        Verify->>LLM: bounded entailment check over cited chunks
     end
     Verify-->>API: grounding and claim verdict
     alt strict withhold policy fails
         API-->>UI: source-first fallback instead of unsupported answer
     else answer is displayable
-        API-->>UI: metadata, citations, trace, done
+        API-->>UI: metadata citations trace and done
     end
     API->>DB: privacy-preserving query_runs latency and quality telemetry
 ```
