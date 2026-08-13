@@ -12,7 +12,7 @@ from datetime import date
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from app.providers import llm
-from app.core import config, usage
+from app.core import config, db, usage
 from app.core.observability import StageTimer
 from . import retrieval
 
@@ -82,6 +82,223 @@ def locate_quote(chunk_text: str, quote: Optional[str]) -> Optional[str]:
         return None
     m = re.search(r"\s+".join(tokens), chunk_text)
     return m.group(0) if m else None
+
+
+def verify_answer_evidence(
+    answer_text: str,
+    cited_ids: set[int],
+    quote_by_id: Dict[int, str],
+    by_id: Dict[int, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Report deterministic structural grounding without claiming entailment.
+
+    A valid citation must reference evidence actually supplied to the answer.
+    When a model claims an exact quote, it must also be locatable verbatim in
+    that evidence. This intentionally measures citation coverage, not semantic
+    truth, so consumers can distinguish a structural guarantee from LLM-based
+    entailment evaluation.
+    """
+    visible_ids = {int(match) for match in _CITE_RE.findall(answer_text)}
+    referenced_ids = cited_ids | visible_ids
+    valid_ids = sorted(referenced_ids & set(by_id))
+    invalid_ids = sorted(referenced_ids - set(by_id))
+    invalid_quote_ids = sorted(
+        cid for cid, quote in quote_by_id.items()
+        if cid in by_id and locate_quote(by_id[cid]["text"], quote) is None
+    )
+    valid_visible = visible_ids & set(by_id)
+    coverage = len(valid_visible) / len(visible_ids) if visible_ids else 0.0
+    source_count = len({by_id[cid]["document_id"] for cid in valid_ids})
+    if invalid_ids or not valid_visible:
+        confidence = "low"
+    elif invalid_quote_ids or coverage < 1.0:
+        confidence = "medium"
+    elif source_count >= 2:
+        confidence = "high"
+    else:
+        confidence = "medium"
+    return {
+        "valid_citation_ids": valid_ids,
+        "invalid_citation_ids": invalid_ids,
+        "invalid_quote_citation_ids": invalid_quote_ids,
+        "citation_coverage": round(coverage, 3),
+        "source_count": source_count,
+        "confidence": confidence,
+    }
+
+
+def apply_claim_verification(
+    structural: Dict[str, Any], claims: Optional[List[Dict[str, Any]]]
+) -> Dict[str, Any]:
+    """Add bounded semantic-verifier results to deterministic grounding.
+
+    The answer model never supplies this verdict. A separate verifier may mark
+    each factual claim as supported, unsupported, or contradicted by the
+    retrieved citations. If that verifier is unavailable, the existing
+    structural signal remains authoritative and the metadata says so.
+    """
+    result = dict(structural)
+    if claims is None:
+        result["claim_verification"] = {
+            "status": "not_checked",
+            "claim_count": 0,
+            "supported_claim_count": 0,
+            "unsupported_claim_count": 0,
+            "contradicted_claim_count": 0,
+        }
+        return result
+    verdicts = [str(item.get("verdict", "")).lower() for item in claims]
+    supported = sum(verdict == "supported" for verdict in verdicts)
+    unsupported = sum(verdict == "unsupported" for verdict in verdicts)
+    contradicted = sum(verdict == "contradicted" for verdict in verdicts)
+    failed = unsupported + contradicted > 0
+    result["claim_verification"] = {
+        "status": "failed" if failed else "passed",
+        "claim_count": len(claims),
+        "supported_claim_count": supported,
+        "unsupported_claim_count": unsupported,
+        "contradicted_claim_count": contradicted,
+    }
+    if failed:
+        result["confidence"] = "low"
+    return result
+
+
+def answer_for_claim_verification(
+    answer_text: str, verification: Dict[str, Any], failure_policy: str
+) -> tuple[str, bool]:
+    """Choose the text that may be displayed after grounding verification.
+
+    `withhold` is deliberately conservative: invalid citations or a failed
+    independent claim-entailment check replace the generated answer. This
+    guarantees that a strict deployment never streams a claim it subsequently
+    knows it cannot support. Other policies preserve the answer and expose the
+    outcome through metadata for low-latency or observational rollouts.
+    """
+    semantic_status = (verification.get("claim_verification") or {}).get("status")
+    invalid_citations = bool(verification.get("invalid_citation_ids"))
+    failed = semantic_status == "failed" or invalid_citations
+    if failure_policy == "withhold" and failed:
+        return (
+            "I couldn't verify this answer against the retrieved evidence. "
+            "Please review the cited sources below.",
+            True,
+        )
+    return answer_text, False
+
+
+CLAIM_VERIFIER_SYSTEM = """You verify an answer against only its cited source chunks.
+Split factual assertions in the answer into at most the requested number of claims. For
+each claim, mark it supported only when the cited text directly establishes it; mark it
+contradicted when cited text conflicts with it; otherwise mark it unsupported. Do not
+use outside knowledge, infer missing facts, or judge style. Return JSON only."""
+
+CLAIM_VERIFIER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim": {"type": "string"},
+                    "citation_ids": {"type": "array", "items": {"type": "integer"}},
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["supported", "unsupported", "contradicted"],
+                    },
+                },
+                "required": ["claim", "citation_ids", "verdict"],
+            },
+        },
+    },
+    "required": ["claims"],
+}
+
+
+async def verify_answer_claims(
+    question: str, answer_text: str, citations: List[Dict[str, Any]]
+) -> Optional[List[Dict[str, Any]]]:
+    """Run a bounded entailment check over only the answer's citations."""
+    if not config.ANSWER_CLAIM_VERIFICATION or not answer_text.strip() or not citations:
+        return None
+    evidence_lines = []
+    remaining = config.ANSWER_CLAIM_EVIDENCE_CHARS
+    for citation in citations:
+        if remaining <= 0:
+            break
+        text = citation["text"][:remaining]
+        evidence_lines.extend([f"[C{citation['chunk_id']}]", text, ""])
+        remaining -= len(text)
+    prompt = "\n".join([
+        "# QUESTION", question,
+        "# ANSWER", answer_text,
+        "# CITED EVIDENCE", *evidence_lines,
+        f"Evaluate at most {config.ANSWER_CLAIM_MAX_COUNT} factual claims.",
+    ])
+    try:
+        output = await llm.structured_call(
+            CLAIM_VERIFIER_SYSTEM, prompt, CLAIM_VERIFIER_SCHEMA,
+            max_tokens=1200, effort="low",
+        )
+    except Exception:
+        log.warning("answer claim verification failed", exc_info=True)
+        return None
+    claims = output.get("claims") if isinstance(output, dict) else None
+    if not isinstance(claims, list):
+        return None
+    verified = []
+    allowed_ids = {citation["chunk_id"] for citation in citations}
+    for item in claims[:config.ANSWER_CLAIM_MAX_COUNT]:
+        if not isinstance(item, dict):
+            continue
+        verdict = str(item.get("verdict", "")).lower()
+        if verdict not in {"supported", "unsupported", "contradicted"}:
+            continue
+        claim = str(item.get("claim", "")).strip()
+        if not claim:
+            continue
+        ids = [int(cid) for cid in item.get("citation_ids", [])
+               if str(cid).isdigit() and int(cid) in allowed_ids]
+        verified.append({"claim": claim[:1000], "citation_ids": ids, "verdict": verdict})
+    return verified
+
+
+async def _record_query_run(
+    workspace_id: int,
+    timer: StageTimer,
+    retrieved_chunks: int,
+    verification: Dict[str, Any],
+    first_visible_ms: Optional[int],
+) -> None:
+    """Persist privacy-preserving quality/latency telemetry best-effort."""
+    timings = timer.as_dict()
+    claims = verification.get("claim_verification") or {}
+    try:
+        pool = await db.get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO query_runs(workspace_id, status, retrieval_ms, generation_ms, first_visible_ms, "
+                "verification_ms, total_ms, retrieved_chunks, valid_citations, "
+                "citation_coverage, confidence, claim_verification_status, "
+                "unsupported_claims, contradicted_claims) "
+                "VALUES($1, 'success', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                workspace_id,
+                timings.get("retrieval"),
+                timings.get("llm"),
+                first_visible_ms,
+                timings.get("verification"),
+                timer.total_ms(),
+                retrieved_chunks,
+                len(verification.get("valid_citation_ids") or []),
+                verification.get("citation_coverage"),
+                verification.get("confidence"),
+                claims.get("status"),
+                claims.get("unsupported_claim_count", 0),
+                claims.get("contradicted_claim_count", 0),
+            )
+    except Exception:
+        log.warning("query run telemetry record failed", exc_info=True)
 
 
 # Follow-ups shorter than this likely lean on the conversation ("why did he
@@ -402,6 +619,17 @@ async def stream_query(
     timer.lap("context")
 
     answer_text = ""
+    first_visible_ms: Optional[int] = None
+
+    def mark_first_visible() -> None:
+        nonlocal first_visible_ms
+        if first_visible_ms is None:
+            first_visible_ms = timer.elapsed_ms()
+
+    buffer_answer = (
+        config.ANSWER_CLAIM_VERIFICATION
+        and config.ANSWER_CLAIM_FAILURE_POLICY == "withhold"
+    )
     buf = ""
     meta_raw = ""
     in_meta = False
@@ -421,7 +649,9 @@ async def stream_query(
                     head = _strip_metadata_bleed(buf[:idx]).rstrip()
                     if head:
                         answer_text += head
-                        yield _sse("delta", {"text": head})
+                        if not buffer_answer:
+                            mark_first_visible()
+                            yield _sse("delta", {"text": head})
                     meta_raw = buf[idx + len(DELIM):]
                     buf = ""
                     in_meta = True
@@ -429,7 +659,9 @@ async def stream_query(
                     emit = buf[:-holdback]
                     buf = buf[-holdback:]
                     answer_text += emit
-                    yield _sse("delta", {"text": emit})
+                    if not buffer_answer:
+                        mark_first_visible()
+                        yield _sse("delta", {"text": emit})
             if hasattr(stream, "get_final_message"):
                 # Anthropic reports usage on the final message; the stream is
                 # exhausted so this resolves immediately. Best-effort only.
@@ -450,7 +682,9 @@ async def stream_query(
         head = _strip_metadata_bleed(buf)
         if head:
             answer_text += head
-            yield _sse("delta", {"text": head})
+            if not buffer_answer:
+                mark_first_visible()
+                yield _sse("delta", {"text": head})
 
     meta = llm.parse_loose_json(meta_raw)
     # Preferred shape: citations:[{chunk_id, quote}]. Fall back to the old flat
@@ -472,6 +706,7 @@ async def stream_query(
     cited_ids |= {int(i) for i in meta.get("cited_chunk_ids", []) if str(i).isdigit()}
     cited_ids |= {int(m) for m in _CITE_RE.findall(answer_text)}
     by_id = {c["id"]: c for c in ret["chunks"]}
+    verification = verify_answer_evidence(answer_text, cited_ids, quote_by_id, by_id)
     citations = []
     for cid in sorted(cited_ids):
         c = by_id.get(cid)
@@ -490,6 +725,24 @@ async def stream_query(
             "text": c["text"],  # full chunk so the UI can fall back to highlighting it
         })
 
+    if buffer_answer:
+        yield _sse("status", {
+            "stage": "verifying",
+            "message": "Verifying answer against cited evidence…",
+        })
+    claim_results = await verify_answer_claims(question, answer_text, citations)
+    verification = apply_claim_verification(verification, claim_results)
+    display_answer, answer_withheld = answer_for_claim_verification(
+        answer_text, verification, config.ANSWER_CLAIM_FAILURE_POLICY
+    )
+    if buffer_answer and display_answer:
+        mark_first_visible()
+        yield _sse("delta", {"text": display_answer})
+    timer.lap("verification")
+    await _record_query_run(
+        workspace_id, timer, len(ret["chunks"]), verification, first_visible_ms
+    )
+
     counter_evidence = []
     for item in meta.get("counter_evidence", []) or []:
         point = (item.get("point") or "").strip() if isinstance(item, dict) else ""
@@ -500,12 +753,14 @@ async def stream_query(
 
     yield _sse("metadata", {
         "takeaway": meta.get("takeaway"),
-        "confidence": meta.get("confidence", "unknown"),
+        "confidence": verification["confidence"],
         "citations": citations,
         "related_questions": _clean_related_questions(meta.get("related_questions")),
         "timeline": _clean_timeline(meta.get("timeline")),
         "counter_evidence": counter_evidence,
         "insight_cards": _enrich_insight_cards(meta.get("insight_cards", []), by_id),
+        "verification": verification,
+        "answer_withheld": answer_withheld,
         "trace": ret.get("trace", {}),
     })
     timer.lap("metadata")

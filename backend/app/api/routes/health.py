@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.core import config, coordination, db, mailer
 from app.domains.auth import service as auth
 from app.domains.memory import worker
+from app.domains.query import embedding_versions
 from app.providers import llm
 from app.providers.embeddings import active_embed_model, active_embedder
 
@@ -51,10 +52,39 @@ async def health_details(
     async with pool.acquire() as conn:
         ok = await conn.fetchval("SELECT 1")
         embed_model = await active_embed_model()
+        active_model_id = await embedding_versions.active_model(conn, current.workspace_id)
+        active_model_key = (
+            await embedding_versions.model_key(conn, active_model_id)
+            if active_model_id is not None else None
+        )
+        active_coverage = (
+            await embedding_versions.coverage(conn, current.workspace_id, active_model_id)
+            if active_model_id is not None else None
+        )
+        active_node_coverage = (
+            await embedding_versions.node_coverage(conn, current.workspace_id, active_model_id)
+            if active_model_id is not None else None
+        )
         corpus_models = await conn.fetch(
-            "SELECT DISTINCT COALESCE(c.embed_model, 'legacy:unknown') AS embed_model "
-            "FROM chunks c JOIN documents d ON d.id=c.document_id "
-            "WHERE d.workspace_id=$1 ORDER BY 1",
+            "SELECT DISTINCT em.model_key AS embed_model "
+            "FROM chunk_embeddings ce JOIN embedding_models em ON em.id=ce.embedding_model_id "
+            "WHERE ce.workspace_id=$1 ORDER BY 1",
+            current.workspace_id,
+        )
+        provenance = await conn.fetchrow(
+            "WITH required_fields AS ("
+            "  SELECT n.id AS node_id, 'label'::text AS field_name FROM memory_nodes n "
+            "  WHERE n.workspace_id=$1 AND n.archived_at IS NULL AND n.curated_at IS NULL "
+            "  UNION ALL SELECT n.id, f.field_name FROM memory_nodes n "
+            "  CROSS JOIN (VALUES ('summary'::text), ('status'::text), ('data'::text)) f(field_name) "
+            "  WHERE n.workspace_id=$1 AND n.kind IN ('decision','question') "
+            "  AND n.archived_at IS NULL AND n.curated_at IS NULL"
+            ") SELECT count(*)::int AS required_fields, count(*) FILTER (WHERE NOT EXISTS ("
+            "  SELECT 1 FROM memory_field_projections fp JOIN memory_observations o "
+            "  ON o.id=fp.observation_id JOIN formation_runs r ON r.id=o.formation_run_id "
+            "  WHERE fp.node_id=required_fields.node_id AND fp.field_name=required_fields.field_name "
+            "  AND o.status='valid' AND r.is_active"
+            "))::int AS untraced_fields FROM required_fields",
             current.workspace_id,
         )
     return {
@@ -65,10 +95,33 @@ async def health_details(
         "llm_credentials": llm.credentials_available(),
         "embeddings": await active_embedder(),
         "embedding_model": embed_model,
+        "active_embedding_model_id": active_model_id,
+        "active_embedding_model": active_model_key,
+        "active_embedding_coverage": (
+            {
+                "active_chunks": active_coverage.active_chunks,
+                "embedded_chunks": active_coverage.embedded_chunks,
+                "complete": active_coverage.complete,
+            } if active_coverage is not None else None
+        ),
         "embedding_corpus_models": [r["embed_model"] for r in corpus_models],
+        "active_decision_embedding_coverage": (
+            {
+                "active_nodes": active_node_coverage.active_nodes,
+                "embedded_nodes": active_node_coverage.embedded_nodes,
+                "complete": active_node_coverage.complete,
+            } if active_node_coverage is not None else None
+        ),
+        "automated_memory_provenance": {
+            "required_fields": provenance["required_fields"],
+            "untraced_fields": provenance["untraced_fields"],
+            "complete": provenance["untraced_fields"] == 0,
+        },
         "embedding_space_consistent": all(
             r["embed_model"] == embed_model for r in corpus_models
-        ),
+        ) and active_model_key == embed_model and (
+            active_coverage is None or active_coverage.complete
+        ) and (active_node_coverage is None or active_node_coverage.complete),
         "formation": await worker.queue_stats(current.workspace_id),
         "slack_events": bool(config.SLACK_SIGNING_SECRET),
         # False means password-reset and email-verification links are silently

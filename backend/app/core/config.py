@@ -21,6 +21,20 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
+# Deployment role: `all` preserves local/dev behavior; `api` starts no durable
+# background loops; `worker` starts those loops. Worker HTTP routing still
+# exists in-process, so deployment routing must expose only API instances.
+RUNTIME_ROLE = os.getenv("RUNTIME_ROLE", "all").lower()
+if RUNTIME_ROLE not in {"all", "api", "worker"}:
+    raise ValueError("RUNTIME_ROLE must be one of: all, api, worker")
+# Explicitly opt into demo-grade local hash embeddings outside production. A
+# production process without Voyage/Ollama must fail requests visibly rather
+# than silently turn semantic search into lexical hashing.
+DEPLOYMENT_ENV = os.getenv("DEPLOYMENT_ENV", "development").lower()
+ALLOW_DEMO_EMBEDDINGS = os.getenv(
+    "ALLOW_DEMO_EMBEDDINGS", "true" if DEPLOYMENT_ENV != "production" else "false"
+).lower() in ("1", "true", "yes", "on")
+
 # Postgres (pgvector). Default matches docker-compose.yml (host port 5433).
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -87,6 +101,22 @@ VERIFICATION_TTL_HOURS = int(os.getenv("VERIFICATION_TTL_HOURS", "48"))
 # 0 disables). Login has its own throttle (auth_login_attempts).
 QUERY_RATE_PER_MINUTE = int(os.getenv("QUERY_RATE_PER_MINUTE", "20"))
 INGEST_RATE_PER_MINUTE = int(os.getenv("INGEST_RATE_PER_MINUTE", "120"))
+# A second, bounded structured-model pass checks whether factual answer claims
+# are supported by cited evidence. It is on by default only in production;
+# local development keeps streaming latency deterministic unless opted in.
+ANSWER_CLAIM_VERIFICATION = os.getenv(
+    "ANSWER_CLAIM_VERIFICATION", "true" if DEPLOYMENT_ENV == "production" else "false"
+).lower() in ("1", "true", "yes", "on")
+ANSWER_CLAIM_MAX_COUNT = int(os.getenv("ANSWER_CLAIM_MAX_COUNT", "12"))
+ANSWER_CLAIM_EVIDENCE_CHARS = int(os.getenv("ANSWER_CLAIM_EVIDENCE_CHARS", "16000"))
+# `withhold` buffers the answer until structural and semantic grounding checks
+# finish, replacing a failed answer with a transparent evidence-only fallback.
+# `report` keeps token streaming and records failures in metadata. Production
+# defaults to the safer policy; development defaults to faster iteration.
+ANSWER_CLAIM_FAILURE_POLICY = os.getenv(
+    "ANSWER_CLAIM_FAILURE_POLICY",
+    "withhold" if DEPLOYMENT_ENV == "production" else "report",
+).lower()
 # Per-IP limit on the unauthenticated auth endpoints (register / login /
 # forgot / reset), events per minute. 0 disables.
 AUTH_RATE_PER_MINUTE = int(os.getenv("AUTH_RATE_PER_MINUTE", "10"))
@@ -121,6 +151,7 @@ MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", str(10 * 1024 * 1024)))
 # starts. Well under MAX_REQUEST_BYTES, which is the blunt outer wall.
 MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "4000"))
 MAX_DOCUMENT_CHARS = int(os.getenv("MAX_DOCUMENT_CHARS", "1000000"))
+NORMALIZER_VERSION = os.getenv("NORMALIZER_VERSION", "plain-text:v1")
 MAX_MESSAGE_CHARS = int(os.getenv("MAX_MESSAGE_CHARS", "100000"))
 
 # Claude — memory formation, query reasoning, answer synthesis.
@@ -155,6 +186,20 @@ EMBED_DIM = 512
 
 # Retrieval knobs
 TOP_K = int(os.getenv("TOP_K", "8"))                       # vector-search seeds
+VECTOR_CANDIDATE_MULTIPLIER = max(
+    1, int(os.getenv("VECTOR_CANDIDATE_MULTIPLIER", "4"))
+)
+# Retrieve this many lexical/semantic seed candidates for final deterministic
+# fusion before choosing the smaller context seed set.
+RETRIEVAL_CANDIDATE_MULTIPLIER = max(
+    1, int(os.getenv("RETRIEVAL_CANDIDATE_MULTIPLIER", "3"))
+)
+RETRIEVAL_PER_DOCUMENT_CAP = max(
+    1, int(os.getenv("RETRIEVAL_PER_DOCUMENT_CAP", "2"))
+)
+HNSW_ITERATIVE_SCAN = os.getenv(
+    "HNSW_ITERATIVE_SCAN", "true"
+).lower() in ("1", "true", "yes", "on")
 CONTEXT_CHUNK_CAP = int(os.getenv("CONTEXT_CHUNK_CAP", "22"))  # max chunks sent to Claude
 # Total character budget across all context chunks. CONTEXT_CHUNK_CAP bounds
 # the count; this bounds the size so a worst case (22 chunks × 1500 chars +
@@ -170,6 +215,22 @@ GRAPH_MAX_NODES = int(os.getenv("GRAPH_MAX_NODES", "40"))
 # order), with this many workspaces forming in parallel. 0 = auto: 1 on local
 # Ollama (concurrent formations jam its GPU queue), 3 on Anthropic.
 FORMATION_CONCURRENCY = int(os.getenv("FORMATION_CONCURRENCY", "0"))
+# Background responsibilities use their own bounded task groups.  These do not
+# consume API request handlers or formation slots.
+INTEGRATION_CONCURRENCY = int(os.getenv("INTEGRATION_CONCURRENCY", "1"))
+MAINTENANCE_CONCURRENCY = int(os.getenv("MAINTENANCE_CONCURRENCY", "1"))
+PREPROCESS_CONCURRENCY = int(os.getenv("PREPROCESS_CONCURRENCY", "2"))
+PREPROCESS_TASK_TIMEOUT_S = float(os.getenv("PREPROCESS_TASK_TIMEOUT_S", "300"))
+PREPROCESS_MAX_ATTEMPTS = int(os.getenv("PREPROCESS_MAX_ATTEMPTS", "3"))
+PREPROCESS_BACKOFF_S = int(os.getenv("PREPROCESS_BACKOFF_S", "30"))
+# API and connector ingestion only needs to durably accept an immutable revision.
+# In production, leave chunking/embedding to the separately budgeted worker so
+# slow providers cannot consume request handlers. Development keeps the inline
+# path by default for convenient local scripts and deterministic tests.
+INGEST_INLINE_MATERIALIZATION = os.getenv(
+    "INGEST_INLINE_MATERIALIZATION", "true" if DEPLOYMENT_ENV != "production" else "false"
+).lower() in ("1", "true", "yes", "on")
+WORKER_PERIODIC_TICK_S = float(os.getenv("WORKER_PERIODIC_TICK_S", "15"))
 # Bounded attempts with exponential backoff instead of blind in-call retries.
 FORMATION_MAX_ATTEMPTS = int(os.getenv("FORMATION_MAX_ATTEMPTS", "3"))
 FORMATION_BACKOFF_S = int(os.getenv("FORMATION_BACKOFF_S", "60"))
@@ -224,6 +285,10 @@ def formation_quota_for(plan: "str | None") -> int:
 # Post-formation consolidation: decisions whose label+summary embed this close
 # are treated as the same decision and merged.
 MERGE_SIM_THRESHOLD = float(os.getenv("MERGE_SIM_THRESHOLD", "0.86"))
+# A candidate must clear this stricter threshold *and* have independent active
+# observation evidence before the resolver may auto-approve it.  Approval is a
+# reversible ledger state; it never deletes either graph node.
+RESOLVER_AUTO_THRESHOLD = float(os.getenv("RESOLVER_AUTO_THRESHOLD", "0.98"))
 # Batch consolidation debounce: a workspace's touched decisions consolidate
 # once no formation has landed for DEBOUNCE seconds — or MAX_DELAY after the
 # first touch, so continuous ingest can't postpone consolidation forever.

@@ -33,6 +33,9 @@ _claim_lock: Optional[asyncio.Lock] = None
 _claim_lock_loop: Optional[asyncio.AbstractEventLoop] = None
 _tasks: List[asyncio.Task] = []
 _aux_tasks: List[asyncio.Task] = []  # wake subscriber + heartbeat (Redis mode)
+_integration_tasks: List[asyncio.Task] = []
+_maintenance_tasks: List[asyncio.Task] = []
+_preprocess_tasks: List[asyncio.Task] = []
 # Timestamp of the most recent successful formation. The health endpoint uses it
 # to tell a stalled queue (work pending + workers alive, nothing completing)
 # apart from a healthy busy one.
@@ -88,6 +91,12 @@ async def enqueue(doc_id: int) -> None:
     await coordination.publish_wake()  # best-effort: sibling instances
 
 
+async def wake_preprocessing() -> None:
+    """Wake local and sibling preprocessing loops after durable acceptance."""
+    _event().set()
+    await coordination.publish_wake()
+
+
 async def recover_stuck() -> int:
     """Documents left `processing` by a crash/restart go back to `pending` —
     except those whose workspace lock is held by a live sibling instance
@@ -111,6 +120,23 @@ async def recover_stuck() -> int:
         )
     log.warning("recovered %d documents stuck in processing: %s", len(ids), ids)
     return len(ids)
+
+
+async def recover_stuck_materialization() -> int:
+    """Requeue only stale provider-stage claims after a crashed worker."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "UPDATE document_revisions SET status='accepted', materialization_claimed_at=NULL, "
+            "materialization_next_attempt_at=now() "
+            "WHERE status='materializing' AND materialization_claimed_at IS NOT NULL "
+            "AND materialization_claimed_at < now() - ($1 || ' seconds')::interval "
+            "RETURNING id",
+            str(int(config.PREPROCESS_TASK_TIMEOUT_S) + 120),
+        )
+    if rows:
+        log.warning("recovered %d stale materialization claims", len(rows))
+    return len(rows)
 
 
 async def janitor_tick() -> None:
@@ -284,22 +310,38 @@ async def _claim() -> Optional[ClaimedDoc]:
     pool = await db.get_pool()
     async with _lock():
         async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "UPDATE documents SET formation_status='processing', "
-                "formation_claimed_at=now() WHERE id = ("
-                "  SELECT d.id FROM documents d WHERE d.formation_status='pending' "
-                "  AND (d.formation_next_attempt_at IS NULL OR d.formation_next_attempt_at <= now()) "
-                "  AND NOT EXISTS ("
-                "    SELECT 1 FROM documents p WHERE p.workspace_id = d.workspace_id "
-                "    AND p.formation_status='processing'"
-                "  ) "
-                "  AND NOT EXISTS ("  # consolidation deleting nodes mid-persist
-                "    SELECT 1 FROM consolidation_queue cq WHERE cq.workspace_id = d.workspace_id "
-                "    AND cq.running_since IS NOT NULL"
-                "  ) "
-                "  ORDER BY d.id FOR UPDATE SKIP LOCKED LIMIT 1"
-                ") RETURNING id, workspace_id"
-            )
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    "WITH candidate_workspace AS ("
+                    "  SELECT w.id FROM workspaces w "
+                    "  WHERE EXISTS ("
+                    "    SELECT 1 FROM documents d WHERE d.workspace_id=w.id "
+                    "    AND d.formation_status='pending' "
+                    "    AND (d.formation_next_attempt_at IS NULL OR d.formation_next_attempt_at <= now())"
+                    "  ) "
+                    "  AND NOT EXISTS ("
+                    "    SELECT 1 FROM documents p WHERE p.workspace_id=w.id "
+                    "    AND p.formation_status='processing'"
+                    "  ) "
+                    "  AND NOT EXISTS ("
+                    "    SELECT 1 FROM consolidation_queue cq WHERE cq.workspace_id=w.id "
+                    "    AND cq.running_since IS NOT NULL"
+                    "  ) "
+                    "  ORDER BY w.last_formation_served_at ASC NULLS FIRST, w.id "
+                    "  FOR UPDATE SKIP LOCKED LIMIT 1"
+                    "), candidate_document AS ("
+                    "  SELECT d.id FROM documents d JOIN candidate_workspace w ON w.id=d.workspace_id "
+                    "  WHERE d.formation_status='pending' "
+                    "  AND (d.formation_next_attempt_at IS NULL OR d.formation_next_attempt_at <= now()) "
+                    "  ORDER BY d.id FOR UPDATE SKIP LOCKED LIMIT 1"
+                    "), claimed AS ("
+                    "  UPDATE documents SET formation_status='processing', formation_claimed_at=now() "
+                    "  WHERE id=(SELECT id FROM candidate_document) RETURNING id, workspace_id"
+                    "), served AS ("
+                    "  UPDATE workspaces w SET last_formation_served_at=now() "
+                    "  FROM claimed c WHERE w.id=c.workspace_id"
+                    ") SELECT id, workspace_id FROM claimed"
+                )
     if row is None:
         return None
     token = await coordination.try_workspace_lock(row["workspace_id"])
@@ -491,6 +533,22 @@ async def _record_run(
         )
         pool = await db.get_pool()
         async with pool.acquire() as conn:
+            finalized = await conn.fetchval(
+                "UPDATE formation_runs SET status=$3, attempt=$4, queue_wait_ms=$5, "
+                "duration_ms=$6, stage_timings=$7, error=$8, llm_provider=$9, llm_model=$10, "
+                "started_at=$11, finished_at=now(), validation=$12 "
+                "WHERE id = (SELECT id FROM formation_runs "
+                "            WHERE workspace_id=$1 AND document_id=$2 AND status='candidate' "
+                "            ORDER BY id DESC LIMIT 1) "
+                "RETURNING id",
+                meta["workspace_id"], doc_id, status, meta["attempt"],
+                meta["queue_wait_ms"], duration_ms, timer.as_dict(),
+                (error or "")[-1500:] or None,
+                llm.active_provider(), llm.active_model(), started_at,
+                validation or {},
+            )
+            if finalized is not None:
+                return
             await conn.execute(
                 "INSERT INTO formation_runs(workspace_id, document_id, status, "
                 "attempt, queue_wait_ms, duration_ms, stage_timings, error, "
@@ -563,6 +621,13 @@ async def _tick_integrations() -> None:
         await digest.run_digest_tick()
     except Exception:
         log.exception("digest tick failed")
+
+
+async def _tick_maintenance() -> None:
+    try:
+        await recover_stuck_materialization()
+    except Exception:
+        log.exception("materialization recovery tick failed")
     try:
         await janitor_tick()
     except Exception:
@@ -575,6 +640,66 @@ async def _tick_integrations() -> None:
         await _prune_metrics()
     except Exception:
         log.exception("metrics prune failed")
+
+
+async def _integration_loop(worker_index: int) -> None:
+    """Fleet-leader connector work, independent from formation availability."""
+    log.info("integration worker %d started", worker_index)
+    while True:
+        try:
+            if await coordination.is_leader():
+                await _tick_integrations()
+            await asyncio.sleep(config.WORKER_PERIODIC_TICK_S)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("integration worker %d loop error", worker_index)
+            await asyncio.sleep(1)
+
+
+async def _preprocess_loop(worker_index: int) -> None:
+    """Run chunking/embedding independently from ordered canonical formation."""
+    from app.domains.documents import ingestion
+
+    log.info("preprocessing worker %d started", worker_index)
+    while True:
+        try:
+            claimed = await ingestion.claim_materialization()
+            if claimed is None:
+                try:
+                    await asyncio.wait_for(
+                        _event().wait(), timeout=config.WORKER_PERIODIC_TICK_S
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                _event().clear()
+                continue
+            await asyncio.wait_for(
+                ingestion.materialize_claimed_revision(claimed),
+                timeout=config.PREPROCESS_TASK_TIMEOUT_S,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("preprocessing worker %d loop error", worker_index)
+            await asyncio.sleep(1)
+
+
+async def _maintenance_loop(worker_index: int) -> None:
+    """Bounded consolidation and fleet hygiene independent from formation."""
+    log.info("maintenance worker %d started", worker_index)
+    while True:
+        try:
+            ran_consolidation = await _try_consolidation()
+            if await coordination.is_leader():
+                await _tick_maintenance()
+            if not ran_consolidation:
+                await asyncio.sleep(config.WORKER_PERIODIC_TICK_S)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("maintenance worker %d loop error", worker_index)
+            await asyncio.sleep(1)
 
 
 async def _release_claim(claimed: ClaimedDoc) -> None:
@@ -646,11 +771,6 @@ async def _loop(worker_index: int) -> None:
         try:
             claimed = await _claim()
             if claimed is None:
-                if await _try_consolidation():
-                    continue  # another batch may already be due
-                # One ticker per fleet: index 0 on the leader instance.
-                if worker_index == 0 and await coordination.is_leader():
-                    await _tick_integrations()
                 try:
                     await asyncio.wait_for(_event().wait(), timeout=15)
                 except asyncio.TimeoutError:
@@ -690,7 +810,8 @@ async def _heartbeat_loop() -> None:
         await asyncio.sleep(10)
 
 
-def start() -> None:
+def start_formation() -> None:
+    """Start only ordered formation workers and their coordination helpers."""
     global _tasks
     _tasks = [t for t in _tasks if not t.done()]
     want = _concurrency()
@@ -701,17 +822,46 @@ def start() -> None:
         _aux_tasks.append(asyncio.create_task(_heartbeat_loop()))
 
 
+def start_preprocessing() -> None:
+    """Start bounded parsing/chunking/embedding workers."""
+    global _preprocess_tasks
+    _preprocess_tasks = [task for task in _preprocess_tasks if not task.done()]
+    for index in range(len(_preprocess_tasks), max(0, config.PREPROCESS_CONCURRENCY)):
+        _preprocess_tasks.append(asyncio.create_task(_preprocess_loop(index)))
+
+
+def start_periodic() -> None:
+    """Start independently budgeted integration and maintenance task groups."""
+    global _integration_tasks, _maintenance_tasks
+    _integration_tasks = [t for t in _integration_tasks if not t.done()]
+    _maintenance_tasks = [t for t in _maintenance_tasks if not t.done()]
+    for i in range(len(_integration_tasks), max(0, config.INTEGRATION_CONCURRENCY)):
+        _integration_tasks.append(asyncio.create_task(_integration_loop(i)))
+    for i in range(len(_maintenance_tasks), max(0, config.MAINTENANCE_CONCURRENCY)):
+        _maintenance_tasks.append(asyncio.create_task(_maintenance_loop(i)))
+
+
+def start() -> None:
+    """Compatibility entry point for combined local/API-and-worker runtimes."""
+    start_preprocessing()
+    start_formation()
+    start_periodic()
+
+
 async def stop() -> None:
-    global _tasks, _aux_tasks
-    for t in _tasks + _aux_tasks:
+    global _tasks, _aux_tasks, _integration_tasks, _maintenance_tasks, _preprocess_tasks
+    for t in _tasks + _aux_tasks + _integration_tasks + _maintenance_tasks + _preprocess_tasks:
         t.cancel()
-    for t in _tasks + _aux_tasks:
+    for t in _tasks + _aux_tasks + _integration_tasks + _maintenance_tasks + _preprocess_tasks:
         try:
             await t
         except asyncio.CancelledError:
             pass
     _tasks = []
     _aux_tasks = []
+    _integration_tasks = []
+    _maintenance_tasks = []
+    _preprocess_tasks = []
     # Hand the ticker lease to a surviving instance immediately, then drop
     # the Redis connection.
     await coordination.resign_leader()

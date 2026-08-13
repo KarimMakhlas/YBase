@@ -66,11 +66,16 @@ async def pool():
     await migrate.run()
     async with p.acquire() as conn:
         await conn.execute(
-            "TRUNCATE answer_feedback, sync_jobs, source_streams, source_connections, "
+            "TRUNCATE feedback_regression_cases, answer_feedback, memory_events, observation_evidence, observation_edge_projections, memory_field_projections, observation_support_projections, observation_projections, "
+            "memory_observations, document_revisions, source_objects, sync_jobs, source_streams, source_connections, "
             "oauth_states, oauth_login_states, documents, chunks, chunk_links, "
             "memory_nodes, memory_edges, slack_events, chat_sessions, chat_messages, "
-            "formation_runs, audit_events, usage_events, consolidation_queue "
+            "formation_runs, query_runs, audit_events, usage_events, consolidation_queue, resolution_ledger "
             "RESTART IDENTITY CASCADE"
+        )
+        await conn.execute(
+            "UPDATE workspaces SET last_formation_served_at=NULL, "
+            "last_materialization_served_at=NULL, active_embedding_model_id=NULL"
         )
     yield p
     await db.close_pool()

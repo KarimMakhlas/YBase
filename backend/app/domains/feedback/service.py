@@ -274,6 +274,61 @@ async def list_feedback(
     return [_row_to_feedback(r) for r in rows]
 
 
+@router.post("/{feedback_id}/promote-regression")
+async def promote_feedback_regression(
+    feedback_id: int,
+    current: auth.AuthContext = Depends(auth.require_writable_workspace("admin")),
+) -> Dict[str, Any]:
+    """Freeze a confirmed answer failure into the workspace evaluation corpus."""
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            feedback = await conn.fetchrow(
+                "SELECT f.id, f.workspace_id, f.status, f.issue_type, f.cited_chunk_id, "
+                "m.content AS answer_snapshot, ("
+                "  SELECT u.content FROM chat_messages u "
+                "  WHERE u.session_id=f.chat_session_id AND u.role='user' "
+                "  AND u.id < f.chat_message_id ORDER BY u.id DESC LIMIT 1"
+                ") AS question "
+                "FROM answer_feedback f JOIN chat_messages m ON m.id=f.chat_message_id "
+                "WHERE f.id=$1 AND f.workspace_id=$2 FOR UPDATE",
+                feedback_id, current.workspace_id,
+            )
+            if feedback is None:
+                raise HTTPException(404, "feedback not found")
+            if feedback["status"] != "resolved" or feedback["issue_type"] == "helpful":
+                raise HTTPException(409, "only resolved non-helpful feedback can become a regression")
+            if not feedback["question"]:
+                raise HTTPException(422, "feedback answer has no preceding user question")
+            case_id = await conn.fetchval(
+                "INSERT INTO feedback_regression_cases("
+                "workspace_id, feedback_id, question, issue_type, expected_citation_chunk_id, "
+                "answer_snapshot, created_by_user_id"
+                ") VALUES($1,$2,$3,$4,$5,$6,$7) "
+                "ON CONFLICT (feedback_id) DO NOTHING RETURNING id",
+                current.workspace_id, feedback_id, feedback["question"], feedback["issue_type"],
+                feedback["cited_chunk_id"], feedback["answer_snapshot"], current.user_id,
+            )
+            if case_id is None:
+                case_id = await conn.fetchval(
+                    "SELECT id FROM feedback_regression_cases WHERE feedback_id=$1",
+                    feedback_id,
+                )
+            else:
+                await auth.audit(
+                    conn, "answer_feedback_promote_regression", current.workspace_id,
+                    current.user_id, "feedback_regression_case", case_id,
+                    {"feedback_id": feedback_id, "issue_type": feedback["issue_type"]},
+                )
+            row = await conn.fetchrow(
+                "SELECT id, workspace_id, feedback_id, question, issue_type, "
+                "expected_citation_chunk_id, created_by_user_id, created_at "
+                "FROM feedback_regression_cases WHERE id=$1 AND workspace_id=$2",
+                case_id, current.workspace_id,
+            )
+    return dict(row)
+
+
 @router.get("/{feedback_id}")
 async def get_feedback(
     feedback_id: int,

@@ -2329,7 +2329,7 @@ Expecting `+Qe.join(", ")+", got '"+(this.terminals_[Ne]||Ne)+"'":Dt="Parse erro
     <div class="brand-mark">Y</div>
     <div class="brand-text">
       <h1>YBase — Architecture Documentation</h1>
-      <p>AI memory layer: decisions, people, topics &amp; questions extracted from Slack/GitHub/Jira into a cited, queryable graph</p>
+      <p>AI memory layer: source integrations, a cited memory graph, human workspace UI, and agent/MCP access</p>
     </div>
   </div>
   <div class="top-actions">
@@ -2353,10 +2353,10 @@ Expecting `+Qe.join(", ")+", got '"+(this.terminals_[Ne]||Ne)+"'":Dt="Parse erro
     <section class="intro">
       <h2>How this works</h2>
       <p>
-        YBase is a FastAPI + PostgreSQL/pgvector backend paired with a React SPA. It turns Slack threads,
-        GitHub issues, Jira tickets, and uploaded documents into a typed memory graph — decisions, people,
-        topics, and open questions — and answers questions with cited, streamed responses grounded in that
-        graph. The diagrams below are grounded directly in the current codebase (file &amp; function references
+        YBase is a FastAPI + PostgreSQL/pgvector backend paired with a React SPA and an MCP server. It turns
+        connected source content and uploaded documents into a typed memory graph — decisions, people, topics,
+        and open questions — then serves cited answers to both people and API-key-authenticated agents. The diagrams
+        below are grounded directly in the current codebase (file &amp; function references
         are called out in each card's description); anything not confidently inferable is labeled as an
         assumption rather than presented as fact.
       </p>
@@ -2406,25 +2406,24 @@ const DIAGRAMS = [
   category: "Architecture",
   audience: "New dev",
   complexity: "Low",
-  desc: "YBase as a single service and the external actors it talks to: end users, the three source connectors, the pluggable LLM/embedding providers, and outbound email. Grounded in backend/app/main.py, core/config.py, and the connector OAuth callbacks.",
+  desc: "YBase as a single service and the external actors it talks to: workspace users, source providers, API-key-authenticated agents through MCP, pluggable LLM/embedding providers, and outbound email. Grounded in backend/app/main.py, core/config.py, domains/agent/service.py, and the connector OAuth callbacks.",
   code: `
 flowchart TB
   Users[["Team members<br/>(browser, cookie session)"]]:::blue
   App["YBase<br/>FastAPI + React (single service)"]:::blue
   Slack[(Slack workspace)]:::gray
-  GitHubSrc[(GitHub repositories)]:::gray
-  JiraSrc[(Jira projects)]:::gray
+  Sources[(Slack · GitHub · Jira · Linear<br/>Confluence · Discord · Google Docs<br/>Notion · Figma)]:::gray
   Uploads["Manual documents /<br/>offline Slack export"]:::gray
+  MCP["MCP client / coding agent"]:::blue
   LLM{{"LLM provider<br/>Anthropic / NVIDIA NIM / Ollama"}}:::purple
   Embed{{"Embedding provider<br/>Voyage / Ollama / local hash"}}:::purple
   Email[("Resend<br/>(digest email, optional)")]:::amber
   DB[(PostgreSQL 16 + pgvector)]:::purple
 
   Users -->|HTTPS, sb_session cookie| App
-  Slack -->|OAuth + Events API webhook| App
-  GitHubSrc -->|OAuth App + poll resync| App
-  JiraSrc -->|OAuth 3LO + poll resync| App
+  Sources -->|OAuth, webhooks, and scheduled sync| App
   Uploads --> App
+  MCP -->|YBASE_API_KEY → /api/agent/*| App
   App -->|structured extraction &amp; reasoning| LLM
   App -->|embed chunks &amp; memory nodes| Embed
   App -->|weekly per-workspace digest| Email
@@ -2453,7 +2452,8 @@ flowchart LR
   DB[(PostgreSQL 16 + pgvector<br/>Neon / Fly Postgres, pooled)]:::purple
   LLMP{{"LLM providers"}}:::purple
   EmbedP{{"Embedding providers"}}:::purple
-  Ext["Slack / GitHub / Jira APIs"]:::gray
+  Ext["Slack · GitHub · Jira · Linear · Confluence<br/>Discord · Google Docs · Notion · Figma APIs"]:::gray
+  MCP["MCP server<br/>mcp-server/ybase_mcp"]:::blue
 
   SPA -->|fetch /api/*, credentials include| API
   SPA -->|POST /api/query, SSE| API
@@ -2465,6 +2465,7 @@ flowchart LR
   Worker --> EmbedP
   API --> EmbedP
   Worker -->|sync jobs, token refresh| Ext
+  MCP -->|HTTPS + YBASE_API_KEY| API
 
   ${CLASS_DEFS}
 `
@@ -2481,9 +2482,9 @@ flowchart TB
   Router["api/router.py<br/>route assembly"]:::gray
 
   Auth["domains/auth<br/>sessions, roles, Google OAuth"]:::blue
-  Workspace["domains/workspace<br/>tenancy, invites, onboarding"]:::blue
+  Workspace["domains/workspace<br/>tenancy, invites, onboarding, API keys"]:::blue
   Billing["domains/billing<br/>trial gate, plan status"]:::amber
-  Connectors["domains/connectors<br/>slack / github / jira"]:::blue
+  Connectors["domains/connectors<br/>9 OAuth source providers"]:::blue
   Documents["domains/documents<br/>ingestion, chunking"]:::blue
   Memory["domains/memory<br/>formation, graph, consolidate"]:::green
   Query["domains/query<br/>retrieval, streaming"]:::green
@@ -2492,6 +2493,8 @@ flowchart TB
   Feedback["domains/feedback<br/>trust loop"]:::gray
   Analytics["domains/analytics<br/>quality &amp; engagement"]:::gray
   Ops["domains/ops<br/>readiness, demo seed"]:::gray
+  Agent["domains/agent<br/>API-key agent context, search, proposals"]:::blue
+  Review["domains/memory/review_service<br/>proposal review &amp; curation"]:::blue
 
   Providers["providers/<br/>llm.py, embeddings.py"]:::purple
   Core["core/<br/>config, db, crypto, migrate"]:::gray
@@ -2508,6 +2511,8 @@ flowchart TB
   Router --> Feedback
   Router --> Analytics
   Router --> Ops
+  Router --> Agent
+  Router --> Review
 
   Connectors -->|ingest_document| Documents
   Documents -->|schedule_formation| Memory
@@ -2519,6 +2524,8 @@ flowchart TB
   Connectors -->|encrypt/decrypt tokens| Core
   Memory --> Core
   Query --> Core
+  Agent --> Query
+  Agent --> Review
 
   ${CLASS_DEFS}
 `
@@ -2532,7 +2539,7 @@ flowchart TB
   desc: "The core write path: a document is deduplicated, chunked, embedded, queued, and handed to an LLM against a strict extraction schema; results are upserted into the typed graph and near-duplicate decisions are merged by embedding similarity. From documents/ingestion.py, memory/formation.py, memory/worker.py, memory/graph.py, memory/consolidate.py.",
   code: `
 sequenceDiagram
-    participant Src as Source: Slack, GitHub, Jira, Upload
+    participant Src as Source: connected provider or upload
     participant Ingest as ingestion.ingest_document
     participant DB as Postgres: documents, chunks
     participant Queue as worker._loop / _claim
@@ -2657,6 +2664,7 @@ erDiagram
   workspaces ||--o{ auth_sessions : scopes
   users ||--o{ auth_sessions : has
   workspaces ||--o{ workspace_invites : issues
+  workspaces ||--o{ api_keys : grants
   workspaces ||--o{ documents : owns
   documents ||--o{ chunks : "splits into"
   chunks ||--o{ chunk_links : evidences
@@ -2802,6 +2810,13 @@ erDiagram
     text role
     timestamptz expires_at
   }
+  api_keys {
+    int id PK
+    int workspace_id FK
+    text token_hash UK
+    text name
+    timestamptz revoked_at
+  }
   audit_events {
     int id PK
     text action
@@ -2851,7 +2866,7 @@ stateDiagram-v2
   category: "Infrastructure",
   audience: "New dev / integrator",
   complexity: "Medium",
-  desc: "Slack gets a live path (Events API webhook with quiet-thread rollup) on top of periodic reconciliation; Jira and GitHub have no realtime API so they rely purely on scheduled polling. All three converge on the same ingest_document() dedup/queue path. From domains/connectors/{slack,jira,github}/*.py and connectors/service.py.",
+  desc: "All configured sources share OAuth connection, selected streams, durable sync jobs, and the same ingest/dedup/formation path. Slack additionally receives Events API webhooks and rolls up quiet threads; the other providers are scheduled through the connector resync tick. From domains/connectors/* and connectors/service.py.",
   code: `
 flowchart TB
   subgraph SlackFlow["Slack"]
@@ -2862,26 +2877,49 @@ flowchart TB
     S1 --> S2 --> S3
     S1 --> S4
   end
-  subgraph JiraFlow["Jira"]
-    J1["OAuth 3LO<br/>access + refresh token"]:::blue
-    J2["Initial backfill<br/>CONNECTOR_BACKFILL_DAYS<br/>(fast slice first, then full)"]:::amber
-    J3["Periodic resync<br/>CONNECTOR_RESYNC_INTERVAL_S"]:::amber
-    J1 --> J2 --> J3
-  end
-  subgraph GitHubFlow["GitHub"]
-    G1["OAuth App<br/>non-expiring token"]:::blue
-    G2["Initial backfill<br/>fast slice then full"]:::amber
-    G3["Periodic resync"]:::amber
-    G1 --> G2 --> G3
+  subgraph Polling["Scheduled source sync"]
+    P1["OAuth callback<br/>encrypted connection token"]:::blue
+    P2["Stream discovery &amp; selection"]:::blue
+    P3["Initial backfill<br/>fast slice then full"]:::amber
+    P4["Resync tick<br/>CONNECTOR_RESYNC_INTERVAL_S"]:::amber
+    P5["GitHub · Jira · Linear · Confluence<br/>Discord · Google Docs · Notion · Figma"]:::gray
+    P1 --> P2 --> P3 --> P4 --> P5
   end
   Ingest["ingest_document()<br/>dedup by content_hash / external_ref"]:::purple
   Queue["Formation queue"]:::purple
 
   S3 --> Ingest
   S4 --> Ingest
-  J3 --> Ingest
-  G3 --> Ingest
+  P5 --> Ingest
   Ingest --> Queue
+
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "agentapi",
+  title: "Agent API and MCP access",
+  category: "AI / Agent systems",
+  audience: "Agent integrator",
+  complexity: "Medium",
+  desc: "The optional MCP server is a thin stdio client for the API-key-authenticated agent API. Read tools return structured context, search, decisions, and answers; the one write path creates a proposal that remains subject to workspace review. From mcp-server/ybase_mcp/server.py, domains/agent/service.py, and domains/memory/review_service.py.",
+  code: `
+flowchart LR
+  Agent["Coding agent / MCP client"]:::blue
+  MCP["ybase-mcp<br/>stdio MCP server"]:::blue
+  Key["YBASE_API_KEY<br/>workspace-scoped"]:::amber
+  API["/api/agent/*"]:::blue
+  Read["ask · context · context-for-file<br/>search · decision · proposals"]:::green
+  Propose["propose decision"]:::amber
+  Review["/api/memory-review<br/>admin approve / reject"]:::blue
+  Graph[(Workspace memory graph)]:::purple
+
+  Agent --> MCP
+  MCP -->|HTTPS + key| API
+  Key -.authenticates.-> API
+  API --> Read --> Graph
+  API --> Propose --> Review
+  Review -->|approved changes| Graph
 
   ${CLASS_DEFS}
 `
@@ -2935,7 +2973,7 @@ sequenceDiagram
     alt session invalid, expired, or revoked
         Auth-->>UI: 401 auth required
     else session valid
-        Auth->>DB: update last_seen_at, record activity_days
+        Auth->>DB: update last_seen_at
         Auth-->>API: AuthContext - user, workspace, role
         API->>API: require_role check
         alt write endpoint

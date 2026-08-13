@@ -206,15 +206,34 @@ To use an existing Neon database, put its pooled `DATABASE_URL` in
 
 ### Formation
 
-1. Content is deduplicated by hash.
-2. Documents are split into evidence-sized chunks and embedded.
-3. A bounded worker queue processes documents sequentially per workspace while
+1. A stable connector object or upload idempotency key accepts an immutable
+   content revision before any embedding provider call. Provider creation and
+   modification timestamps and the text-normalizer version are retained on the
+   source object and revision.
+2. A retry of the same source/content returns the existing revision; a changed
+   connector object creates a new active revision and retains the old one as
+   history outside retrieval.
+3. Active revisions are split into evidence-sized chunks and embedded. Every
+   chunk retains its source offset, paragraph path, content type, and estimated
+   token count, so retrieved evidence can be traced to the original revision.
+4. A bounded worker queue processes documents sequentially per workspace while
    allowing different workspaces to run in parallel.
-4. The selected LLM extracts decisions, reasoning, alternatives, people,
+5. The selected LLM extracts decisions, reasoning, alternatives, people,
    topics, open questions, and conflicts.
-5. Memory nodes are linked to evidence chunks and to one another through typed
-   graph edges.
-6. Near-duplicate decisions are consolidated by embedding similarity.
+6. The extraction is saved as an immutable candidate run with one observation
+   per proposed memory item. Missing or invalid evidence quarantines that item:
+   no fallback chunk is fabricated and it never reaches the graph.
+7. Only after validation and projection succeed does the candidate atomically
+   become the active run for that document revision; the predecessor's
+   unshared nodes, links, and edges are retired. Document detail exposes this
+   active-run lineage and quarantine count.
+8. Active observations project memory nodes to evidence chunks and to one
+   another through typed graph edges.
+
+Provider failure does not discard accepted content: the revision remains in a
+reviewable failed state. When a connector reports deletion or permission loss,
+its source object is explicitly deactivated rather than silently disappearing.
+9. Near-duplicate decisions are consolidated by embedding similarity.
 
 ```mermaid
 sequenceDiagram
@@ -257,8 +276,10 @@ sequenceDiagram
 ### Retrieval
 
 1. Short follow-ups are rewritten into standalone questions.
-2. Vector and PostgreSQL full-text results are fused with reciprocal-rank
-   fusion.
+2. Vector candidates are directly filtered by workspace and embedding model,
+   over-fetched from HNSW, exact-ordered, then fused with PostgreSQL full-text
+   results using reciprocal-rank fusion. pgvector iterative scans are used when
+   the installed extension supports them.
 3. Relevant memory nodes expand through the graph for up to two hops.
 4. Evidence is ranked by relevance and memory confidence.
 5. The LLM reasons over the evidence, graph context, and conversation history.
@@ -328,11 +349,20 @@ Set `EMBED_PROVIDER` to `auto`, `voyage`, `ollama`, or `local`.
 | Local hash | Fallback | `local-hash` | Deterministic, lexical, demo-grade fallback |
 
 Embedding spaces must not be mixed. After changing providers or embedding
-models, rebuild stored vectors:
+models, stage a workspace-local vector version, then atomically activate it
+only after coverage completes:
 
 ```bash
-backend/.venv/bin/python scripts/reembed.py
+backend/.venv/bin/python scripts/reembed.py --workspace default --activate
+
+# Fast rollback: changes only the active model pointer; it does not re-embed.
+backend/.venv/bin/python scripts/reembed.py --workspace default \
+  --rollback-to voyage:voyage-3-lite:512
 ```
+
+`GET /api/health/details` exposes the active model plus chunk and active
+decision coverage. Do not activate a candidate with incomplete coverage: both
+retrieval vectors and consolidation signatures must be staged together.
 
 ### Provider routing
 
@@ -376,11 +406,16 @@ flowchart TD
 | `SESSION_COOKIE_SECURE` | Sends session cookies over HTTPS only | `false` |
 | `CORS_ORIGINS` | Allowed browser origins | Local Vite origins |
 | `DB_POOL_MAX_SIZE` | Per-process database connection limit | `20` |
+| `RUNTIME_ROLE` | `api`, `worker`, or combined local `all` process | `all` |
 | `FORMATION_CONCURRENCY` | Parallel workspace formation workers | Auto |
+| `INTEGRATION_CONCURRENCY` | Connector/digest periodic workers | `1` |
+| `MAINTENANCE_CONCURRENCY` | Consolidation/janitor periodic workers | `1` |
+| `RETRIEVAL_CANDIDATE_MULTIPLIER` | Wider union before final retrieval ranking | `3` |
+| `ANSWER_CLAIM_VERIFICATION` | Enables the independent cited-evidence claim check | Production `true` |
+| `ANSWER_CLAIM_FAILURE_POLICY` | `withhold` replaces failed claims with a source-first fallback; `report` streams and records the result | Production `withhold`, development `report` |
 | `SENTRY_DSN` | Enables Sentry error reporting | Disabled |
 
-See [.env.example](.env.example) and
-[backend/.env.example](backend/.env.example) for the full configuration surface.
+See [backend/.env.example](backend/.env.example) for the full configuration surface.
 
 ## Integrations
 
@@ -425,7 +460,7 @@ flowchart TB
     G3["Periodic resync"]:::amber
     G1 --> G2 --> G3
   end
-  Ingest["ingest_document()<br/>dedup by content_hash / external_ref"]:::purple
+  Ingest["ingest_document()<br/>source object + immutable revision"]:::purple
   Queue["Formation queue"]:::purple
 
   S3 --> Ingest
@@ -703,8 +738,117 @@ or consolidation:
 backend/.venv/bin/python scripts/eval.py
 ```
 
-The GitHub Actions workflow runs the backend suite against pgvector/PostgreSQL
-and builds the frontend on every push and pull request.
+### Retrieval recall evaluation
+
+Before rolling out a pgvector index, filter, or candidate-budget change, check
+ANN quality against exact tenant-scoped search on a representative workspace:
+
+```bash
+backend/.venv/bin/python scripts/eval_retrieval.py \
+  --workspace default --queries 50 --k 10 --min-recall 0.95
+```
+
+The command exits with status 1 when mean recall@10 is below the threshold and
+status 2 when the workspace has too few chunks to measure it. Keep the rollout
+gate at 95% mean recall@10 unless a product-specific evaluation justifies a
+different threshold.
+
+The GitHub Actions workflow runs the backend suite against pgvector/PostgreSQL,
+then creates a disposable tenant corpus and blocks the build if tenant-scoped
+ANN recall falls below 95%, before building the frontend on every push and pull
+request. The deterministic CI corpus catches vector-index/filter/candidate
+budget regressions; run the command above against a representative production
+workspace before changing embeddings or search configuration.
+
+### Retrieval scale profile
+
+Before a Neon tier, pgvector-index, or candidate-budget rollout, run the
+disposable 100k-chunk profile against a staging branch and keep the observed
+p95 below the release budget:
+
+```bash
+DATABASE_URL='postgresql://…' backend/.venv/bin/python scripts/retrieval_load_profile.py \
+  --chunks 100000 --queries 50 --max-p95-ms 100
+```
+
+The command uses fixed synthetic vectors to measure database/index latency
+rather than an embedding provider. It creates a uniquely named workspace and
+deletes it automatically; use `--keep-workspace` only when inspecting query
+plans afterward.
+
+To exercise the durable worker path across many tenants (acceptance → fair
+claiming → concurrent chunking/embedding → formation handoff), run the separate
+staging profile:
+
+```bash
+DATABASE_URL='postgresql://…' backend/.venv/bin/python scripts/worker_load_profile.py \
+  --workspaces 20 --documents-per-workspace 5000 --concurrency 8 \
+  --queries-per-workspace 10 --max-query-p95-ms 250
+```
+
+This profile uses the configured embedding provider, so it measures provider,
+pool, and database contention together. It issues tenant-scoped ANN requests
+while materialization is active, removes its generated workspaces by default,
+and fails if the first service round is not workspace-fair, a query crosses a
+tenant boundary, any revision is left unmaterialized, or query p95 exceeds its
+budget.
+
+`GET /api/ops/pipeline-slo` separates source-update-to-acceptance time from
+acceptance-to-searchable and searchable-to-formed time. This makes connector
+polling/freshness delays visible without conflating them with materialization
+or formation backlog.
+
+### Release budgets
+
+For a model, prompt, index, embedding, ranking, or retrieval rollout, retain a
+fixed staging-evaluation JSON artifact containing `ann_recall_at_10`,
+`citation_entailment_precision`, `retrieval_p95_ms`,
+`query_provider_cost_usd`, and `formation_queue_p95_ms`. Compare the candidate
+to the accepted baseline:
+
+```bash
+python scripts/check_release_budget.py \
+  --baseline evaluation/baseline.json --candidate evaluation/candidate.json
+```
+
+The gate requires at least 95% ANN recall@10, allows no more than a two-point
+loss in retrieval recall or citation-entailment precision, and blocks more than
+a 20% rise in retrieval p95, per-query provider cost, or formation queue p95.
+The **Release evaluation** GitHub Actions workflow runs this same gate with the
+two explicitly supplied artifact paths.
+
+`GET /api/ops/query-slo` also reports `p95_first_visible_ms` separately from
+completion time. This exposes the deliberate latency trade-off of strict claim
+withholding and keeps user-perceived responsiveness visible during a rollout.
+
+For model or prompt changes, record the passed canary and a concrete rollback
+target, then provide it to the gate:
+
+```json
+{
+  "candidate_sha256": "sha256 of candidate.json bytes",
+  "canary": {"scope": "staging canary workspace", "result": "passed"},
+  "rollback": {"strategy": "deploy previous prompt version", "target": "prompt:2026-08-01"}
+}
+```
+
+```bash
+python scripts/check_release_budget.py \
+  --baseline evaluation/baseline.json --candidate evaluation/candidate.json \
+  --change-kind prompt --rollout-metadata evaluation/prompt-rollout.json
+```
+
+An approved exception is never a reusable bypass: pass `--approval` only with
+an artifact that includes the approver, reason, approval/expiry timestamps, and
+SHA-256 hashes of the exact baseline and candidate files. The gate rejects an
+expired or hash-mismatched approval and prints the accepted exception into CI
+logs for audit.
+
+Production uses `ANSWER_CLAIM_FAILURE_POLICY=withhold` by default: answer text
+is held until structural citation and claim-entailment checks finish. If either
+fails, users receive a transparent prompt to inspect the cited sources rather
+than the unsupported generated text. Set `report` for a measured, lower-latency
+observation rollout; the outcome remains in query telemetry and SSE metadata.
 
 ## Demo and data import
 

@@ -8,6 +8,7 @@ import httpx
 
 from app.core import config, migrate
 from app.domains.auth import service as auth
+from app.domains.documents.ingestion import IngestRequest, ingest_document
 from app.main import app
 
 
@@ -53,7 +54,7 @@ async def _auth_client(pool, workspace_id: int, role: str = "admin"):
 async def test_bootstrap_login_logout_cookie_flow(pool):
     async with pool.acquire() as conn:
         await conn.execute(
-            "TRUNCATE answer_feedback, auth_sessions, workspace_memberships, users, "
+            "TRUNCATE feedback_regression_cases, answer_feedback, auth_sessions, workspace_memberships, users, "
             "workspaces, audit_events, auth_login_attempts RESTART IDENTITY CASCADE"
         )
     await migrate.run()
@@ -131,6 +132,31 @@ async def test_protected_ingest_requires_admin(pool, workspace_id):
         docs = await admin.get("/api/documents")
         assert docs.status_code == 200
         assert any(d["id"] == doc_id for d in docs.json())
+
+
+async def test_document_detail_exposes_active_formation_lineage(
+    pool, workspace_id, fake_llm
+):
+    from app.domains.memory.formation import run_formation
+
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        ingest = await admin.post(
+            "/api/ingest",
+            json={
+                "source": "meeting",
+                "title": "Lineage notes",
+                "text": "We chose PostgreSQL because transactions matter.",
+            },
+        )
+        doc_id = ingest.json()["document_id"]
+        await run_formation(doc_id)
+        detail = await admin.get(f"/api/documents/{doc_id}")
+
+    assert detail.status_code == 200
+    formation = detail.json()["formation"]
+    assert formation["active_run_id"]
+    assert formation["quarantined_observations"] == 0
 
 
 async def test_query_streams_sse_events(pool, workspace_id, monkeypatch):
@@ -371,6 +397,42 @@ async def test_feedback_admin_queue_permissions_and_resolution(pool, workspace_i
         assert resolved.status_code == 200
         assert resolved.json()["status"] == "resolved"
         assert resolved.json()["resolution_note"] == "Fixed in memory review."
+
+
+async def test_admin_can_promote_resolved_feedback_to_an_immutable_regression_case(
+    pool, workspace_id
+):
+    document_id, _ = await ingest_document(
+        IngestRequest(source="meeting", title="Regression evidence", text="PostgreSQL was selected."),
+        workspace_id=workspace_id,
+    )
+    async with pool.acquire() as conn:
+        chunk_id = await conn.fetchval(
+            "SELECT id FROM chunks WHERE document_id=$1 ORDER BY chunk_index LIMIT 1", document_id
+        )
+    member, _ = await _auth_client(pool, workspace_id, role="member")
+    async with member:
+        _sid, message_id = await _create_saved_answer(member, "Regression feedback")
+        created = await member.post(
+            "/api/answer-feedback",
+            json={"chat_message_id": message_id, "issue_type": "wrong", "cited_chunk_id": chunk_id},
+        )
+        feedback_id = created.json()["id"]
+
+    admin, admin_id = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        unresolved = await admin.post(f"/api/answer-feedback/{feedback_id}/promote-regression")
+        assert unresolved.status_code == 409
+        await admin.patch(f"/api/answer-feedback/{feedback_id}", json={"status": "resolved"})
+        promoted = await admin.post(f"/api/answer-feedback/{feedback_id}/promote-regression")
+        assert promoted.status_code == 200
+        body = promoted.json()
+
+    assert body["feedback_id"] == feedback_id
+    assert body["workspace_id"] == workspace_id
+    assert body["issue_type"] == "wrong"
+    assert body["expected_citation_chunk_id"] == chunk_id
+    assert body["created_by_user_id"] == admin_id
 
 
 async def test_duplicate_feedback_updates_existing_row(pool, workspace_id):
@@ -1398,3 +1460,158 @@ async def test_query_citation_legacy_cited_chunk_ids_still_work(pool, workspace_
     cites = meta["citations"]
     assert len(cites) == 1 and cites[0]["chunk_id"] == 1
     assert cites[0]["quote"] is None  # no quote in the old shape
+
+
+async def test_query_unsupported_visible_citation_lowers_deterministic_confidence(
+    pool, workspace_id, monkeypatch
+):
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        await admin.post("/api/ingest", json={
+            "source": "meeting", "title": "DB notes",
+            "text": "The team decided to keep PostgreSQL for v1.",
+        })
+        parts = [
+            "We kept Postgres [C999].",
+            "\n<<<MEMORY_METADATA>>>\n",
+            '{"confidence":"high","citations":[{"chunk_id":999,"quote":"invented"}]}'
+        ]
+        monkeypatch.setattr(
+            "app.providers.llm.stream_text", lambda *_a, **_k: _FakeStream(parts))
+        resp = await admin.post("/api/query", json={"question": "what db?"})
+        assert resp.status_code == 200
+        meta = _sse_event(resp.text, "metadata")
+
+    assert meta["confidence"] == "low"
+    assert meta["verification"]["invalid_citation_ids"] == [999]
+    assert meta["verification"]["citation_coverage"] == 0.0
+
+
+async def test_query_claim_verifier_lowers_confidence_for_unsupported_claim(
+    pool, workspace_id, monkeypatch
+):
+    from app.core import config
+
+    monkeypatch.setattr(config, "ANSWER_CLAIM_VERIFICATION", True)
+
+    async def verifier(*_args, **_kwargs):
+        return {"claims": [{
+            "claim": "The choice was unanimous.",
+            "citation_ids": [1],
+            "verdict": "unsupported",
+        }]}
+
+    monkeypatch.setattr("app.providers.llm.structured_call", verifier)
+    meta = await _ask_with_meta(
+        pool, workspace_id, monkeypatch,
+        '{"confidence":"high","citations":[{"chunk_id":1,"quote":"keep PostgreSQL for v1"}],'
+        '"related_questions":[],"timeline":[]}',
+    )
+
+    assert meta["confidence"] == "low"
+    assert meta["verification"]["claim_verification"] == {
+        "status": "failed",
+        "claim_count": 1,
+        "supported_claim_count": 0,
+        "unsupported_claim_count": 1,
+        "contradicted_claim_count": 0,
+    }
+
+
+async def test_query_withhold_policy_never_streams_an_answer_with_failed_claim_entailment(
+    pool, workspace_id, monkeypatch
+):
+    """Strict deployments keep answer text buffered until the verifier passes,
+    so unsupported generated claims cannot reach the user first."""
+    from app.core import config
+
+    monkeypatch.setattr(config, "ANSWER_CLAIM_VERIFICATION", True)
+    monkeypatch.setattr(config, "ANSWER_CLAIM_FAILURE_POLICY", "withhold")
+
+    async def verifier(*_args, **_kwargs):
+        return {"claims": [{
+            "claim": "The choice was unanimous.",
+            "citation_ids": [1],
+            "verdict": "unsupported",
+        }]}
+
+    monkeypatch.setattr("app.providers.llm.structured_call", verifier)
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        await admin.post("/api/ingest", json={
+            "source": "meeting", "title": "DB notes",
+            "text": "The team decided to keep PostgreSQL for v1.",
+        })
+        parts = [
+            "The team unanimously chose PostgreSQL [C1].",
+            "\n<<<MEMORY_METADATA>>>\n",
+            '{"citations":[{"chunk_id":1,"quote":"keep PostgreSQL for v1"}],'
+            '"related_questions":[],"timeline":[]}',
+        ]
+        monkeypatch.setattr(
+            "app.providers.llm.stream_text", lambda *_a, **_k: _FakeStream(parts)
+        )
+        response = await admin.post("/api/query", json={"question": "what db?"})
+        assert response.status_code == 200
+        meta = _sse_event(response.text, "metadata")
+
+    assert "The team unanimously chose PostgreSQL" not in response.text
+    assert "I couldn't verify this answer" in response.text
+    assert meta["answer_withheld"] is True
+
+
+async def test_query_slo_reports_latency_and_grounding_metrics(
+    pool, workspace_id, monkeypatch
+):
+    await _ask_with_meta(
+        pool, workspace_id, monkeypatch,
+        '{"confidence":"high","cited_chunk_ids":[1],"related_questions":[],"timeline":[]}',
+    )
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        response = await admin.get("/api/ops/query-slo?days=7")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["runs"] == 1
+    assert body["p95_total_ms"] is not None
+    assert body["p95_first_visible_ms"] is not None
+    assert body["mean_citation_coverage"] == 1.0
+    assert body["claim_verification"]["not_checked"] == 1
+
+
+async def test_pipeline_slo_reports_accepted_to_searchable_latency(pool, workspace_id):
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        await admin.post("/api/ingest", json={
+            "source": "meeting", "title": "Pipeline SLO", "text": "A durable pipeline metric.",
+            "updated_at": "2026-08-01T00:00:00Z",
+        })
+        response = await admin.get("/api/ops/pipeline-slo?days=7")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["accepted_revisions"] == 1
+    assert body["searchable_revisions"] == 1
+    assert body["p95_source_updated_to_accepted_ms"] is not None
+    assert body["p95_accepted_to_searchable_ms"] is not None
+
+
+async def test_health_details_reports_active_embedding_version_coverage(pool, workspace_id):
+    admin, _ = await _auth_client(pool, workspace_id, role="admin")
+    async with admin:
+        await admin.post("/api/ingest", json={
+            "source": "meeting", "title": "Embedding health", "text": "Version coverage evidence.",
+        })
+        response = await admin.get("/api/health/details")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["active_embedding_model_id"], int)
+    assert body["active_embedding_coverage"] == {"active_chunks": 1, "embedded_chunks": 1, "complete": True}
+    assert body["active_decision_embedding_coverage"] == {
+        "active_nodes": 0, "embedded_nodes": 0, "complete": True,
+    }
+    assert body["automated_memory_provenance"] == {
+        "required_fields": 0, "untraced_fields": 0, "complete": True,
+    }

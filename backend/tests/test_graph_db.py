@@ -57,9 +57,10 @@ async def test_merge_nodes_moves_evidence_and_edges(pool, workspace_id):
             "INSERT INTO documents(workspace_id, source, title, raw_text) "
             "VALUES($1, 'slack', 't', 'x') RETURNING id", workspace_id)
         chunk = await conn.fetchval(
-            "INSERT INTO chunks(document_id, chunk_index, text, embedding) "
-            "VALUES($1, 0, 'x', $2::vector) RETURNING id",
-            doc, "[" + ",".join(["0"] * 512) + "]")
+            "INSERT INTO chunks(workspace_id, document_id, chunk_index, text, embedding, "
+            "section_path, source_start, source_end, content_type, token_count) "
+            "VALUES($1, $2, 0, 'x', $3::vector, ARRAY['test'], 0, 1, 'text/plain', 1) RETURNING id",
+            workspace_id, doc, "[" + ",".join(["0"] * 512) + "]")
         keep = await graph.upsert_node(conn, workspace_id, "decision", "Choose Postgres",
                                        summary="original")
         drop = await graph.upsert_node(conn, workspace_id, "decision", "Postgres selection",
@@ -106,8 +107,16 @@ async def test_consolidation_merges_incrementally_and_stores_embeddings(pool, wo
             "SELECT id, embedding IS NOT NULL AS has_vec FROM memory_nodes "
             "WHERE kind='decision' ORDER BY id")
     has_vec = {r["id"]: r["has_vec"] for r in rows}
-    assert b not in has_vec              # duplicate deleted
-    assert has_vec == {a: True, c: True}  # survivor re-embedded, legacy row backfilled
+    assert b in has_vec                  # resolution candidate remains reversible
+    assert has_vec == {a: True, b: True, c: True}
+
+    async with pool.acquire() as conn:
+        versioned = await conn.fetchval(
+            "SELECT count(*) FROM memory_node_embeddings "
+            "WHERE workspace_id=$1 AND node_id = ANY($2::int[])",
+            workspace_id, [a, b, c],
+        )
+    assert versioned == 3
 
     # second run with nothing touched: everything already embedded → no merges
     assert await consolidate.merge_similar_decisions(workspace_id, touched_ids=[]) == []

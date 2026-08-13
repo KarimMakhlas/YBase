@@ -209,6 +209,7 @@ def page_to_doc(connection, stream, page: Dict[str, Any], body_text: str) -> Opt
         text=f"{title}\n\n{body}",
         author=None,  # created_by carries a user id; resolving names needs another endpoint
         created_at=page.get("created_time"),
+        updated_at=page.get("last_edited_time"),
         tags=[stream["name"]],
         source_connection_id=connection["id"],
         source_stream_id=stream["id"],

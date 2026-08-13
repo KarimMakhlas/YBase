@@ -133,6 +133,7 @@ def page_to_doc(connection, stream, page: Dict[str, Any]) -> Optional[IngestRequ
         text=text,
         author=None,  # v2 pages carry authorId (account id) only; resolving names needs another scope
         created_at=page.get("createdAt"),
+        updated_at=(page.get("version") or {}).get("createdAt") or page.get("updatedAt"),
         tags=[stream["name"]],
         source_connection_id=connection["id"],
         source_stream_id=stream["id"],

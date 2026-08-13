@@ -3,15 +3,23 @@ similarity pairing, and Slack event plumbing — no DB, no network."""
 
 import time
 
+import pytest
+
 from app.core import config
 from app.domains.documents.ingestion import chunk_text, content_hash
 from app.providers import llm
 from app.providers.llm import parse_loose_json
-from app.domains.query.streaming import _strip_metadata_bleed
+from app.domains.query.streaming import (
+    _strip_metadata_bleed,
+    apply_claim_verification,
+    answer_for_claim_verification,
+)
 from app.domains.query.retrieval import rank_graph_evidence, rrf_fuse
+from app.domains.query.vector_search import recall_at_k, supports_iterative_hnsw
 from app.domains.memory.consolidate import similar_pairs, similar_pairs_against
 from app.domains.memory.formation import fallback_topics
 from app.domains.memory.scoring import node_score
+from app.providers import embeddings
 from app.providers.embeddings import _local_embed
 from app.domains.connectors.slack.events import clean_text, thread_document, verify_signature, wanted_event
 from app.domains.connectors.jira.client import issue_to_doc as jira_issue_to_doc
@@ -45,6 +53,41 @@ def test_chunk_empty_text_falls_back():
     assert chunk_text("") == [""]
 
 
+def test_claim_verification_lowers_confidence_for_unsupported_or_contradicted_claims():
+    structural = {"confidence": "high", "citation_coverage": 1.0}
+    checked = apply_claim_verification(
+        structural,
+        [
+            {"verdict": "supported", "claim": "The team chose PostgreSQL."},
+            {"verdict": "unsupported", "claim": "It was always unanimous."},
+            {"verdict": "contradicted", "claim": "There were no risks."},
+        ],
+    )
+
+    assert checked["confidence"] == "low"
+    assert checked["claim_verification"] == {
+        "status": "failed",
+        "claim_count": 3,
+        "supported_claim_count": 1,
+        "unsupported_claim_count": 1,
+        "contradicted_claim_count": 1,
+    }
+
+
+def test_withhold_policy_does_not_return_an_answer_with_failed_claim_entailment():
+    """A strict production policy must not expose text after an independent
+    verifier found unsupported factual content."""
+    answer, withheld = answer_for_claim_verification(
+        "The team unanimously chose PostgreSQL.",
+        {"claim_verification": {"status": "failed"}},
+        "withhold",
+    )
+
+    assert withheld is True
+    assert answer != "The team unanimously chose PostgreSQL."
+    assert "couldn't verify" in answer
+
+
 def test_content_hash_distinguishes_and_repeats():
     a = content_hash("slack", "t", "body")
     assert a == content_hash("slack", "t", "body")
@@ -69,6 +112,19 @@ def test_oauth_redirect_rejects_untrusted_referer(monkeypatch):
 
 
 # ---- reciprocal-rank fusion ----
+
+def test_pgvector_iterative_scan_version_gate():
+    assert not supports_iterative_hnsw(None)
+    assert not supports_iterative_hnsw("0.7.4")
+    assert supports_iterative_hnsw("0.8.0")
+    assert supports_iterative_hnsw("0.8.2")
+    assert supports_iterative_hnsw("1.0.0")
+
+
+def test_recall_at_k_uses_exact_top_k_as_ground_truth():
+    assert recall_at_k([1, 2, 3, 4], [1, 3, 9, 10], 3) == 2 / 3
+    assert recall_at_k([], [], 10) == 1.0
+    assert recall_at_k([1, 2], [1], 10) == 0.5
 
 def test_rrf_overlap_outranks_single_list_winners():
     # 3 appears in both lists (mid-rank) and must beat either list's #1
@@ -162,6 +218,16 @@ def test_auto_provider_uses_nvidia_before_ollama(monkeypatch):
     assert llm.active_provider() == "nvidia"
     assert llm.active_model() == "openai/gpt-oss-120b"
     assert llm.credentials_available()
+
+
+async def test_production_never_silently_falls_back_to_demo_hash_embeddings(monkeypatch):
+    monkeypatch.setattr(config, "EMBED_PROVIDER", "local")
+    monkeypatch.setattr(config, "DEPLOYMENT_ENV", "production")
+    monkeypatch.setattr(config, "ALLOW_DEMO_EMBEDDINGS", False)
+    monkeypatch.setattr(embeddings, "_provider", None)
+
+    with pytest.raises(embeddings.DemoEmbeddingForbidden):
+        await embeddings.active_embedder()
 
 
 # ---- topic fallback ----
@@ -299,6 +365,7 @@ def test_jira_issue_to_doc_shape():
             "priority": {"name": "High"},
             "labels": ["billing"],
             "created": "2026-01-15T09:30:00.000+0000",
+            "updated": "2026-02-01T11:00:00.000+0000",
         },
     }
     doc = jira_issue_to_doc(connection, stream, issue)
@@ -306,6 +373,7 @@ def test_jira_issue_to_doc_shape():
     assert doc.title.startswith("[PLAT-42]")
     assert "Queueing avoids API timeouts." in doc.text
     assert doc.author == "Maya"
+    assert doc.updated_at == "2026-02-01T11:00:00+00:00"
     assert doc.external_ref == "jira:cloud-1:PLAT-42"
 
 
@@ -321,12 +389,14 @@ async def test_github_issue_to_doc_shape_without_comments():
         "body": "Persist sessions so Ask Memory history survives reloads.",
         "comments": 0,
         "created_at": "2026-02-01T12:00:00Z",
+        "updated_at": "2026-02-03T09:00:00Z",
     }
     doc = await github_issue_to_doc("token-unused", connection, stream, issue)
     assert doc.source == "github"
     assert doc.title == "ybase/app#7: Adopt persisted sessions"
     assert "Persist sessions" in doc.text
     assert doc.author == "mav"
+    assert doc.updated_at == "2026-02-03T09:00:00Z"
     assert doc.external_ref == "github:ybase/app:issue/7"
 
 

@@ -2,7 +2,7 @@
 # FastAPI backend, so this is the whole app in one machine.
 #
 #   fly launch --no-deploy            # create the app (edit the name below first)
-#   fly secrets set DATABASE_URL=... ANTHROPIC_API_KEY=... CONNECTOR_SECRET_KEY=...
+#   fly secrets set DATABASE_URL=... NVIDIA_API_KEY=... CONNECTOR_SECRET_KEY=...
 #   fly deploy
 #
 # DATABASE_URL must point at a Postgres with the pgvector extension available
@@ -14,7 +14,7 @@ primary_region = "iad"
 [build]
   dockerfile = "Dockerfile"
 
-# Non-secret config. Secrets (DATABASE_URL, ANTHROPIC_API_KEY, CONNECTOR_SECRET_KEY,
+# Non-secret config. Secrets (DATABASE_URL, NVIDIA_API_KEY, CONNECTOR_SECRET_KEY,
 # VOYAGE_API_KEY, SLACK_*, JIRA_*, GITHUB_*, RESEND_API_KEY) go in `fly secrets`.
 #
 # Multi-instance: before raising machine count above 1, set a REDIS_URL secret
@@ -27,7 +27,7 @@ primary_region = "iad"
 [env]
   STATIC_DIR = "/srv/static"
   SESSION_COOKIE_SECURE = "true"
-  LLM_PROVIDER = "anthropic"
+  LLM_PROVIDER = "nvidia"
   EMBED_PROVIDER = "auto"
   ALLOW_PUBLIC_SIGNUP = "true"
   SEED_DEMO_ON_SIGNUP = "true"

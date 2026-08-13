@@ -33,13 +33,13 @@ async def test_consolidation_merge_is_audited(pool, workspace_id, monkeypatch):
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT target_id, data FROM audit_events "
-            "WHERE workspace_id=$1 AND action='consolidation_merge_nodes'",
+                "WHERE workspace_id=$1 AND action='consolidation_merge_candidate'",
             workspace_id)
     assert row is not None
     assert int(row["target_id"]) == merged[0]["kept"]
-    assert row["data"]["dropped"] == merged[0]["dropped"]
+    assert row["data"]["candidate"] == merged[0]["dropped"]
     assert row["data"]["sim"] >= 0.5
-    assert row["data"]["kept_label"] and row["data"]["dropped_label"]
+    assert row["data"]["survivor_label"] and row["data"]["candidate_label"]
 
 
 async def test_reversal_status_flip_is_audited(pool, workspace_id, fake_llm):

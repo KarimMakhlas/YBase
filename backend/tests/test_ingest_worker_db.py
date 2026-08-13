@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from app.core import config
 from app.domains.documents.ingestion import IngestRequest, ingest_document
 from app.domains.memory import worker
@@ -21,8 +23,58 @@ async def test_ingest_creates_doc_chunks_and_queues(pool, workspace_id):
             "SELECT formation_status FROM documents WHERE id=$1", doc_id)
         chunks = await conn.fetchval(
             "SELECT count(*) FROM chunks WHERE document_id=$1", doc_id)
+        chunk_workspaces = await conn.fetch(
+            "SELECT DISTINCT workspace_id FROM chunks WHERE document_id=$1", doc_id)
     assert status == "pending"
     assert chunks >= 1
+    assert {row["workspace_id"] for row in chunk_workspaces} == {workspace_id}
+
+
+async def test_ingest_stores_chunk_structure_and_source_offsets(pool, workspace_id):
+    text = "Opening context.\n\nDecision details live in this paragraph."
+    doc_id, _ = await ingest_document(
+        _req(text=text, content_type="text/markdown"), workspace_id=workspace_id
+    )
+    async with pool.acquire() as conn:
+        chunk = await conn.fetchrow(
+            "SELECT text, section_path, source_start, source_end, content_type, token_count "
+            "FROM chunks WHERE document_id=$1 ORDER BY chunk_index LIMIT 1",
+            doc_id,
+        )
+
+    assert chunk["text"] == text
+    assert chunk["section_path"] == ["paragraph:1", "paragraph:2"]
+    assert (chunk["source_start"], chunk["source_end"]) == (0, len(text))
+    assert chunk["content_type"] == "text/markdown"
+    assert chunk["token_count"] == 8
+
+
+async def test_chunk_workspace_schema_is_enforced(pool):
+    async with pool.acquire() as conn:
+        nullable = await conn.fetchval(
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_name='chunks' AND column_name='workspace_id'"
+        )
+        validated = await conn.fetchval(
+            "SELECT convalidated FROM pg_constraint "
+            "WHERE conname='chunks_document_workspace_fk'"
+        )
+    assert nullable == "NO"
+    assert validated is True
+
+
+async def test_source_revision_schema_is_enforced(pool):
+    async with pool.acquire() as conn:
+        revision_unique = await conn.fetchval(
+            "SELECT 1 FROM pg_constraint "
+            "WHERE conname='document_revisions_source_content_key'"
+        )
+        active = await conn.fetchval(
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_name='documents' AND column_name='is_active'"
+        )
+    assert revision_unique == 1
+    assert active == "NO"
 
 
 async def test_ingest_exact_duplicate_is_skipped(pool, workspace_id):
@@ -39,6 +91,152 @@ async def test_ingest_different_text_is_not_duplicate(pool, workspace_id):
     b, dup = await ingest_document(_req(text="Entirely different content."),
                                    workspace_id=workspace_id)
     assert not dup and a != b
+
+
+async def test_connector_update_creates_a_new_active_revision(pool, workspace_id):
+    async with pool.acquire() as conn:
+        connection_id = await conn.fetchval(
+            "INSERT INTO source_connections(workspace_id, provider, name) "
+            "VALUES($1, 'jira', 'Jira') RETURNING id",
+            workspace_id,
+        )
+
+    first, first_duplicate = await ingest_document(
+        _req(
+            source="jira",
+            external_ref="jira:cloud:ENG-1",
+            source_connection_id=connection_id,
+            text="first revision text",
+        ),
+        workspace_id=workspace_id,
+    )
+    second, second_duplicate = await ingest_document(
+        _req(
+            source="jira",
+            external_ref="jira:cloud:ENG-1",
+            source_connection_id=connection_id,
+            text="updated revision text",
+        ),
+        workspace_id=workspace_id,
+    )
+
+    assert (first_duplicate, second_duplicate) == (False, False)
+    assert first != second
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT source_object_id, revision_id, is_active FROM documents "
+            "WHERE id = ANY($1::int[]) ORDER BY id",
+            [first, second],
+        )
+    assert [row["source_object_id"] for row in rows] == [
+        rows[0]["source_object_id"], rows[0]["source_object_id"],
+    ]
+    assert rows[0]["revision_id"] != rows[1]["revision_id"]
+    assert [row["is_active"] for row in rows] == [False, True]
+
+
+async def test_connector_revision_preserves_external_update_time(pool, workspace_id):
+    async with pool.acquire() as conn:
+        connection_id = await conn.fetchval(
+            "INSERT INTO source_connections(workspace_id, provider, name) "
+            "VALUES($1, 'jira', 'Updated Jira') RETURNING id",
+            workspace_id,
+        )
+
+    doc_id, duplicate = await ingest_document(
+        _req(
+            source="jira",
+            external_ref="jira:cloud:ENG-2",
+            source_connection_id=connection_id,
+            text="revision with a provider modification time",
+            updated_at="2026-08-01T10:30:00Z",
+            normalizer_version="connector-normalizer:v2",
+        ),
+        workspace_id=workspace_id,
+    )
+
+    assert duplicate is False
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT r.external_updated_at AS revision_updated_at, r.normalizer_version, "
+            "so.external_updated_at AS source_updated_at "
+            "FROM documents d JOIN document_revisions r ON r.id=d.revision_id "
+            "JOIN source_objects so ON so.id=d.source_object_id WHERE d.id=$1",
+            doc_id,
+        )
+    assert row["revision_updated_at"].isoformat() == "2026-08-01T10:30:00+00:00"
+    assert row["source_updated_at"].isoformat() == "2026-08-01T10:30:00+00:00"
+    assert row["normalizer_version"] == "connector-normalizer:v2"
+
+
+async def test_same_source_content_retry_reuses_the_active_revision(pool, workspace_id):
+    req = _req(idempotency_key="upload-17", text="unchanged upload")
+    first, duplicate = await ingest_document(req, workspace_id=workspace_id)
+    second, retry_duplicate = await ingest_document(req, workspace_id=workspace_id)
+
+    assert (duplicate, retry_duplicate, first, second) == (False, True, first, first)
+    async with pool.acquire() as conn:
+        revision_count = await conn.fetchval("SELECT count(*) FROM document_revisions")
+        document = await conn.fetchrow(
+            "SELECT source_object_id, revision_id, is_active FROM documents WHERE id=$1",
+            first,
+        )
+    assert revision_count == 1
+    assert document["source_object_id"] is not None
+    assert document["revision_id"] is not None
+    assert document["is_active"] is True
+
+
+async def test_concurrent_identical_ingests_create_one_active_revision(pool, workspace_id):
+    req = _req(idempotency_key="concurrent-upload", text="same concurrent payload")
+
+    first, second = await asyncio.gather(
+        ingest_document(req, workspace_id=workspace_id),
+        ingest_document(req, workspace_id=workspace_id),
+    )
+
+    assert {first[0], second[0]} == {first[0]}
+    assert sorted([first[1], second[1]]) == [False, True]
+    async with pool.acquire() as conn:
+        active = await conn.fetchval(
+            "SELECT count(*) FROM documents WHERE workspace_id=$1 AND is_active",
+            workspace_id,
+        )
+        revisions = await conn.fetchval(
+            "SELECT count(*) FROM document_revisions WHERE workspace_id=$1",
+            workspace_id,
+        )
+    assert active == 1
+    assert revisions == 1
+
+
+async def test_embedding_failure_keeps_a_reviewable_accepted_revision(
+    pool, workspace_id, monkeypatch
+):
+    async def fail_embedding(_texts):
+        raise RuntimeError("embedding provider unavailable")
+
+    monkeypatch.setattr(
+        "app.domains.documents.ingestion.embed_texts", fail_embedding
+    )
+    with pytest.raises(RuntimeError, match="embedding provider unavailable"):
+        await ingest_document(_req(idempotency_key="provider-failure"), workspace_id)
+
+    async with pool.acquire() as conn:
+        revision = await conn.fetchrow(
+            "SELECT status, error FROM document_revisions WHERE workspace_id=$1",
+            workspace_id,
+        )
+        document = await conn.fetchrow(
+            "SELECT formation_status, formation_error FROM documents WHERE workspace_id=$1",
+            workspace_id,
+        )
+        chunks = await conn.fetchval("SELECT count(*) FROM chunks WHERE workspace_id=$1", workspace_id)
+    assert revision["status"] == "failed"
+    assert "embedding provider unavailable" in revision["error"]
+    assert document["formation_status"] == "failed"
+    assert "embedding provider unavailable" in document["formation_error"]
+    assert chunks == 0
 
 
 async def test_worker_claim_and_success_path(pool, workspace_id):

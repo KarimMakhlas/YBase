@@ -264,6 +264,104 @@ async def formation_slo(
     }
 
 
+@router.get("/pipeline-slo")
+async def pipeline_slo(
+    days: int = 7,
+    current: auth.AuthContext = Depends(auth.require_role("admin")),
+) -> Dict[str, Any]:
+    """Durable revision-stage timing from acceptance through active formation."""
+    days = max(1, min(days, 90))
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        summary = await conn.fetchrow(
+            "SELECT count(*)::int AS accepted_revisions, "
+            "count(*) FILTER (WHERE r.materialized_at IS NOT NULL)::int AS searchable_revisions, "
+            "count(*) FILTER (WHERE fr.activated_at IS NOT NULL)::int AS formed_revisions, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY "
+            "  GREATEST(0, extract(epoch FROM (r.created_at - r.external_updated_at)) * 1000)) "
+            "  FILTER (WHERE r.external_updated_at IS NOT NULL) "
+            "  AS p95_source_updated_to_accepted_ms, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY "
+            "  extract(epoch FROM (r.materialized_at - r.created_at)) * 1000) "
+            "  FILTER (WHERE r.materialized_at IS NOT NULL) AS p95_accepted_to_searchable_ms, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY "
+            "  extract(epoch FROM (fr.activated_at - r.materialized_at)) * 1000) "
+            "  FILTER (WHERE fr.activated_at IS NOT NULL AND r.materialized_at IS NOT NULL) "
+            "  AS p95_searchable_to_formed_ms "
+            "FROM document_revisions r LEFT JOIN formation_runs fr "
+            "ON fr.revision_id=r.id AND fr.is_active "
+            "WHERE r.workspace_id=$1 AND r.created_at > now() - ($2 || ' days')::interval",
+            current.workspace_id, str(days),
+        )
+
+    def _ms(value: Any) -> Any:
+        return round(value) if value is not None else None
+
+    return {
+        "days": days,
+        "accepted_revisions": summary["accepted_revisions"],
+        "searchable_revisions": summary["searchable_revisions"],
+        "formed_revisions": summary["formed_revisions"],
+        "p95_source_updated_to_accepted_ms": _ms(summary["p95_source_updated_to_accepted_ms"]),
+        "p95_accepted_to_searchable_ms": _ms(summary["p95_accepted_to_searchable_ms"]),
+        "p95_searchable_to_formed_ms": _ms(summary["p95_searchable_to_formed_ms"]),
+    }
+
+
+@router.get("/query-slo")
+async def query_slo(
+    days: int = 7,
+    current: auth.AuthContext = Depends(auth.require_role("admin")),
+) -> Dict[str, Any]:
+    """Query latency and grounding-verification percentiles for release gates."""
+    days = max(1, min(days, 90))
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        summary = await conn.fetchrow(
+            "SELECT count(*)::int AS runs, "
+            "percentile_cont(0.5) WITHIN GROUP (ORDER BY total_ms) AS p50_total_ms, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY total_ms) AS p95_total_ms, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY first_visible_ms) AS p95_first_visible_ms, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY retrieval_ms) AS p95_retrieval_ms, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY generation_ms) AS p95_generation_ms, "
+            "percentile_cont(0.95) WITHIN GROUP (ORDER BY verification_ms) AS p95_verification_ms, "
+            "avg(citation_coverage) AS mean_citation_coverage, "
+            "count(*) FILTER (WHERE claim_verification_status='passed')::int AS claims_passed, "
+            "count(*) FILTER (WHERE claim_verification_status='failed')::int AS claims_failed, "
+            "count(*) FILTER (WHERE claim_verification_status='not_checked')::int AS claims_not_checked, "
+            "coalesce(sum(unsupported_claims), 0)::int AS unsupported_claims, "
+            "coalesce(sum(contradicted_claims), 0)::int AS contradicted_claims "
+            "FROM query_runs WHERE workspace_id=$1 AND status='success' "
+            "AND created_at > now() - ($2 || ' days')::interval",
+            current.workspace_id, str(days),
+        )
+
+    def _ms(value: Any) -> Any:
+        return round(value) if value is not None else None
+
+    return {
+        "days": days,
+        "runs": summary["runs"],
+        "p50_total_ms": _ms(summary["p50_total_ms"]),
+        "p95_total_ms": _ms(summary["p95_total_ms"]),
+        "p95_first_visible_ms": _ms(summary["p95_first_visible_ms"]),
+        "p95_retrieval_ms": _ms(summary["p95_retrieval_ms"]),
+        "p95_generation_ms": _ms(summary["p95_generation_ms"]),
+        "p95_verification_ms": _ms(summary["p95_verification_ms"]),
+        "mean_citation_coverage": (
+            round(float(summary["mean_citation_coverage"]), 3)
+            if summary["mean_citation_coverage"] is not None else None
+        ),
+        "claim_verification": {
+            "passed": summary["claims_passed"],
+            "failed": summary["claims_failed"],
+            "not_checked": summary["claims_not_checked"],
+            "unsupported_claims": summary["unsupported_claims"],
+            "contradicted_claims": summary["contradicted_claims"],
+        },
+    }
+
+
 @router.get("/usage")
 async def usage_report(
     days: int = 30,

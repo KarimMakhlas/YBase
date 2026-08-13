@@ -14,8 +14,9 @@ import asyncpg
 
 from app.core import config, db
 from app.core.observability import StageTimer
+from app.domains.query import embedding_versions
 from app.providers import llm
-from . import graph, validation
+from . import graph, observations, projection, validation
 
 log = logging.getLogger("ybase.formation")
 
@@ -215,53 +216,108 @@ async def _persist(
     valid_node_ids: Set[int],
     doc_tags: Optional[List[str]] = None,
 ) -> List[int]:
-    """Write the extraction into the graph. Returns the decision node ids this
-    document created or updated, for incremental consolidation."""
-    from app.domains.auth import service as auth  # lazy: avoid import cycle
+    """Project validated observations into the compatibility graph.
 
-    index_to_id = {c["chunk_index"]: c["id"] for c in chunks}
-    doc_chunk_ids = list(index_to_id.values())
+    ``_observation_id`` is attached only after its immutable observation and
+    evidence rows were committed. Every graph mutation below records that exact
+    observation instead of inferring provenance later from all current edges.
+    """
 
-    def chunk_ids_for(indexes: List[int]) -> List[int]:
-        ids = [index_to_id[i] for i in indexes if i in index_to_id]
-        return ids or doc_chunk_ids[:1]  # always keep provenance to the doc
+    async def link_observation_evidence(
+        observation_id: Optional[int], node_id: int
+    ) -> None:
+        if observation_id is None:
+            return
+        await conn.execute(
+            "INSERT INTO observation_support_projections(workspace_id, observation_id, node_id) "
+            "VALUES($1, $2, $3) ON CONFLICT DO NOTHING",
+            workspace_id, observation_id, node_id,
+        )
+        await conn.execute(
+            "INSERT INTO chunk_links(chunk_id, node_id, relation) "
+            "SELECT chunk_id, $2, 'evidence' FROM observation_evidence "
+            "WHERE observation_id=$1 ON CONFLICT DO NOTHING",
+            observation_id, node_id,
+        )
+
+    async def record_fields(
+        observation_id: Optional[int], node_id: int, fields: tuple[str, ...]
+    ) -> None:
+        if observation_id is None:
+            return
+        for field_name in fields:
+            await conn.execute(
+                "INSERT INTO memory_field_projections("
+                "workspace_id, observation_id, node_id, field_name) "
+                "VALUES($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+                workspace_id, observation_id, node_id, field_name,
+            )
+
+    async def project_node(
+        observation_id: Optional[int], node_id: int, fields: tuple[str, ...]
+    ) -> None:
+        """Record the primary identity/field projection for one observation."""
+        if observation_id is None:
+            return
+        await conn.execute(
+            "INSERT INTO observation_projections(workspace_id, observation_id, node_id) "
+            "VALUES($1, $2, $3) ON CONFLICT DO NOTHING",
+            workspace_id, observation_id, node_id,
+        )
+        await record_fields(observation_id, node_id, fields)
+        await link_observation_evidence(observation_id, node_id)
+
+    async def project_edge(
+        observation_id: Optional[int], src: int, dst: int, relation: str
+    ) -> None:
+        await graph.add_edge(conn, workspace_id, src, dst, relation)
+        if observation_id is not None and src != dst:
+            await conn.execute(
+                "INSERT INTO observation_edge_projections("
+                "workspace_id, observation_id, src_node_id, dst_node_id, relation) "
+                "VALUES($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+                workspace_id, observation_id, src, dst, relation,
+            )
 
     def safe_node(node_id: Optional[int]) -> Optional[int]:
         return node_id if node_id in valid_node_ids else None
 
-    async def flip_status(node_id: int, new_status: str) -> None:
-        """Status changes on *existing* nodes (reversals, resolutions) are the
-        destructive edge of formation — leave an audit trail."""
-        old = await graph.set_status(conn, node_id, new_status)
-        if old is not None and old != new_status:
-            await auth.audit(
-                conn, "formation_node_status_change", workspace_id, None,
-                target_type="memory_node", target_id=node_id,
-                data={"old_status": old, "new_status": new_status,
-                      "document_id": document_id},
-            )
-
     entity_ids: Dict[str, int] = {}
     touched_decisions: List[int] = []
 
-    async def ensure_entity(name: str, kind: str = "person", description: str = "") -> int:
+    async def ensure_entity(
+        name: str, kind: str = "person", description: str = "",
+        observation_id: Optional[int] = None, *, primary_projection: bool = False,
+    ) -> int:
         key = name.strip().lower()
         if key not in entity_ids:
             entity_ids[key] = await graph.upsert_node(
                 conn, workspace_id, "entity", name, summary=description or None,
                 data={"entity_kind": kind},
             )
+        if primary_projection:
+            await project_node(observation_id, entity_ids[key], ("label", "summary", "data"))
+        else:
+            await record_fields(observation_id, entity_ids[key], ("label",))
+            await link_observation_evidence(observation_id, entity_ids[key])
         return entity_ids[key]
 
-    async def ensure_topic(name: str) -> int:
-        return await graph.upsert_node(conn, workspace_id, "topic", name.strip().lower())
+    async def ensure_topic(name: str, observation_id: Optional[int] = None) -> int:
+        node_id = await graph.upsert_node(conn, workspace_id, "topic", name.strip().lower())
+        # Topics are deterministic support nodes derived from a decision or
+        # question relation, never the primary field target of that observation.
+        await record_fields(observation_id, node_id, ("label",))
+        await link_observation_evidence(observation_id, node_id)
+        return node_id
 
     for ent in result.get("entities", []):
-        node_id = await ensure_entity(ent["name"], ent["kind"], ent.get("description", ""))
-        for cid in chunk_ids_for(ent.get("evidence_chunk_indexes", [])):
-            await graph.link_chunk(conn, cid, node_id)
+        await ensure_entity(
+            ent["name"], ent["kind"], ent.get("description", ""),
+            ent.get("_observation_id"), primary_projection=True,
+        )
 
     for dec in result.get("decisions", []):
+        observation_id = dec.get("_observation_id")
         summary = dec["what"].strip()
         if dec.get("reasoning"):
             summary += "\n\nReasoning: " + dec["reasoning"].strip()
@@ -274,60 +330,53 @@ async def _persist(
                 "date": dec.get("date"),
             },
         )
-        for cid in chunk_ids_for(dec.get("evidence_chunk_indexes", [])):
-            await graph.link_chunk(conn, cid, node_id)
+        await project_node(observation_id, node_id, ("label", "summary", "status", "data"))
         for person in dec.get("made_by", []):
-            pid = await ensure_entity(person)
-            await graph.add_edge(conn, workspace_id, node_id, pid, "involves")
+            pid = await ensure_entity(person, observation_id=observation_id)
+            await project_edge(observation_id, node_id, pid, "involves")
         topics = [t for t in dec.get("topics", []) if t.strip()]
         if not topics:
             topics = fallback_topics(dec["title"], doc_tags or [])
         for topic in topics:
-            tid = await ensure_topic(topic)
-            await graph.add_edge(conn, workspace_id, node_id, tid, "about")
+            tid = await ensure_topic(topic, observation_id)
+            await project_edge(observation_id, node_id, tid, "about")
         revisits = safe_node(dec.get("revisits_node_id"))
         if revisits and revisits != node_id:
-            await graph.add_edge(conn, workspace_id, node_id, revisits, "revisits")
-            if dec["status"] == "reversed":
-                await flip_status(revisits, "reversed")
-            elif dec["status"] == "revisited":
-                await flip_status(revisits, "revisited")
+            await project_edge(observation_id, node_id, revisits, "revisits")
             await graph.merge_data(conn, revisits, {"last_revisited": dec.get("date")})
         resolves_q = safe_node(dec.get("resolves_question_node_id"))
         if resolves_q:
-            await graph.add_edge(conn, workspace_id, node_id, resolves_q, "resolves")
-            await flip_status(resolves_q, "resolved")
+            await project_edge(observation_id, node_id, resolves_q, "resolves")
             await graph.merge_data(conn, resolves_q, {"resolution": dec["what"]})
         for rel in dec.get("relates_to_node_ids", []):
             rel_id = safe_node(rel)
             if rel_id and rel_id != node_id:
-                await graph.add_edge(conn, workspace_id, node_id, rel_id, "relates_to")
+                await project_edge(observation_id, node_id, rel_id, "relates_to")
         valid_node_ids.add(node_id)
         touched_decisions.append(node_id)
 
     for q in result.get("questions", []):
+        observation_id = q.get("_observation_id")
         resolves = safe_node(q.get("resolves_node_id"))
         if resolves:
             node_id = resolves
-            await flip_status(node_id, "resolved")
             await graph.merge_data(conn, node_id, {"resolution": q.get("resolution")})
         else:
             node_id = await graph.upsert_node(
                 conn, workspace_id, "question", q["question"], status=q["status"],
                 data={"resolution": q.get("resolution"), "raised_by": q.get("raised_by", [])},
             )
-        for cid in chunk_ids_for(q.get("evidence_chunk_indexes", [])):
-            await graph.link_chunk(conn, cid, node_id)
+        await project_node(observation_id, node_id, ("label", "summary", "status", "data"))
         for person in q.get("raised_by", []):
-            pid = await ensure_entity(person)
-            await graph.add_edge(conn, workspace_id, node_id, pid, "raised_by")
+            pid = await ensure_entity(person, observation_id=observation_id)
+            await project_edge(observation_id, node_id, pid, "raised_by")
         for topic in q.get("topics", []):
-            tid = await ensure_topic(topic)
-            await graph.add_edge(conn, workspace_id, node_id, tid, "about")
+            tid = await ensure_topic(topic, observation_id)
+            await project_edge(observation_id, node_id, tid, "about")
         for rel in q.get("relates_to_node_ids", []):
             rel_id = safe_node(rel)
             if rel_id and rel_id != node_id:
-                await graph.add_edge(conn, workspace_id, node_id, rel_id, "relates_to")
+                await project_edge(observation_id, node_id, rel_id, "relates_to")
         valid_node_ids.add(node_id)
 
     await conn.execute(
@@ -371,17 +420,30 @@ async def _fetch_existing(
         "ORDER BY updated_at DESC LIMIT $2",
         workspace_id, _EXISTING_CAP,
     )
-    centroid = await conn.fetchval(
-        "SELECT avg(embedding)::text FROM chunks WHERE document_id=$1", document_id
-    )
+    # Relevance is meaningful only inside one embedding space. Both document
+    # centroid and decision signatures therefore come from the workspace's
+    # active model, never the legacy compatibility vector columns.
+    active_embedding_model_id = await embedding_versions.active_model(conn, workspace_id)
+    centroid = None
+    if active_embedding_model_id is not None:
+        centroid = await conn.fetchval(
+            "SELECT avg(ce.embedding)::text FROM chunk_embeddings ce "
+            "JOIN chunks c ON c.id=ce.chunk_id "
+            "WHERE c.document_id=$1 AND ce.workspace_id=$2 "
+            "AND ce.embedding_model_id=$3",
+            document_id, workspace_id, active_embedding_model_id,
+        )
     relevant: List[asyncpg.Record] = []
     if centroid:
         relevant = await conn.fetch(
-            "SELECT id, kind, label, summary, status FROM memory_nodes "
-            "WHERE workspace_id=$1 AND kind IN ('decision', 'question') "
-            "AND archived_at IS NULL AND embedding IS NOT NULL "
-            "ORDER BY embedding <=> $2::vector LIMIT $3",
-            workspace_id, centroid, _EXISTING_RELEVANT,
+            "SELECT n.id, n.kind, n.label, n.summary, n.status "
+            "FROM memory_node_embeddings ne "
+            "JOIN memory_nodes n ON n.id=ne.node_id "
+            "WHERE ne.workspace_id=$1 AND ne.embedding_model_id=$2 "
+            "AND n.workspace_id=$1 AND n.kind IN ('decision', 'question') "
+            "AND n.archived_at IS NULL "
+            "ORDER BY ne.embedding <=> $3::vector LIMIT $4",
+            workspace_id, active_embedding_model_id, centroid, _EXISTING_RELEVANT,
         )
 
     topic_ids: Set[int] = set()
@@ -461,8 +523,20 @@ async def run_formation(
                     "(dropped by safe_node)", document_id, report["invalid_cross_refs"])
     async with pool.acquire() as conn:
         async with conn.transaction():
-            touched = await _persist(conn, doc["workspace_id"], document_id, chunks,
-                                     result, valid_ids, doc_tags=list(doc["tags"] or []))
+            provider = llm.active_provider()
+            model = llm.active_model()
+            run_id = await observations.create_candidate_run(
+                conn, doc, model_provider=provider, model_name=model, validation=report,
+            )
+            batch = await observations.persist_observations(
+                conn, run_id, doc, chunks, result,
+                model_provider=provider, model_name=model,
+            )
+            touched = await _persist(
+                conn, doc["workspace_id"], document_id, chunks, batch.valid_result,
+                valid_ids, doc_tags=list(doc["tags"] or []),
+            )
+            await projection.activate_run(conn, run_id)
     if timer:
         timer.lap("persist")
     return FormationOutcome(touched=touched, validation=report)

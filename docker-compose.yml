@@ -44,25 +44,12 @@ services:
         condition: service_healthy
     ports:
       - "8100:8100"
+    env_file:
+      - backend/.env
     environment:
       DATABASE_URL: postgresql://ybase:ybase@db:5432/ybase
       REDIS_URL: redis://redis:6379/0
       OLLAMA_BASE_URL: http://host.docker.internal:11434
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
-      NVIDIA_MODEL: ${NVIDIA_MODEL:-openai/gpt-oss-120b}
-      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
-      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
-      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-}
-      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
-      SLACK_REDIRECT_BASE_URL: ${SLACK_REDIRECT_BASE_URL:-http://localhost:8100}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
-      GITHUB_REDIRECT_BASE_URL: ${GITHUB_REDIRECT_BASE_URL:-http://localhost:8100}
-      JIRA_CLIENT_ID: ${JIRA_CLIENT_ID:-}
-      JIRA_CLIENT_SECRET: ${JIRA_CLIENT_SECRET:-}
-      JIRA_REDIRECT_BASE_URL: ${JIRA_REDIRECT_BASE_URL:-http://localhost:8100}
-      CONNECTOR_SECRET_KEY: ${CONNECTOR_SECRET_KEY:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

@@ -5,15 +5,9 @@ import { SrcBadge } from '../ybase/ui.jsx'
 // All connectors YBase can sync from, in display order. `unit` matches
 // Sources.jsx's PROVIDERS map (what one "stream" is called for that provider).
 export const CONNECTOR_DEFS = [
-  { provider: 'slack', label: 'Slack' },
   { provider: 'jira', label: 'Jira' },
   { provider: 'github', label: 'GitHub' },
-  { provider: 'linear', label: 'Linear' },
   { provider: 'notion', label: 'Notion' },
-  { provider: 'discord', label: 'Discord' },
-  { provider: 'confluence', label: 'Confluence' },
-  { provider: 'googledocs', label: 'Google Docs' },
-  { provider: 'figma', label: 'Figma' },
 ]
 
 // Modal listing every connector YBase supports — connected ones show a green

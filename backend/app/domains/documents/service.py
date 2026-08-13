@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.core import db
+from app.core import config, db
 from app.core.ratelimit import ingest_limiter
 from app.domains.auth import service as auth
 from app.domains.documents.ingestion import (
@@ -28,7 +28,11 @@ async def ingest(
     return {
         "document_id": doc_id,
         "duplicate": duplicate,
-        "formation": "skipped" if duplicate else "scheduled",
+        "formation": (
+            "skipped" if duplicate else
+            "scheduled" if config.INGEST_INLINE_MATERIALIZATION else
+            "accepted_for_materialization"
+        ),
     }
 
 
@@ -144,7 +148,8 @@ async def list_documents(
         rows = await conn.fetch(
             "SELECT id, source, title, author, doc_created_at, tags, context_summary, "
             "       formation_status, formation_error, formation_attempts, ingested_at, "
-            "       source_connection_id, source_stream_id, external_ref "
+            "       source_connection_id, source_stream_id, external_ref, "
+            "       source_object_id, revision_id, is_active "
             "FROM documents WHERE workspace_id=$1 "
             "ORDER BY doc_created_at NULLS LAST, id LIMIT $2 OFFSET $3",
             current.workspace_id, limit, offset,
@@ -174,10 +179,28 @@ async def get_document(
             "AND n.archived_at IS NULL GROUP BY n.kind",
             doc_id, current.workspace_id,
         )
+        formation = await conn.fetchrow(
+            "SELECT fr.id AS active_run_id, fr.activated_at, fr.prompt_version, "
+            "fr.llm_provider, fr.llm_model, "
+            "(SELECT count(*) FROM memory_observations o "
+            " WHERE o.formation_run_id=fr.id AND o.status='quarantined') "
+            " AS quarantined_observations "
+            "FROM formation_runs fr WHERE fr.workspace_id=$1 AND fr.revision_id=$2 "
+            "AND fr.is_active ORDER BY fr.id DESC LIMIT 1",
+            current.workspace_id, doc["revision_id"],
+        )
     out = dict(doc)
     raw = out.pop("raw_text", "") or ""
     if full:
         out["text"] = raw
     out["text_preview"] = raw[:1200] + ("…" if len(raw) > 1200 else "")
     out["memory_counts"] = {r["kind"]: r["n"] for r in counts}
+    out["formation"] = dict(formation) if formation else {
+        "active_run_id": None,
+        "activated_at": None,
+        "prompt_version": None,
+        "llm_provider": None,
+        "llm_model": None,
+        "quarantined_observations": 0,
+    }
     return out
