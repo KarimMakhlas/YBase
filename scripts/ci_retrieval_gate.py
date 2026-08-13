@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import math
 import os
 import statistics
 import sys
@@ -17,6 +18,7 @@ from app.domains.query.vector_search import (  # noqa: E402
     exact_vector_search,
     recall_at_k,
 )
+from app.providers.embeddings import to_pgvector  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +49,24 @@ def _request(index: int) -> IngestRequest:
     )
 
 
+def deterministic_gate_vector(index: int, dimensions: int = 512) -> list[float]:
+    """Create a stable normalized vector with non-tied pairwise similarities.
+
+    The local hash embedder is intentionally lightweight; repeated CI fixture
+    text can place several neighbors at exactly the same score. HNSW is free
+    to return any equally-ranked item, while exact search applies a secondary
+    ID order. Fixed pseudo-random vectors make this gate exercise ANN recall
+    rather than that arbitrary tie boundary.
+    """
+    state = (index + 1) * 0x9E3779B1
+    values = []
+    for _ in range(dimensions):
+        state = (1664525 * state + 1013904223) & 0xFFFFFFFF
+        values.append(((state >> 8) / 0xFFFFFF) * 2.0 - 1.0)
+    magnitude = math.sqrt(sum(value * value for value in values))
+    return [value / magnitude for value in values]
+
+
 async def main() -> int:
     args = parse_args()
     await migrate.run()
@@ -68,6 +88,20 @@ async def main() -> int:
                 "FROM chunk_embeddings ce WHERE ce.workspace_id=$1 ORDER BY ce.chunk_id",
                 workspace_id,
             )
+            # Preserve the ordinary ingestion path (revision, chunk, active
+            # model pointer), then replace only this evaluator's vectors with
+            # a deterministic ANN corpus. Both legacy and versioned columns
+            # move together so the fixture remains schema-valid.
+            for index, sample in enumerate(samples):
+                vector = to_pgvector(deterministic_gate_vector(index))
+                await conn.execute(
+                    "UPDATE chunks SET embedding=$2::vector WHERE id=$1",
+                    sample["id"], vector,
+                )
+                await conn.execute(
+                    "UPDATE chunk_embeddings SET embedding=$2::vector WHERE chunk_id=$1",
+                    sample["id"], vector,
+                )
             recalls = []
             for sample in samples:
                 approximate = await approximate_vector_search(
