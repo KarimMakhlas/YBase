@@ -3026,6 +3026,317 @@ flowchart TB
 }
 ];
 
+const REFERENCE_DIAGRAMS = [
+{
+  key: "physical-db",
+  title: "Physical PostgreSQL design",
+  category: "Data",
+  audience: "Database maintainer",
+  complexity: "High",
+  desc: "The physical schema keeps durable tenant-owned state in PostgreSQL. This view groups the operationally important tables, representative keys, active projections, retrieval indexes, and durable claim fields; it is not a complete DDL substitute. Grounded in migrations 0015–0032 and core/migrations/.",
+  code: `
+erDiagram
+  WORKSPACES ||--o{ WORKSPACE_MEMBERSHIPS : scopes
+  WORKSPACES ||--o{ SOURCE_OBJECTS : owns
+  WORKSPACES ||--o{ EMBEDDING_MODELS : activates
+  SOURCE_OBJECTS ||--o{ DOCUMENT_REVISIONS : versions
+  DOCUMENT_REVISIONS ||--|| DOCUMENTS : active_projection
+  DOCUMENTS ||--o{ CHUNKS : contains
+  CHUNKS ||--o{ CHUNK_EMBEDDINGS : vector_versions
+  EMBEDDING_MODELS ||--o{ CHUNK_EMBEDDINGS : defines
+  DOCUMENT_REVISIONS ||--o{ FORMATION_RUNS : extracts
+  FORMATION_RUNS ||--o{ MEMORY_OBSERVATIONS : proposes
+  MEMORY_OBSERVATIONS ||--o{ OBSERVATION_EVIDENCE : cites
+  MEMORY_OBSERVATIONS ||--o{ OBSERVATION_PROJECTIONS : projects
+  MEMORY_NODES ||--o{ OBSERVATION_PROJECTIONS : receives
+  MEMORY_NODES ||--o{ MEMORY_EDGES : connects
+  WORKSPACES ||--o{ QUERY_RUNS : records
+  WORKSPACES {
+    int id PK
+    int active_embedding_model_id FK
+  }
+  SOURCE_OBJECTS {
+    int id PK
+    int workspace_id FK
+    text identity_key UK
+    text status
+    int current_revision_id FK
+  }
+  DOCUMENT_REVISIONS {
+    int id PK
+    int workspace_id FK
+    int source_object_id FK
+    int revision_number
+    text content_hash
+    text status
+    int materialization_attempts
+    timestamptz materialization_next_attempt_at
+    timestamptz materialization_claimed_at
+  }
+  DOCUMENTS {
+    int id PK
+    int workspace_id FK
+    int revision_id FK
+    boolean is_active
+    text formation_status
+  }
+  CHUNKS {
+    int id PK
+    int workspace_id FK
+    int document_id FK
+    tsvector text_tsv
+  }
+  CHUNK_EMBEDDINGS {
+    int chunk_id PK
+    int embedding_model_id PK
+    int workspace_id FK
+    vector embedding
+  }
+  FORMATION_RUNS {
+    bigint id PK
+    int workspace_id FK
+    int revision_id FK
+    text status
+    boolean is_active
+  }
+  MEMORY_OBSERVATIONS {
+    bigint id PK
+    bigint formation_run_id FK
+    int workspace_id FK
+    text kind
+    text status
+  }
+  MEMORY_NODES {
+    int id PK
+    int workspace_id FK
+    text kind
+    text status
+  }
+  QUERY_RUNS {
+    bigint id PK
+    int workspace_id FK
+    text status
+    int first_visible_ms
+  }
+`
+},
+{
+  key: "logical-data-model",
+  title: "Logical data model",
+  category: "Data",
+  audience: "Product engineer / domain maintainer",
+  complexity: "Medium",
+  desc: "The logical model explains what YBase preserves: a workspace has members and connected sources; immutable revisions become searchable evidence; reproducible formation proposes observations; active projections become the memory graph; cited queries and feedback close the quality loop. Grounded in domains/documents, memory, query, feedback, and workspace.",
+  code: `
+flowchart TB
+  Member["Member or API client"]:::blue
+  Workspace["Workspace\napplication-enforced tenant boundary"]:::blue
+  Connection["Connected source\nprovider identity and stream selection"]:::gray
+  Source["Source object\nstable external identity"]:::green
+  Revision["Immutable document revision\ncontent and normalization history"]:::green
+  Evidence["Active document and chunks\nsearchable source evidence"]:::green
+  Run["Formation run\nreproducible extraction candidate"]:::purple
+  Observation["Memory observation\nclaim with chunk evidence"]:::purple
+  Graph["Active memory graph\ndecisions, entities, questions, relations"]:::purple
+  Query["Cited answer\nretrieval trace and query outcome"]:::blue
+  Feedback["Feedback and promoted\nretrieval regression"]:::amber
+  Member --> Workspace
+  Workspace --> Connection --> Source --> Revision --> Evidence
+  Evidence --> Run --> Observation --> Graph
+  Workspace --> Query
+  Evidence --> Query
+  Graph --> Query --> Feedback
+  Feedback -->|evaluation case| Query
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "retrieval-access",
+  title: "Retrieval database access path",
+  category: "Runtime",
+  audience: "Search and database maintainer",
+  complexity: "High",
+  desc: "This is the concrete database path behind tenant-safe hybrid retrieval: resolve the workspace’s active embedding model, over-fetch HNSW vectors under workspace/model predicates, exact-order candidates, fuse them with tenant-scoped PostgreSQL full text, then attach bounded graph evidence and a trace. Grounded in domains/query/retrieval.py and vector_search.py.",
+  code: `
+flowchart LR
+  Request["Question plus workspace_id"]:::blue
+  Model["workspaces.active_embedding_model_id"]:::gray
+  Vector["chunk_embeddings\nworkspace_id + embedding_model_id\nHNSW candidate scan"]:::green
+  Exact["Exact cosine ordering\ninside candidate set"]:::green
+  Text["chunks.text_tsv\nworkspace-scoped GIN full-text"]:::green
+  RRF["Reciprocal rank fusion\nper-document diversity cap"]:::blue
+  Graph["memory nodes and edges\nworkspace-scoped bounded expansion"]:::purple
+  Context["Cited evidence context\nretrieval trace"]:::purple
+  Request --> Model
+  Model -->|active model and workspace predicate| Vector --> Exact --> RRF
+  Request -->|workspace predicate| Text --> RRF
+  RRF --> Graph --> Context
+  RRF --> Context
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "lifecycles",
+  title: "Revision and formation lifecycles",
+  category: "Runtime",
+  audience: "Worker maintainer",
+  complexity: "High",
+  desc: "Two related but independent durable lifecycles. Revision acceptance is provider-free and materializes through recoverable claims; formation only begins for searchable evidence and preserves every candidate run even when an item is quarantined. Grounded in documents/ingestion.py, memory/worker.py, observations.py, and projection.py.",
+  code: `
+flowchart LR
+  subgraph Revision["Revision materialization lifecycle"]
+    Accepted["accepted"]:::blue --> Claim["materializing\nfair durable claim"]:::amber
+    Claim -->|chunks and embeddings written| Searchable["searchable"]:::green
+    Claim -->|retryable provider error| Retry["accepted\nbackoff scheduled"]:::amber
+    Retry --> Claim
+    Claim -->|terminal error| RevisionFailed["failed\nreviewable reason"]:::red
+    Accepted -->|provider deletion| Deleted["deleted"]:::gray
+  end
+  subgraph Formation["Formation and projection lifecycle"]
+    Pending["searchable document\npending formation"]:::blue --> Processing["processing\none in flight per workspace"]:::amber
+    Processing --> Candidate["completed candidate\nformation run retained"]:::purple
+    Candidate -->|evidence valid| Active["active projection\ngraph updated"]:::green
+    Candidate -->|invalid item| Quarantined["quarantined\nrun and reason retained"]:::red
+    Processing -->|rate limit or retryable error| Requeue["pending\nbackoff scheduled"]:::amber
+    Requeue --> Processing
+    Processing -->|worker exit| Recover["stale claim recovered"]:::gray --> Pending
+  end
+  Searchable --> Pending
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "embedding-rollout",
+  title: "Embedding version rollout",
+  category: "Operations",
+  audience: "Search maintainer / release owner",
+  complexity: "Medium",
+  desc: "Embedding migrations are workspace-local and side-by-side. A new registered model must cover every active chunk and, by default, every active decision signature before the workspace pointer can switch; retrieval and consolidation never mix model spaces. Rolling back changes only the pointer. Grounded in domains/query/embedding_versions.py and migrations 0024 and 0026.",
+  code: `
+flowchart TB
+  Register["Register embedding model\nembedding_models"]:::blue
+  BackfillChunks["Backfill chunk_embeddings\nworkspace and model scoped"]:::green
+  BackfillNodes["Backfill memory_node_embeddings\nactive decision signatures"]:::green
+  Coverage{"Chunk and node coverage\ncomplete for workspace?"}:::amber
+  Activate["Atomic workspace pointer switch\nactive_embedding_model_id"]:::purple
+  Retrieve["Retrieval and consolidation\nread one active model only"]:::blue
+  Rollback["Pointer-only rollback\nno re-embedding"]:::gray
+  Register --> BackfillChunks --> Coverage
+  Register --> BackfillNodes --> Coverage
+  Coverage -->|no| BackfillChunks
+  Coverage -->|yes| Activate --> Retrieve
+  Rollback --> Activate
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "fleet-coordination",
+  title: "Multi-instance coordination",
+  category: "Infrastructure",
+  audience: "Operator / worker maintainer",
+  complexity: "High",
+  desc: "PostgreSQL remains the durable source of truth for ordered work and fair claims. Redis is optional and carries only ephemeral multi-instance coordination: workspace formation locks, wake signals, ticker leadership, heartbeats, and shared rate limits. Losing Redis never drops a durable job; startup and maintenance reclaim stale claims. Grounded in core/coordination.py, memory/worker.py, documents/ingestion.py, and connectors/service.py.",
+  code: `
+flowchart TB
+  API["API instances"]:::blue
+  Workers["Worker instances\npreprocess, formation, sync"]:::green
+  Postgres[("PostgreSQL\ndurable queue state and fair claims\nFOR UPDATE SKIP LOCKED")]:::purple
+  Redis[("Redis optional\nephemeral coordination only")]:::amber
+  Claim["workspace-fair claims\nretry and claim timestamps"]:::green
+  Lock["workspace lock\nwake signal\nleader lease"]:::amber
+  Fleet["worker heartbeats\nshared rate limits"]:::amber
+  Recover["startup and maintenance\nreclaim stale claims"]:::gray
+  API -->|enqueue durable work| Postgres
+  Workers --> Claim --> Postgres
+  API -.publish wake.-> Redis
+  Workers -.acquire or release.-> Lock --> Redis
+  Workers -.record or check.-> Fleet --> Redis
+  Workers -->|exit leaves timed claim| Recover --> Postgres
+  Redis -.unavailable: durable work continues.-> Workers
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "authorization-tenancy",
+  title: "Authorization and tenancy boundary",
+  category: "Security",
+  audience: "API maintainer / security reviewer",
+  complexity: "High",
+  desc: "YBase enforces tenancy in the application: browser sessions become AuthContext and API keys become AgentContext, then routes apply workspace role and selected billing gates before executing workspace-bound database predicates and audit events. This diagram deliberately does not imply PostgreSQL RLS or per-document ACLs. Grounded in domains/auth/service.py, api routes, and domains/agent/.",
+  code: `
+flowchart TB
+  Browser["Browser cookie session"]:::blue
+  Agent["MCP client or agent\nworkspace API key"]:::blue
+  Session["AuthContext\nuser_id workspace_id role"]:::green
+  Key["AgentContext\nworkspace_id API key policy"]:::green
+  Gate{"Route gate\nrole and billing policy"}:::amber
+  Route["Domain service"]:::blue
+  Predicate["workspace_id predicates\non every tenant-owned query"]:::purple
+  Audit["Audit event\nworkspace and actor"]:::gray
+  DB[("PostgreSQL\napplication-enforced tenancy")]:::purple
+  Note["Not implemented\nPostgreSQL RLS or per-document ACLs"]:::red
+  Browser --> Session --> Gate
+  Agent --> Key --> Gate
+  Gate -->|authorized| Route --> Predicate --> DB
+  Gate --> Audit --> DB
+  Note -.boundary statement.-> DB
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "connector-lifecycle",
+  title: "Connector source lifecycle",
+  category: "Runtime",
+  audience: "Integration maintainer",
+  complexity: "High",
+  desc: "A connector stores an encrypted OAuth/API credential and selected provider streams, then performs durable sync jobs that normalize provider data into immutable revisions. Retryable errors retain work; a provider deletion or permission loss deactivates the source object while preserving historical revisions and downstream lineage. Grounded in domains/connectors, documents/ingestion.py, and migration 0015.",
+  code: `
+flowchart LR
+  Provider["Provider OAuth API\nwebhook or polling"]:::gray
+  Connection["source_connections\nencrypted token fields"]:::blue
+  Streams["source_streams\nselected and sync cursor"]:::blue
+  Job["sync_jobs\ndurable claim and retry"]:::amber
+  Normalize["Normalize provider record\nsource identity plus content"]:::green
+  Accept["accept_revision\nimmutable content history"]:::green
+  Source["source_objects\nactive identity"]:::purple
+  Retry["retry or paused stream\nlast_error retained"]:::amber
+  Deactivate["deleted or permission_lost\nsource deactivated history retained"]:::red
+  Provider --> Connection --> Streams --> Job --> Normalize --> Accept --> Source
+  Job -->|transient error| Retry --> Job
+  Provider -->|deleted or inaccessible| Deactivate --> Source
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "telemetry-evaluation",
+  title: "Telemetry and evaluation lineage",
+  category: "Operations",
+  audience: "Quality and release owner",
+  complexity: "Medium",
+  desc: "Runtime observations remain privacy-safe operational records: formation and query runs feed SLO/health views, while answer feedback can be promoted into durable retrieval regressions. CI recall gates, deterministic evaluations, load profiles, and release-budget comparison decide whether a rollout proceeds. Grounded in domains/ops, feedback, query/streaming.py, and scripts/ci_retrieval_gate.py, eval_retrieval.py, retrieval_load_profile.py, worker_load_profile.py, and check_release_budget.py.",
+  code: `
+flowchart TB
+  Formation["formation_runs\nqueue and formation SLOs"]:::green
+  Query["query_runs\nlatency, citations, claim outcome\nno question or answer text"]:::green
+  Health["Health and operations endpoints\nworkspace-scoped status"]:::blue
+  Feedback["Answer feedback\ntriage"]:::amber
+  Regression["feedback_regression_cases\ndurable expected evidence"]:::purple
+  Eval["Retrieval evaluation\nrecall and entailment"]:::purple
+  Load["Retrieval and worker profiles\np95, cost, queue behavior"]:::purple
+  Gate{"Release budget\nrollout metadata"}:::amber
+  Deploy["Deploy or pointer rollback"]:::blue
+  Formation --> Health
+  Query --> Health
+  Query --> Feedback --> Regression --> Eval
+  Eval --> Gate
+  Load --> Gate
+  Gate -->|accepted| Deploy
+  Gate -->|rejected| Eval
+  ${CLASS_DEFS}
+`
+},
+];
+
 /* ============================================================
    Current architecture catalogue — maintained against the current main branch.
    The renderer consumes this catalogue exclusively.
@@ -3136,7 +3447,7 @@ flowchart TB
   desc: "Acceptance is provider-free and commits immutable source history before any model request. Production returns after acceptance; a preprocessing worker fairly claims accepted revisions, creates source-aware chunks, writes vectors to the active embedding version, marks the revision searchable, and enqueues formation. Grounded in domains/documents/ingestion.py: accept_revision(), claim_materialization(), materialize_claimed_revision().",
   code: `
 sequenceDiagram
-  participant S as Connector, upload, or API
+  participant S as Connector upload or API
   participant A as accept_revision
   participant DB as PostgreSQL
   participant P as Preprocessing worker
@@ -3148,16 +3459,16 @@ sequenceDiagram
     A-->>S: duplicate accepted
   else changed content
     A->>DB: source_objects and immutable document_revisions
-    A->>DB: active documents projection; revision status accepted
+    A->>DB: active document projection and accepted revision
     A-->>S: accepted for materialization
   end
-  Note over A,DB: Production request finishes before provider work.
+  Note over A,DB: Production request finishes before provider work
   P->>DB: fairly claim accepted revision
-  P->>P: paragraph-aware chunks, spans, section paths, token counts
+  P->>P: paragraph aware chunks spans and section paths
   P->>E: embed chunk text
   P->>DB: chunks plus versioned chunk_embeddings
-  P->>DB: searchable revision; enqueue formation document
-  Note over P,DB: Bounded retry with backoff; stale materialization claims recover.
+  P->>DB: searchable revision then enqueue formation
+  Note over P,DB: Bounded retry and stale claim recovery
 `
 },
 {
@@ -3371,7 +3682,8 @@ flowchart TB
   CI -.validates image inputs.-> API
   ${CLASS_DEFS}
 `
-}
+},
+...REFERENCE_DIAGRAMS
 ];
 
 /* ============================================================
