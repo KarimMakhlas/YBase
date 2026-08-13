@@ -94,45 +94,55 @@ common. Every node traces back to the document and chunk that produced it.
 
 ## Architecture
 
-One container runs everything: FastAPI serves the built React SPA as static
-files and shares its PostgreSQL connection pool with an in-process asyncio
-formation worker. There's no separate queue service or graph database — a
-bounded worker loop and adjacency tables in Postgres carry the whole system at
-current scale.
+YBase is a PostgreSQL-first system. FastAPI exposes the API and can serve the
+built React SPA; PostgreSQL + pgvector is the durable source of truth for
+source history, work queues, vectors, memory projections, and operational
+telemetry. There is no separate queue or graph database.
+
+Local development uses `RUNTIME_ROLE=all`, which starts API and worker loops in
+one process. Production should run separate `api` and `worker` processes:
+public traffic reaches only API instances, while worker instances claim durable
+work from Postgres. Redis is optional coordination for multi-instance worker
+locks, wakeups, leader election, and shared rate limits; it is not the queue.
 
 ```mermaid
-flowchart LR
-  subgraph Client["Browser"]
-    SPA["React SPA (Vite, JSX)<br/>hash-based routing, SSE client"]:::blue
-  end
-  subgraph Server["Single container — Docker / Fly.io machine"]
-    API["FastAPI app<br/>app/main.py"]:::blue
-    Worker["Formation worker<br/>in-process asyncio loop<br/>domains/memory/worker.py"]:::blue
-    Static["Static file mount<br/>StaticFiles(html=True)"]:::gray
-  end
-  DB[(PostgreSQL 16 + pgvector<br/>Neon / Fly Postgres, pooled)]:::purple
-  LLMP{{"LLM providers"}}:::purple
-  EmbedP{{"Embedding providers"}}:::purple
-  Ext["Slack / GitHub / Jira APIs"]:::gray
+flowchart TB
+  Browser["Team member browser<br/>React SPA"]:::blue
+  Agent["MCP client / coding agent"]:::blue
+  Sources["Connected sources and uploads<br/>OAuth, webhooks, polling"]:::gray
 
-  SPA -->|fetch /api/*, credentials include| API
-  SPA -->|POST /api/query, SSE| API
-  API --> Static
-  API <-->|asyncpg pool, max 20, 30s stmt timeout| DB
-  Worker <-->|claim jobs: FOR UPDATE SKIP LOCKED| DB
-  API -->|schedule_formation call| Worker
-  Worker --> LLMP
-  Worker --> EmbedP
-  API --> EmbedP
-  Worker -->|sync jobs, token refresh| Ext
+  subgraph App["YBase deployment"]
+    API["API role<br/>FastAPI: /api/* + static SPA"]:::blue
+    Worker["Worker role<br/>preprocessing, formation,<br/>connectors, maintenance"]:::green
+  end
+
+  DB[(PostgreSQL + pgvector<br/>Neon primary, pooled)]:::purple
+  Redis[(Redis, optional<br/>coordination only)]:::amber
+  LLM{{"LLM provider"}}:::purple
+  Embed{{"Embedding provider"}}:::purple
+
+  Browser -->|HTTPS, cookie session, SSE| API
+  Agent -->|API key| API
+  Sources -->|OAuth callbacks, events, sync| API
+  API <-->|durable reads/writes| DB
+  Worker <-->|fair claims + projections| DB
+  API -.wake workers after acceptance.-> Worker
+  API <-.coordination.-> Redis
+  Worker <-.coordination.-> Redis
+  API --> LLM
+  API --> Embed
+  Worker --> LLM
+  Worker --> Embed
 
   classDef blue   fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:1.4px;
+  classDef green  fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.4px;
   classDef purple fill:#f3e8ff,stroke:#9333ea,color:#581c87,stroke-width:1.4px;
+  classDef amber  fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:1.4px;
   classDef gray   fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.4px;
 ```
 
-For the domain-by-domain module map, request lifecycle, and job-queue state
-machine, see the [full architecture documentation](#full-architecture-documentation).
+For the complete runtime, data-lineage, retrieval, and deployment diagrams,
+see the [full architecture documentation](#full-architecture-documentation).
 
 ## Quick start
 
@@ -237,40 +247,45 @@ its source object is explicitly deactivated rather than silently disappearing.
 
 ```mermaid
 sequenceDiagram
-    participant Src as Source: Slack, GitHub, Jira, Upload
-    participant Ingest as ingestion.ingest_document
-    participant DB as Postgres: documents, chunks
-    participant Queue as worker._loop / _claim
-    participant Form as formation.run_formation
+    participant Src as Connector, upload, or API
+    participant API as accept_revision
+    participant DB as Postgres durable state
+    participant Pre as Preprocessing worker
+    participant Form as Formation worker
     participant LLM as LLM provider
-    participant Graph as graph.upsert_node / add_edge
-    participant Cons as consolidate.merge_similar_decisions
+    participant Graph as Memory projections
 
-    Src->>Ingest: raw content
-    Ingest->>Ingest: content_hash dedup check
-    alt duplicate - hash or external_ref match
-        Ingest-->>Src: existing document_id, duplicate=true
-    else new document
-        Ingest->>Ingest: chunk_text - 900-1500 char, paragraph-aware
-        Ingest->>DB: embed_texts chunks, INSERT document + chunks
-        Ingest->>Queue: schedule_formation doc_id
+    Src->>API: normalized source content
+    API->>DB: lock source identity; create immutable revision
+    alt identical source object + content hash
+        DB-->>API: existing document and revision
+        API-->>Src: duplicate accepted
+    else new revision
+        API->>DB: source_objects, document_revisions status accepted,<br/>new active documents projection
+        API-->>Src: accepted for materialization
+        Note over API,DB: Production returns here. No provider call occurs in the request.
     end
-    rect rgba(37,99,235,0.06)
-    loop worker loop - 1 doc per workspace in flight, N workspaces parallel
-        Queue->>DB: claim pending doc - FOR UPDATE SKIP LOCKED
-        Queue->>Form: run_formation doc_id
-        Form->>DB: fetch chunks + existing-memory digest - recency + relevance blend, cap 150
-        Form->>LLM: structured_call - FORMATION_SYSTEM, FORMATION_SCHEMA
-        LLM-->>Form: decisions, entities, questions, links
-        Form->>Graph: upsert_node / add_edge / link_chunk per item
-        Form->>DB: formation_status = complete, store context_summary
-        Form->>Cons: touched decision node ids
-        Cons->>Cons: embed signatures - label + summary
-        Cons->>Cons: cosine similarity above MERGE_SIM_THRESHOLD, about 0.86?
-        Cons->>Graph: merge_nodes keep_id, drop_id
+
+    Pre->>DB: fairly claim accepted revision<br/>FOR UPDATE SKIP LOCKED
+    Pre->>Pre: paragraph-aware chunk structure and source spans
+    Pre->>LLM: embedding request
+    Pre->>DB: chunks + versioned chunk_embeddings;<br/>revision searchable; enqueue formation
+
+    Form->>DB: fairly claim searchable document;<br/>one in flight per workspace
+    Form->>DB: chunks + active memory context
+    Form->>LLM: strict structured extraction
+    LLM-->>Form: candidate items and evidence indexes
+    Form->>DB: immutable formation_run + observations + evidence
+    Form->>Form: validate evidence and projection constraints
+    alt valid candidate
+        Form->>Graph: atomically activate run; project nodes,<br/>edges, chunk links, field/support lineage
+        Graph->>DB: retire superseded unshared projections
+        Form->>DB: enqueue touched decisions for consolidation
+    else invalid evidence or candidate
+        Form->>DB: quarantine item; retain run and reason
     end
-    end
-    Note over Queue,DB: on failure - exponential backoff, 2 to the n times FORMATION_BACKOFF_S,<br/>max FORMATION_MAX_ATTEMPTS then formation_status=failed.<br/>Stuck processing rows reclaimed on worker restart.
+
+    Note over Pre,Form: Claims are workspace-fair and retried with bounded exponential backoff.<br/>Stale claims are reclaimed by startup and maintenance recovery.
 ```
 
 ### Retrieval
@@ -289,38 +304,41 @@ sequenceDiagram
 sequenceDiagram
     participant UI as React SPA
     participant API as POST /api/query
-    participant RW as rewrite_followup
-    participant Ret as retrieval.retrieve
+    participant RW as Follow-up rewrite
+    participant Ret as Hybrid retrieval
     participant DB as Postgres + pgvector
-    participant Graph as graph.expand - BFS, hops=2
+    participant Graph as Memory graph
     participant LLM as LLM provider
-    participant SSE as SSE stream
+    participant Verify as Citation and claim verification
 
     UI->>API: question + chat history
-    rect rgba(217,119,6,0.08)
     opt short follow-up under 100 chars, history exists
         API->>RW: resolve pronouns / ellipsis
         RW-->>API: standalone search question
     end
-    end
     API->>Ret: retrieve - question, workspace_id
     par vector + full text
-        Ret->>DB: pgvector cosine top-K
+        Ret->>DB: active-model tenant-scoped HNSW candidates;<br/>exact re-order inside the candidate set
         Ret->>DB: websearch_to_tsquery top-K
     end
-    Ret->>Ret: reciprocal rank fusion - RRF, k=60
-    Ret->>Graph: expand from seed nodes
-    Graph-->>Ret: related nodes + edges - relation-priority order, topic fanout capped
-    Ret->>Ret: rank evidence = node confidence x similarity, floor 0.5
+    Ret->>Ret: reciprocal-rank fusion and per-document diversity cap
+    Ret->>Graph: intent-prioritized bounded expansion
+    Graph-->>Ret: nodes, typed edges, linked evidence
+    Ret->>Ret: rank graph evidence by confidence and similarity
     Ret-->>API: chunks + nodes + edges + retrieval trace
-    API->>API: build_context - graph summary + chronological chunks + history
-    API->>LLM: stream_text - QUERY_SYSTEM, context
-    LLM-->>SSE: streamed markdown, holdback buffer strips partial delimiters
-    SSE-->>UI: event: delta - answer tokens
-    API->>API: parse trailing JSON metadata block
-    API->>API: locate_quote - exact citation spans in source chunks
-    API-->>SSE: event: metadata - citations, confidence, timeline, counter-evidence
-    SSE-->>UI: event: done
+    API->>LLM: streamed answer + structured metadata delimiter
+    LLM-->>UI: SSE status and delta events
+    API->>Verify: verify supplied citation IDs and exact quotes
+    opt ANSWER_CLAIM_VERIFICATION enabled
+        Verify->>LLM: bounded claim entailment check over cited chunks only
+    end
+    Verify-->>API: grounding and claim verdict
+    alt strict withhold policy fails
+        API-->>UI: source-first fallback instead of unsupported answer
+    else answer is displayable
+        API-->>UI: metadata, citations, trace, done
+    end
+    API->>DB: privacy-preserving query_runs latency and quality telemetry
 ```
 
 ## Configuration
@@ -434,9 +452,9 @@ Connector credentials are encrypted using `CONNECTOR_SECRET_KEY`. Source-level
 ACLs, private Slack channels, DMs, files, and attachments are intentionally
 outside the current product boundary.
 
-Slack has a live path on top of periodic reconciliation; Jira and GitHub have
-no realtime API, so they rely purely on scheduled polling. All three converge
-on the same dedup-and-queue ingestion path:
+Slack has a live path on top of periodic reconciliation. The remaining
+connectors are scheduled through durable sync jobs and selected streams. Every
+source converges on the same immutable-revision and materialization path:
 
 ```mermaid
 flowchart TB
@@ -448,31 +466,27 @@ flowchart TB
     S1 --> S2 --> S3
     S1 --> S4
   end
-  subgraph JiraFlow["Jira"]
-    J1["OAuth 3LO<br/>access + refresh token"]:::blue
-    J2["Initial backfill<br/>CONNECTOR_BACKFILL_DAYS<br/>(fast slice first, then full)"]:::amber
-    J3["Periodic resync<br/>CONNECTOR_RESYNC_INTERVAL_S"]:::amber
-    J1 --> J2 --> J3
+  subgraph Polling["Scheduled connectors"]
+    P1["OAuth connection<br/>encrypted tokens"]:::blue
+    P2["Discover and select streams"]:::blue
+    P3["Initial backfill and durable sync jobs"]:::amber
+    P4["Periodic resync"]:::amber
+    P5["GitHub · Jira · Linear · Confluence<br/>Discord · Google Docs · Notion · Figma"]:::gray
+    P1 --> P2 --> P3 --> P4 --> P5
   end
-  subgraph GitHubFlow["GitHub"]
-    G1["OAuth App<br/>non-expiring token"]:::blue
-    G2["Initial backfill<br/>fast slice then full"]:::amber
-    G3["Periodic resync"]:::amber
-    G1 --> G2 --> G3
-  end
-  Ingest["ingest_document()<br/>source object + immutable revision"]:::purple
-  Queue["Formation queue"]:::purple
+  Accept["accept_revision()<br/>source object + immutable revision"]:::purple
+  Preprocess["Durable materialization<br/>then formation"]:::purple
 
-  S3 --> Ingest
-  S4 --> Ingest
-  J3 --> Ingest
-  G3 --> Ingest
-  Ingest --> Queue
+  S3 --> Accept
+  S4 --> Accept
+  P5 --> Accept
+  Accept --> Preprocess
 
   classDef blue   fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:1.4px;
   classDef green  fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.4px;
   classDef amber  fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:1.4px;
   classDef purple fill:#f3e8ff,stroke:#9333ea,color:#581c87,stroke-width:1.4px;
+  classDef gray   fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.4px;
 ```
 
 ## Product surfaces
@@ -512,10 +526,12 @@ groups are:
 
 ## Data model
 
-`workspace_id` scopes nearly every table for multi-tenancy. The typed memory
-graph (`memory_nodes`, `memory_edges`, `chunk_links`) sits alongside
-document/chunk storage, connector sync state, and chat/feedback/digest
-tables:
+`workspace_id` scopes nearly every durable product table for multi-tenancy.
+The current model preserves an immutable source and extraction history, then
+projects only the active revision and active formation into retrieval. The
+typed graph (`memory_nodes`, `memory_edges`, `chunk_links`) is therefore a
+derived, evidence-linked read model—not the only record of what an LLM
+produced.
 
 ```mermaid
 erDiagram
@@ -524,11 +540,22 @@ erDiagram
   workspaces ||--o{ auth_sessions : scopes
   users ||--o{ auth_sessions : has
   workspaces ||--o{ workspace_invites : issues
-  workspaces ||--o{ documents : owns
+  workspaces ||--o{ source_objects : owns
+  source_objects ||--o{ document_revisions : versions
+  document_revisions ||--|| documents : "active retrieval projection"
   documents ||--o{ chunks : "splits into"
+  chunks ||--o{ chunk_embeddings : "versioned vector"
+  embedding_models ||--o{ chunk_embeddings : defines
+  document_revisions ||--o{ formation_runs : extracted_by
+  formation_runs ||--o{ memory_observations : proposes
+  memory_observations ||--o{ observation_evidence : supported_by
+  chunks ||--o{ observation_evidence : supports
+  memory_observations ||--o{ observation_projections : projects
   chunks ||--o{ chunk_links : evidences
   memory_nodes ||--o{ chunk_links : "evidenced by"
   workspaces ||--o{ memory_nodes : owns
+  memory_nodes ||--o{ memory_node_embeddings : "versioned signature"
+  embedding_models ||--o{ memory_node_embeddings : defines
   memory_nodes ||--o{ memory_edges : src
   memory_nodes ||--o{ memory_edges : dst
   memory_nodes ||--o{ decision_shares : "shared as"
@@ -540,6 +567,8 @@ erDiagram
   users ||--o{ chat_sessions : owns
   chat_sessions ||--o{ chat_messages : has
   chat_messages ||--o{ answer_feedback : receives
+  workspaces ||--o{ feedback_regression_cases : "quality cases"
+  workspaces ||--o{ query_runs : "privacy-safe telemetry"
   workspaces ||--o{ digests : generates
   workspaces ||--o{ audit_events : logs
 
@@ -569,6 +598,21 @@ erDiagram
     timestamptz expires_at
     timestamptz revoked_at
   }
+  source_objects {
+    int id PK
+    int workspace_id FK
+    text identity_key UK
+    int current_revision_id FK
+    text status
+  }
+  document_revisions {
+    int id PK
+    int source_object_id FK
+    int revision_number
+    text content_hash
+    text status
+    text normalizer_version
+  }
   documents {
     int id PK
     int workspace_id FK
@@ -586,6 +630,38 @@ erDiagram
     text embed_model
     tsvector text_tsv
   }
+  embedding_models {
+    int id PK
+    text model_key UK
+    int dimension
+  }
+  chunk_embeddings {
+    int chunk_id FK
+    int embedding_model_id FK
+    vector embedding
+  }
+  formation_runs {
+    bigint id PK
+    int revision_id FK
+    boolean is_active
+    jsonb stage_timings
+  }
+  memory_observations {
+    bigint id PK
+    bigint formation_run_id FK
+    int revision_id FK
+    text kind
+    text status
+    jsonb payload
+  }
+  observation_evidence {
+    bigint observation_id FK
+    int chunk_id FK
+  }
+  observation_projections {
+    bigint observation_id FK
+    int node_id FK
+  }
   memory_nodes {
     int id PK
     int workspace_id FK
@@ -595,6 +671,11 @@ erDiagram
     jsonb data
     vector embedding
     timestamptz archived_at
+  }
+  memory_node_embeddings {
+    int node_id FK
+    int embedding_model_id FK
+    vector embedding
   }
   memory_edges {
     int id PK
@@ -651,6 +732,18 @@ erDiagram
     int chat_message_id FK
     text issue_type
     text status
+  }
+  feedback_regression_cases {
+    int id PK
+    int workspace_id FK
+    text status
+  }
+  query_runs {
+    bigint id PK
+    int workspace_id FK
+    int retrieval_ms
+    int first_visible_ms
+    text claim_verification_status
   }
   decision_shares {
     int id PK
@@ -883,28 +976,28 @@ pooled PostgreSQL connection string.
 
 ```mermaid
 flowchart TB
-  subgraph FlyIO["Fly.io — primary_region iad"]
-    VM["Machine: 1 shared CPU, 2GB RAM<br/>always-on, min_machines_running=1"]:::blue
-    subgraph Container["Docker image"]
-      UIbuild["Vite build<br/>(node:20-alpine stage)"]:::gray
-      API2["FastAPI — python:3.12-slim<br/>serves static/ + /api/*"]:::blue
-    end
-    VM --> Container
+  Build["GitHub Actions<br/>Python tests + tenant ANN recall gate<br/>frontend production build"]:::gray
+  subgraph Runtime["Production deployment"]
+    API2["API instances<br/>RUNTIME_ROLE=api<br/>FastAPI + static SPA"]:::blue
+    Worker["Worker instances<br/>RUNTIME_ROLE=worker<br/>preprocess + formation + periodic work"]:::green
   end
-  Neon[(Neon Postgres<br/>pgvector, pooled DATABASE_URL)]:::purple
-  Anthropic{{"Anthropic API"}}:::purple
-  Voyage{{"Voyage AI"}}:::purple
-  Resend{{"Resend (email)"}}:::amber
-  GH["GitHub Actions CI<br/>pytest against pgvector + npm build"]:::gray
+  Neon[(Neon primary<br/>PostgreSQL + pgvector<br/>pooled DATABASE_URL)]:::purple
+  Redis[(Redis optional<br/>noeviction coordination)]:::amber
+  Providers{{"LLM and embedding providers"}}:::purple
+  Connectors["OAuth source APIs and Resend"]:::gray
 
-  UIbuild -->|dist/ copied into image as static| API2
-  API2 <-->|DATABASE_URL secret| Neon
-  API2 --> Anthropic
-  API2 --> Voyage
-  API2 --> Resend
-  GH -.->|on push / PR| Container
+  Build -.validates deployment artifact.-> API2
+  API2 <-->|request state, retrieval, telemetry| Neon
+  Worker <-->|claims, queues, projections| Neon
+  API2 <-.locks, wakeups, rate limits.-> Redis
+  Worker <-.locks, leader election, wakeups.-> Redis
+  API2 --> Providers
+  Worker --> Providers
+  API2 --> Connectors
+  Worker --> Connectors
 
   classDef blue   fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:1.4px;
+  classDef green  fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.4px;
   classDef purple fill:#f3e8ff,stroke:#9333ea,color:#581c87,stroke-width:1.4px;
   classDef amber  fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:1.4px;
   classDef gray   fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.4px;
@@ -915,10 +1008,11 @@ flowchart TB
 This README covers the highlights. [docs/architecture.html](docs/architecture.html)
 is a self-contained documentation site — no server or internet connection
 required, just clone the repo and open the file in a browser — with all of
-the diagrams above plus the ones that don't fit here: the domain module map,
-the formation job-queue state machine, the auth/RBAC/billing request
-lifecycle, and the system-context view. Light/dark themes, search, and
-one-click SVG/PNG export for every diagram.
+the architecture diagrams in one place: system trust boundaries, runtime roles,
+application modules, revision/materialization, reproducible formation lineage,
+tenant-safe retrieval, answer verification, release gates, and production
+topology. Light/dark themes, search, and one-click SVG/PNG export are included
+for every diagram.
 
 ## Current boundaries
 

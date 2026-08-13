@@ -2329,7 +2329,7 @@ Expecting `+Qe.join(", ")+", got '"+(this.terminals_[Ne]||Ne)+"'":Dt="Parse erro
     <div class="brand-mark">Y</div>
     <div class="brand-text">
       <h1>YBase — Architecture Documentation</h1>
-      <p>AI memory layer: source integrations, a cited memory graph, human workspace UI, and agent/MCP access</p>
+      <p>Durable source history, evidence-linked memory, verified answers, and workspace-safe retrieval</p>
     </div>
   </div>
   <div class="top-actions">
@@ -2353,12 +2353,12 @@ Expecting `+Qe.join(", ")+", got '"+(this.terminals_[Ne]||Ne)+"'":Dt="Parse erro
     <section class="intro">
       <h2>How this works</h2>
       <p>
-        YBase is a FastAPI + PostgreSQL/pgvector backend paired with a React SPA and an MCP server. It turns
-        connected source content and uploaded documents into a typed memory graph — decisions, people, topics,
-        and open questions — then serves cited answers to both people and API-key-authenticated agents. The diagrams
-        below are grounded directly in the current codebase (file &amp; function references
-        are called out in each card's description); anything not confidently inferable is labeled as an
-        assumption rather than presented as fact.
+        YBase is a FastAPI + PostgreSQL/pgvector system with a React SPA and an optional MCP client.
+        It accepts immutable source revisions, materializes versioned vectors, records reproducible
+        formation observations, and projects valid observations into a cited memory graph. Retrieval is
+        tenant-scoped hybrid search plus bounded graph expansion; answer citations and optional claim
+        entailment are verified before final delivery. The diagrams below describe the current code paths
+        and durable tables, with concrete file references in every card.
       </p>
       <div class="legend">
         <div class="legend-item"><span class="legend-swatch" style="background:#dbeafe;border-color:#2563eb"></span>Services / APIs / workflows</div>
@@ -2399,7 +2399,7 @@ const CLASS_DEFS = `
 /* ============================================================
    Diagram catalogue
    ============================================================ */
-const DIAGRAMS = [
+const LEGACY_DIAGRAMS = [
 {
   key: "context",
   title: "System context",
@@ -3021,6 +3021,354 @@ flowchart TB
   API2 --> Resend
   GH -.->|on push / PR| Container
 
+  ${CLASS_DEFS}
+`
+}
+];
+
+/* ============================================================
+   Current architecture catalogue — maintained against the current main branch.
+   The renderer consumes this catalogue exclusively.
+   ============================================================ */
+const DIAGRAMS = [
+{
+  key: "context",
+  title: "System context and trust boundaries",
+  category: "Architecture",
+  audience: "New developer / architect",
+  complexity: "Low",
+  desc: "YBase has two user entry points: browser sessions and API-key-authenticated agents. Sources arrive through connector callbacks, webhooks, polling, uploads, or imports. PostgreSQL is the durable system of record; optional Redis coordinates a multi-instance fleet but never stores work queue state. Grounded in backend/app/main.py, api/router.py, core/coordination.py, and domains/agent/service.py.",
+  code: `
+flowchart TB
+  Browser["Team member browser\nReact SPA + cookie session"]:::blue
+  Agent["MCP client or coding agent\nworkspace API key"]:::blue
+  Sources["Source providers and uploads\nOAuth, webhooks, polling"]:::gray
+  subgraph YBase["YBase"]
+    API["API role\nFastAPI routes and SSE"]:::blue
+    Worker["Worker role\npreprocess, formation, sync, maintenance"]:::green
+  end
+  DB[("PostgreSQL + pgvector\ndurable source, queue, graph, telemetry")]:::purple
+  Redis[("Redis optional\nlocks, wakeups, leader, rate limits")]:::amber
+  Models{{"LLM and embedding providers"}}:::purple
+  Browser -->|HTTPS| API
+  Agent -->|HTTPS + API key| API
+  Sources -->|connect, event, sync| API
+  API <-->|workspace-scoped reads and writes| DB
+  Worker <-->|fair claims and projections| DB
+  API -.durable wake.-> Worker
+  API <-.coordination.-> Redis
+  Worker <-.coordination.-> Redis
+  API --> Models
+  Worker --> Models
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "runtime",
+  title: "Runtime roles and lifecycle",
+  category: "Architecture",
+  audience: "Deployment maintainer",
+  complexity: "Medium",
+  desc: "The FastAPI lifespan runs migrations in every process. RUNTIME_ROLE=all starts all loops for local development; api runs no loops; worker recovers stale sync/materialization/formation claims then starts bounded task groups. Public routing must expose API instances only. Grounded in backend/app/main.py and domains/memory/worker.py.",
+  code: `
+flowchart LR
+  Boot["Process startup\nmigrate.run()"]:::gray
+  Role{"RUNTIME_ROLE"}:::gray
+  API["api\nHTTP routes, static SPA, SSE"]:::blue
+  All["all\nlocal combined process"]:::amber
+  Worker["worker\nbackground-only deployment role"]:::green
+  Recover["Recover stale sync, materialization,\nand formation claims"]:::green
+  Groups["Bounded task groups\npreprocess | formation | integration | maintenance"]:::green
+  DB[("PostgreSQL durable claims\nFOR UPDATE SKIP LOCKED")]:::purple
+  Boot --> Role
+  Role -->|api| API
+  Role -->|all| API
+  Role -->|all| Recover
+  Role -->|worker| Recover
+  Recover --> Groups
+  Groups <-->|claim, retry, record SLOs| DB
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "modules",
+  title: "Application boundaries",
+  category: "Architecture",
+  audience: "New developer",
+  complexity: "Medium",
+  desc: "api/router.py composes route-owning domains. Documents own acceptance/materialization; memory owns formation, lineage, graph, consolidation, and worker claims; query owns retrieval and streaming; connectors normalize external content into documents. Providers are adapters, while core owns configuration, database, coordination, crypto, and observability. Grounded in backend/app/api/router.py and backend/app/domains/.",
+  code: `
+flowchart TB
+  Router["api/router.py\nroute assembly"]:::gray
+  Auth["auth and workspace\nidentity, roles, tenancy"]:::blue
+  Connectors["connectors\nOAuth, streams, durable sync jobs"]:::blue
+  Documents["documents\naccept revision, materialize chunks"]:::green
+  Memory["memory\nformation, observations, graph, worker"]:::green
+  Query["query\nhybrid retrieval, SSE, verification"]:::green
+  Product["chat, feedback, analytics, ops,\ndigests, billing, agent, review"]:::blue
+  Core["core\nPostgres, migration, Redis, crypto, telemetry"]:::gray
+  Providers["providers\nLLM and embeddings"]:::purple
+  Router --> Auth
+  Router --> Connectors
+  Router --> Documents
+  Router --> Query
+  Router --> Product
+  Connectors --> Documents
+  Documents -->|searchable document| Memory
+  Memory -->|projected graph| Query
+  Query --> Providers
+  Documents --> Providers
+  Memory --> Providers
+  Auth --> Core
+  Connectors --> Core
+  Documents --> Core
+  Memory --> Core
+  Query --> Core
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "ingestion",
+  title: "Source revision and materialization pipeline",
+  category: "Runtime",
+  audience: "Maintainer / integrator",
+  complexity: "High",
+  desc: "Acceptance is provider-free and commits immutable source history before any model request. Production returns after acceptance; a preprocessing worker fairly claims accepted revisions, creates source-aware chunks, writes vectors to the active embedding version, marks the revision searchable, and enqueues formation. Grounded in domains/documents/ingestion.py: accept_revision(), claim_materialization(), materialize_claimed_revision().",
+  code: `
+sequenceDiagram
+  participant S as Connector, upload, or API
+  participant A as accept_revision
+  participant DB as PostgreSQL
+  participant P as Preprocessing worker
+  participant E as Embedding provider
+  S->>A: normalized content and source identity
+  A->>DB: lock source object identity
+  alt same source object and content hash
+    DB-->>A: existing document and revision
+    A-->>S: duplicate accepted
+  else changed content
+    A->>DB: source_objects and immutable document_revisions
+    A->>DB: active documents projection; revision status accepted
+    A-->>S: accepted for materialization
+  end
+  Note over A,DB: Production request finishes before provider work.
+  P->>DB: fairly claim accepted revision
+  P->>P: paragraph-aware chunks, spans, section paths, token counts
+  P->>E: embed chunk text
+  P->>DB: chunks plus versioned chunk_embeddings
+  P->>DB: searchable revision; enqueue formation document
+  Note over P,DB: Bounded retry with backoff; stale materialization claims recover.
+`
+},
+{
+  key: "formation",
+  title: "Reproducible formation and projection",
+  category: "Runtime",
+  audience: "Memory maintainer",
+  complexity: "High",
+  desc: "Formation serializes one document per workspace while allowing distinct workspaces to progress in parallel. It retains the model output as a formation run plus observations/evidence, validates every proposed item, then atomically activates valid projections. Superseded, unshared projections retire without destroying source history. Grounded in domains/memory/worker.py, formation.py, projection.py, observations.py, events.py, and consolidate.py.",
+  code: `
+flowchart TB
+  Searchable["Searchable active revision"]:::green
+  Claim["Fair formation claim\none in flight per workspace"]:::blue
+  Context["Chunks + active memory context"]:::gray
+  Extract["Structured LLM extraction"]:::purple
+  Candidate[("formation_runs\nmemory_observations\nobservation_evidence")]:::purple
+  Validate{"Evidence and projection\nvalidation passes?"}:::amber
+  Quarantine["Keep candidate; quarantine invalid item\nwith durable reason"]:::red
+  Activate["Atomically activate run\nand retire superseded projections"]:::green
+  Graph[("memory_nodes, memory_edges, chunk_links\nfield and support lineage")]:::purple
+  Consolidate["Debounced decision consolidation\nwithin active embedding space"]:::green
+  Searchable --> Claim --> Context --> Extract --> Candidate --> Validate
+  Validate -->|no| Quarantine
+  Validate -->|yes| Activate --> Graph --> Consolidate
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "data",
+  title: "Durable memory lineage",
+  category: "Data",
+  audience: "Database maintainer",
+  complexity: "High",
+  desc: "The retrieval graph is a projection layered on top of immutable source and extraction history. Each relation is workspace-scoped in the real schema. This diagram intentionally focuses on the lineage needed to reason about revisions, model switches, reformation, and safe retrieval. Grounded in migrations 0015, 0016, 0024–0032.",
+  code: `
+erDiagram
+  WORKSPACES ||--o{ SOURCE_OBJECTS : owns
+  SOURCE_OBJECTS ||--o{ DOCUMENT_REVISIONS : versions
+  DOCUMENT_REVISIONS ||--|| DOCUMENTS : active_projection
+  DOCUMENTS ||--o{ CHUNKS : contains
+  EMBEDDING_MODELS ||--o{ CHUNK_EMBEDDINGS : defines
+  CHUNKS ||--o{ CHUNK_EMBEDDINGS : has
+  DOCUMENT_REVISIONS ||--o{ FORMATION_RUNS : extracted_by
+  FORMATION_RUNS ||--o{ MEMORY_OBSERVATIONS : proposes
+  MEMORY_OBSERVATIONS ||--o{ OBSERVATION_EVIDENCE : cites
+  CHUNKS ||--o{ OBSERVATION_EVIDENCE : supports
+  MEMORY_OBSERVATIONS ||--o{ OBSERVATION_PROJECTIONS : maps
+  MEMORY_OBSERVATIONS ||--o{ OBSERVATION_EDGE_PROJECTIONS : maps
+  MEMORY_NODES ||--o{ OBSERVATION_PROJECTIONS : receives
+  MEMORY_NODES ||--o{ MEMORY_EDGES : source_or_target
+  CHUNKS ||--o{ CHUNK_LINKS : evidence
+  MEMORY_NODES ||--o{ CHUNK_LINKS : cited_by
+  EMBEDDING_MODELS ||--o{ MEMORY_NODE_EMBEDDINGS : defines
+  MEMORY_NODES ||--o{ MEMORY_NODE_EMBEDDINGS : has
+  WORKSPACES {
+    int id PK
+    int active_embedding_model_id FK
+  }
+  SOURCE_OBJECTS {
+    int id PK
+    text identity_key
+    int current_revision_id
+    text status
+  }
+  DOCUMENT_REVISIONS {
+    int id PK
+    int revision_number
+    text content_hash
+    text status
+    text normalizer_version
+  }
+  CHUNKS {
+    int id PK
+    int document_id FK
+    text_array section_path
+    int source_start
+    int source_end
+  }
+  EMBEDDING_MODELS {
+    int id PK
+    text model_key
+    int dimension
+  }
+  FORMATION_RUNS {
+    bigint id PK
+    int revision_id FK
+    boolean is_active
+  }
+  MEMORY_OBSERVATIONS {
+    bigint id PK
+    bigint formation_run_id FK
+    text kind
+    text status
+  }
+  MEMORY_NODES {
+    int id PK
+    text kind
+    text status
+    timestamptz archived_at
+  }
+`
+},
+{
+  key: "retrieval",
+  title: "Tenant-safe hybrid retrieval",
+  category: "Runtime",
+  audience: "Search maintainer",
+  complexity: "High",
+  desc: "Retrieval never mixes workspaces or embedding spaces. It embeds the question, selects the workspace active model, gathers tenant-filtered HNSW candidates with optional strict iterative scans, exactly orders the candidate set, fuses that rank with PostgreSQL full-text search using RRF, caps per-document dominance, then adds bounded graph-derived evidence. Grounded in domains/query/retrieval.py and vector_search.py.",
+  code: `
+flowchart LR
+  Q["Question and workspace"]:::blue
+  Embed["Embed query"]:::purple
+  Model["Resolve active workspace\nembedding model"]:::gray
+  ANN["Tenant and model scoped\nHNSW candidate scan"]:::green
+  Exact["Exact-order candidate set"]:::green
+  FTS["Tenant scoped\nPostgreSQL full-text search"]:::green
+  Fuse["RRF fusion plus per-document cap"]:::blue
+  Seeds["Top evidence seeds"]:::blue
+  Expand["Intent-prioritized bounded\ngraph expansion"]:::blue
+  Context["Chronological cited evidence\nretrieval trace"]:::purple
+  Q --> Embed --> Model --> ANN --> Exact --> Fuse
+  Q --> FTS --> Fuse
+  Fuse --> Seeds --> Expand --> Context
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "answers",
+  title: "Cited answer and verification path",
+  category: "Runtime",
+  audience: "Quality maintainer",
+  complexity: "Medium",
+  desc: "POST /api/query streams status and answer deltas over SSE. The response generator must cite retrieved chunk IDs. Structural checks confirm supplied citation IDs and quote spans; the optional second LLM verifies bounded claims using only cited evidence. A strict withhold policy replaces failed output with a source-first fallback and records privacy-safe quality/latency telemetry. Grounded in api/routes/query.py and domains/query/streaming.py.",
+  code: `
+sequenceDiagram
+  participant UI as React SPA
+  participant API as POST /api/query
+  participant R as Retrieval
+  participant L as Answer LLM
+  participant V as Citation and claim verifier
+  participant DB as query_runs telemetry
+  UI->>API: question and recent history
+  API->>R: tenant-scoped evidence
+  R-->>API: chunks, graph context, trace
+  API->>L: answer prompt with citation markers
+  L-->>UI: SSE status and delta events
+  API->>V: validate citation IDs and exact quotes
+  opt claim verification enabled
+    V->>L: judge claims from cited chunks only
+  end
+  alt strict policy rejects answer
+    V-->>UI: source-first fallback
+  else verified or report policy
+    V-->>UI: metadata, citations, trace, done
+  end
+  API->>DB: latency and quality fields only
+`
+},
+{
+  key: "operations",
+  title: "Quality loop and release gates",
+  category: "Operations",
+  audience: "Release owner",
+  complexity: "Medium",
+  desc: "Operational telemetry separates source freshness, queue/materialization/formation stages, first-visible answer latency, and answer-quality outcomes. User feedback can become durable retrieval regressions. CI gates deterministic tenant ANN recall; staging profiles and release-budget comparison protect larger rollouts. Grounded in domains/ops/service.py, domains/feedback/service.py, scripts/ci_retrieval_gate.py, eval_retrieval.py, retrieval_load_profile.py, worker_load_profile.py, and check_release_budget.py.",
+  code: `
+flowchart TB
+  Runtime["Runtime observations\npipeline SLOs, query_runs, health"]:::blue
+  Feedback["Answer feedback\ntriage and promote regression"]:::amber
+  Evaluation["Evaluation artifacts\nrecall, entailment, p95, cost, queue"]:::purple
+  CI["CI\nbackend tests plus deterministic\ntenant ANN recall gate"]:::green
+  Staging["Staging profiles\n100k retrieval and worker load"]:::green
+  Budget{"Release budget\nand rollout metadata"}:::amber
+  Deploy["Deploy or rollback\nknown model, prompt, index, or config"]:::blue
+  Runtime --> Feedback --> Evaluation
+  Runtime --> Evaluation
+  CI --> Budget
+  Staging --> Budget
+  Evaluation --> Budget
+  Budget -->|accepted| Deploy
+  Budget -->|rejected or expired exception| Evaluation
+  ${CLASS_DEFS}
+`
+},
+{
+  key: "deployment",
+  title: "Production topology",
+  category: "Infrastructure",
+  audience: "Operator",
+  complexity: "Medium",
+  desc: "The Docker image builds the Vite SPA and FastAPI serves it when STATIC_DIR is set. A scalable deployment separates API and worker roles, both using a pooled Neon connection string. Primary Postgres retains all ordered ingestion, formation, and read-after-write retrieval. Redis becomes required coordination when more than one worker instance runs. Grounded in Dockerfile, fly.toml, docker-compose.yml, DEPLOY-neon.md, and core/config.py.",
+  code: `
+flowchart TB
+  Internet["Browser and source provider traffic"]:::gray
+  subgraph Deploy["Application deployment"]
+    API["API instances\nRUNTIME_ROLE=api\nFastAPI and static SPA"]:::blue
+    Worker["Worker instances\nRUNTIME_ROLE=worker\npreprocess, formation, periodic"]:::green
+  end
+  Neon[("Neon primary\nPostgreSQL 16 plus pgvector\npooled DATABASE_URL")]:::purple
+  Redis[("Redis when multi-instance\nmaxmemory-policy noeviction")]:::amber
+  Providers{{"LLM, embedding, email, and connector APIs"}}:::purple
+  CI["GitHub Actions\nPython 3.12, pgvector service, Node build"]:::gray
+  Internet --> API
+  API <-->|pool| Neon
+  Worker <-->|pool and durable claims| Neon
+  API <-.coordination.-> Redis
+  Worker <-.coordination.-> Redis
+  API --> Providers
+  Worker --> Providers
+  CI -.validates image inputs.-> API
   ${CLASS_DEFS}
 `
 }
